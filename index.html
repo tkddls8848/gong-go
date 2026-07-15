@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>나라장터 통합조회 (사전공고 · 입찰공고)</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1 id="app-title">나라장터 사전공고 조회</h1>
+      <p class="subtitle" id="app-subtitle"></p>
+ 
+      <!-- 모드 토글 스위치: 사전공고 <-> 입찰공고(본공고) -->
+      <div class="mode-switch-wrap">
+        <div class="mode-switch" id="mode-switch" role="tablist" aria-label="조회 대상 전환">
+          <span class="indicator" id="mode-indicator"></span>
+          <button type="button" class="mode-btn active" data-mode="pre" role="tab">사전공고</button>
+          <button type="button" class="mode-btn" data-mode="bid" role="tab">입찰공고(본공고)</button>
+        </div>
+      </div>
+    </header>
+ 
+    <section class="panel">
+      <h2>관심 기관 목록</h2>
+      <p class="hint">
+        <strong>수요기관코드를 입력하면 코드 기준으로 정확히 조회</strong>되어 하위기관 중복이 발생하지 않습니다.
+        코드를 비워두면 기관명으로 조회한 뒤 기관명이 정확히 일치하는 건만 남깁니다.
+      </p>
+ 
+      <table id="institutions-table">
+        <thead>
+          <tr>
+            <th>기관명</th>
+            <th>수요기관코드 (권장)</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="institutions-body"></tbody>
+      </table>
+      <button id="add-row-btn" class="secondary-btn" type="button">+ 기관 추가</button>
+    </section>
+ 
+    <section class="panel">
+      <h2>조회 조건</h2>
+      <div class="options-row">
+        <div class="option-group">
+          <span class="option-label">업무구분</span>
+          <label><input type="checkbox" value="물품" class="bsns-checkbox" checked /> 물품</label>
+          <label><input type="checkbox" value="외자" class="bsns-checkbox" checked /> 외자</label>
+          <label><input type="checkbox" value="용역" class="bsns-checkbox" checked /> 용역</label>
+          <label><input type="checkbox" value="공사" class="bsns-checkbox" checked /> 공사</label>
+        </div>
+        <div class="option-group">
+          <span class="option-label" id="period-label">조회 기간</span>
+          <input type="date" id="begin-date" class="date-input" />
+          <span class="date-sep">~</span>
+          <input type="date" id="end-date" class="date-input" />
+        </div>
+      </div>
+      <button id="search-btn" class="primary-btn" type="button">지금 조회하기</button>
+    </section>
+ 
+    <section id="status-area"></section>
+ 
+    <section class="panel" id="results-panel" style="display: none;">
+      <div class="results-header">
+        <h2>조회 결과</h2>
+        <button id="download-btn" class="secondary-btn" type="button">CSV로 다운로드</button>
+      </div>
+      <p class="hint" id="results-hint" style="margin-top:8px;"></p>
+      <div class="table-scroll">
+        <table id="results-table">
+          <thead>
+            <tr>
+              <th>수요기관명</th>
+              <th>업무구분</th>
+              <th>사업명(공고명)</th>
+              <th>입찰공고번호</th>
+              <th>입찰공고일시</th>
+              <th>입찰마감일시</th>
+            </tr>
+          </thead>
+          <tbody id="results-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+ 
+  <!-- 첨부파일 모달 -->
+  <div id="file-modal" class="modal-backdrop" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modal-title">첨부파일</h3>
+        <button id="modal-close" class="modal-close" type="button">&times;</button>
+      </div>
+      <p class="hint" id="modal-subtitle"></p>
+      <ul id="modal-file-list" class="file-list"></ul>
+      <div class="modal-footer">
+        <p class="hint modal-note">
+          ※ 파일이 나라장터 서버에 있어 브라우저가 팝업으로 다운로드를 실행합니다.
+          처음 한 번 <strong>팝업 허용</strong>을 해주셔야 전체 다운로드가 정상 동작합니다.
+        </p>
+        <button id="download-all-btn" class="primary-btn" type="button">전체 다운로드</button>
+      </div>
+    </div>
+  </div>
+ 
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
+ 

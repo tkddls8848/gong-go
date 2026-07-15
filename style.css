@@ -1,0 +1,442 @@
+* {
+  box-sizing: border-box;
+}
+ 
+body {
+  font-family: "맑은 고딕", -apple-system, sans-serif;
+  background: #f5f6f8;
+  margin: 0;
+  color: #222;
+}
+ 
+.container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 32px 20px 80px;
+}
+ 
+header h1 {
+  margin: 0 0 6px;
+  font-size: 24px;
+}
+ 
+.subtitle {
+  margin: 0;
+  color: #666;
+  font-size: 14px;
+}
+ 
+/* ============ 모드 토글 스위치 ============ */
+.mode-switch-wrap {
+  margin: 18px 0 6px;
+}
+ 
+.mode-switch {
+  display: inline-flex;
+  position: relative;
+  background: #e8ebef;
+  border-radius: 999px;
+  padding: 4px;
+  gap: 4px;
+}
+ 
+.mode-switch button {
+  position: relative;
+  z-index: 1;
+  border: none;
+  background: transparent;
+  padding: 9px 22px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: #667080;
+  transition: color 0.2s ease;
+  white-space: nowrap;
+}
+ 
+.mode-switch button.active {
+  color: #fff;
+}
+ 
+.mode-switch .indicator {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  z-index: 0;
+  border-radius: 999px;
+  background: #2874a6;
+  box-shadow: 0 2px 6px rgba(40, 116, 166, 0.35);
+  transition: transform 0.25s ease, width 0.25s ease;
+}
+ 
+.panel {
+  background: #fff;
+  border: 1px solid #e2e4e8;
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin-top: 20px;
+}
+ 
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+ 
+.hint {
+  color: #777;
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+ 
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+ 
+#institutions-table th,
+#institutions-table td {
+  padding: 6px 8px;
+  text-align: left;
+}
+ 
+#institutions-table thead th {
+  font-size: 13px;
+  color: #666;
+  border-bottom: 1px solid #e2e4e8;
+}
+ 
+#institutions-table input[type="text"] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #d5d8dd;
+  border-radius: 4px;
+  font-size: 14px;
+}
+ 
+.remove-btn {
+  background: none;
+  border: none;
+  color: #c0392b;
+  cursor: pointer;
+  font-size: 13px;
+}
+ 
+.secondary-btn {
+  margin-top: 10px;
+  padding: 8px 14px;
+  border: 1px solid #d5d8dd;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+ 
+.secondary-btn:hover {
+  background: #f0f1f3;
+}
+ 
+.primary-btn {
+  margin-top: 16px;
+  padding: 10px 20px;
+  border: none;
+  background: #2874a6;
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+}
+ 
+.primary-btn:hover {
+  background: #1f5f87;
+}
+ 
+.primary-btn:disabled {
+  background: #a9b6c0;
+  cursor: not-allowed;
+}
+ 
+.options-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 32px;
+}
+ 
+.option-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+ 
+.option-label {
+  font-size: 13px;
+  color: #666;
+  font-weight: 600;
+}
+ 
+.date-input {
+  padding: 6px 8px;
+  border: 1px solid #d5d8dd;
+  border-radius: 4px;
+  font-size: 14px;
+  font-family: inherit;
+}
+ 
+.date-sep {
+  color: #888;
+}
+ 
+#status-area {
+  margin-top: 16px;
+}
+ 
+.status-box {
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+ 
+.status-info {
+  background: #eef3f7;
+  color: #34495e;
+}
+ 
+.status-success {
+  background: #eafaf1;
+  color: #1e8449;
+}
+ 
+.status-error {
+  background: #fdedec;
+  color: #c0392b;
+}
+ 
+.results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+ 
+.table-scroll {
+  overflow-x: auto;
+  margin-top: 12px;
+}
+ 
+#results-table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 0;
+}
+ 
+#results-table th,
+#results-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eee;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+}
+ 
+/* 열 너비 고정 */
+#results-table th:nth-child(1), #results-table td:nth-child(1) { width: 180px; }  /* 수요기관명 */
+#results-table th:nth-child(2), #results-table td:nth-child(2) { width: 70px;  }  /* 업무구분 */
+#results-table th:nth-child(3), #results-table td:nth-child(3) { width: 320px; }  /* 사업명 */
+#results-table th:nth-child(4), #results-table td:nth-child(4) { width: 130px; }  /* 입찰공고번호 */
+#results-table th:nth-child(5), #results-table td:nth-child(5) { width: 145px; }  /* 입찰공고일시 */
+#results-table th:nth-child(6), #results-table td:nth-child(6) { width: 145px; }  /* 입찰마감일시 */
+ 
+/* 긴 사업명은 여러 줄로 */
+#results-table td:nth-child(3) {
+  white-space: normal;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: clip;
+}
+ 
+/* 입찰공고번호 가운데 정렬 */
+#results-table td:nth-child(4),
+#results-table th:nth-child(4) {
+  text-align: center;
+}
+ 
+#results-table thead th {
+  background: #f7f8fa;
+  position: sticky;
+  top: 0;
+}
+ 
+/* 사업명 클릭 버튼 */
+.title-link {
+  display: inline;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: #1f5f87;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+ 
+.title-link:hover {
+  color: #14425f;
+}
+ 
+.file-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: #e8f1f8;
+  color: #2874a6;
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+ 
+.file-badge.empty {
+  background: #f0f1f3;
+  color: #999;
+}
+ 
+details.error-details {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #c0392b;
+}
+ 
+/* 스피너 */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 3px solid #cfd8dc;
+  border-top-color: #2874a6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+ 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+ 
+/* 진행률 바 */
+.progress-bar-container {
+  width: 100%;
+  background: #e2e4e8;
+  border-radius: 6px;
+  height: 10px;
+  overflow: hidden;
+  margin-top: 10px;
+}
+ 
+.progress-bar-fill {
+  height: 100%;
+  background: #2874a6;
+  width: 0%;
+  transition: width 0.2s ease;
+}
+ 
+/* ============ 첨부파일 모달 ============ */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1000;
+}
+ 
+.modal {
+  background: #fff;
+  border-radius: 10px;
+  padding: 20px 24px 18px;
+  width: 100%;
+  max-width: 640px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+ 
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+ 
+.modal-header h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+ 
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  color: #888;
+  cursor: pointer;
+  padding: 0 4px;
+}
+ 
+.modal-close:hover {
+  color: #333;
+}
+ 
+.file-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  border-top: 1px solid #eee;
+}
+ 
+.file-list li {
+  padding: 10px 2px;
+  border-bottom: 1px solid #eee;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+ 
+.file-list .file-no {
+  color: #999;
+  font-size: 12px;
+  min-width: 22px;
+}
+ 
+.file-list a {
+  color: #1f5f87;
+  word-break: break-all;
+  flex: 1;
+}
+ 
+.file-list .empty-msg {
+  color: #888;
+  padding: 16px 2px;
+  display: block;
+}
+ 
+.modal-footer {
+  margin-top: 14px;
+}
+ 
+.modal-note {
+  margin: 0 0 4px;
+  line-height: 1.5;
+}
+ 
