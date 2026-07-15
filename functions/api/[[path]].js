@@ -10,8 +10,8 @@ export async function onRequestGet(context) {
   const { env, request } = context;
 
   // 1) 인증키 확인
-  if (!env.G2B_SERVICE_KEY) {
-    return json({ error: "서버에 G2B_SERVICE_KEY가 설정되지 않았습니다." }, 500);
+  if (!env.SERVICE_KEY) {
+    return json({ error: "서버에 SERVICE_KEY가 설정되지 않았습니다." }, 500);
   }
 
   // 2) /api 접두어를 떼고 실제 나라장터 경로만 추출
@@ -29,7 +29,7 @@ export async function onRequestGet(context) {
     if (k.toLowerCase() === "servicekey") continue;
     target.searchParams.append(k, v);
   }
-  target.searchParams.set("ServiceKey", env.G2B_SERVICE_KEY);
+  target.searchParams.set("ServiceKey", env.SERVICE_KEY);
 
   // 5) 중계 요청
   let upstream;
