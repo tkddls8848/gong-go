@@ -10,7 +10,10 @@
 // 설정(Cloudflare Pages > 설정 > 환경 변수):
 //   GATE_PASSWORD   (필수) 공유 비밀번호. 값이 없으면 게이트는 비활성화되어 그대로 통과.
 //   GATE_COOKIE_NAME(선택) 인증 쿠키 이름. 기본값 "gong_gate".
-//   GATE_MAX_AGE    (선택) 인증 유지 시간(초). 기본값 604800(7일).
+//
+// 인증 유효기간:
+//   세션 쿠키(만료 시각 없음)로 발급하므로 "브라우저 종료 시" 인증이 만료된다.
+//   재접속하면 다시 비밀번호를 입력해야 한다.
 //
 // 통과 방법:
 //   1) 브라우저 - 최초 접속 시 간단한 비밀번호 입력 화면 → 성공하면 HttpOnly 쿠키 발급.
@@ -22,7 +25,6 @@
 //   대신 설정이 단순하고 별도 로그인 인프라가 필요 없다.
 
 const COOKIE_NAME_DEFAULT = "gong_gate";
-const MAX_AGE_DEFAULT = 60 * 60 * 24 * 7; // 7일
 const HEADER_NAME = "x-gate-password"; // 프로그램 접근용 헤더
 const LOGIN_PATH = "/__gate/login";
 const LOGOUT_PATH = "/__gate/logout";
@@ -85,7 +87,7 @@ async function isAuthenticated(request, password, cookieName) {
 // 로그인 폼 제출 처리
 // ------------------------------------------------------------
 async function handleLogin(context, password, cookieName, secure) {
-  const { request, env } = context;
+  const { request } = context;
 
   let form;
   try {
@@ -107,10 +109,9 @@ async function handleLogin(context, password, cookieName, secure) {
     );
   }
 
-  // 인증 성공 → 해시 토큰을 HttpOnly 쿠키로 발급하고 원래 경로로 이동.
-  const maxAge = Number(env.GATE_MAX_AGE) > 0 ? Number(env.GATE_MAX_AGE) : MAX_AGE_DEFAULT;
+  // 인증 성공 → 해시 토큰을 세션 쿠키(브라우저 종료 시 만료)로 발급하고 원래 경로로 이동.
   const token = await tokenFor(password);
-  const cookie = buildCookie(cookieName, token, { maxAge, secure });
+  const cookie = buildCookie(cookieName, token, { secure });
   return redirect(dest, cookie);
 }
 
@@ -154,13 +155,13 @@ function parseCookies(header) {
   return out;
 }
 
-function buildCookie(name, value, { maxAge, secure }) {
+function buildCookie(name, value, { secure }) {
+  // Max-Age / Expires를 넣지 않으면 "세션 쿠키"가 되어 브라우저를 닫을 때 만료된다.
   const attrs = [
     `${name}=${encodeURIComponent(value)}`,
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
-    `Max-Age=${maxAge}`,
   ];
   if (secure) attrs.push("Secure");
   return attrs.join("; ");
