@@ -599,22 +599,19 @@ searchBtn.addEventListener("click", async () => {
     const rows = [];
     const errors = [];
     const seen = new Set();
-    let filteredOut = 0;
+    let duplicateCount = 0;
  
     results.forEach((res, i) => {
       const { inst, bsnsDiv } = jobs[i];
       if (res.error) errors.push(res.error);
  
       for (const item of res.items) {
-        // 1) 기관 정확 매칭
-        if (!mode.matchesInstitution(item, inst)) {
-          filteredOut++;
+        // 공고번호 기준 중복 제거. 하위기관 공고도 결과에 포함한다.
+        const key = mode.dedupKey(item);
+        if (key && seen.has(key)) {
+          duplicateCount++;
           continue;
         }
- 
-        // 2) 공고번호(모드별 키) 기준 중복 제거
-        const key = mode.dedupKey(item, bsnsDiv);
-        if (key && seen.has(key)) continue;
         if (key) seen.add(key);
  
         const row = mode.mapRow(item, bsnsDiv);
@@ -640,8 +637,8 @@ searchBtn.addEventListener("click", async () => {
     if (mode.effectiveRangeDays < MAX_RANGE_DAYS) {
       statusHtml += ` <em>· API 기간제한이 축소되어 ${mode.effectiveRangeDays}일 단위로 자동 재분할했습니다.</em>`;
     }
-    if (filteredOut) {
-      statusHtml += ` (하위기관·중복 등 ${filteredOut}건 제외)`;
+    if (duplicateCount) {
+      statusHtml += ` (공고번호 중복 ${duplicateCount}건 제외)`;
     }
     if (errors.length) {
       statusHtml += `<details class="error-details"><summary>오류/경고 ${errors.length}건 (클릭해서 보기)</summary>${errors

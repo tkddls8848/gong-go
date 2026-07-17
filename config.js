@@ -97,18 +97,9 @@ const MODES = {
       용역: "getPublicPrcureThngInfoServcPPSSrch",
       공사: "getPublicPrcureThngInfoCnstwkPPSSrch",
     },
-    // 사전규격은 실수요기관(rl*)까지 함께 매칭
-    matchesInstitution(item, inst) {
-      if (inst.code) {
-        const target = norm(inst.code);
-        return [item.dminsttCd, item.rlDminsttCd].some((c) => norm(c) === target);
-      }
-      const target = norm(inst.name);
-      return [item.dminsttNm, item.rlDminsttNm].some((n) => norm(n) === target);
-    },
-    dedupKey(item, bsnsDiv) {
+    dedupKey(item) {
       const no = String(item.bfSpecRgstNo || "").trim();
-      return no ? `${bsnsDiv}::${no}` : "";
+      return no;
     },
     mapRow(item, bsnsDiv) {
       return {
@@ -152,16 +143,9 @@ const MODES = {
       용역: "getBidPblancListInfoServcPPSSrch",
       공사: "getBidPblancListInfoCnstwkPPSSrch",
     },
-    matchesInstitution(item, inst) {
-      if (inst.code) {
-        return norm(item.dminsttCd) === norm(inst.code);
-      }
-      return norm(item.dminsttNm) === norm(inst.name);
-    },
-    dedupKey(item, bsnsDiv) {
+    dedupKey(item) {
       const no = String(item.bidNtceNo || "").trim();
-      const ord = String(item.bidNtceOrd || "").trim();
-      return no ? `${bsnsDiv}::${no}::${ord}` : "";
+      return no;
     },
     mapRow(item, bsnsDiv) {
       return {
