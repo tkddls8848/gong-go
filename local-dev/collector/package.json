@@ -1,0 +1,7 @@
+{
+  "name": "gong-go-local-dev",
+  "private": true,
+  "scripts": {
+    "collect": "node collector.js"
+  }
+}

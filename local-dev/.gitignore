@@ -1,0 +1,4 @@
+collector/.env
+collector/sync.config.json
+collector/data/*.csv
+collector/data/*.json

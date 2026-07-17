@@ -12,14 +12,6 @@
       <h1 id="app-title">나라장터 사전공고 조회</h1>
       <p class="subtitle" id="app-subtitle"></p>
  
-      <!-- 모드 토글 스위치: 사전공고 <-> 입찰공고(본공고) -->
-      <div class="mode-switch-wrap">
-        <div class="mode-switch" id="mode-switch" role="tablist" aria-label="조회 대상 전환">
-          <span class="indicator" id="mode-indicator"></span>
-          <button type="button" class="mode-btn active" data-mode="pre" role="tab">사전공고</button>
-          <button type="button" class="mode-btn" data-mode="bid" role="tab">입찰공고(본공고)</button>
-        </div>
-      </div>
     </header>
  
     <section class="panel">
@@ -45,6 +37,13 @@
     <section class="panel">
       <h2>조회 조건</h2>
       <div class="options-row">
+        <div class="option-group">
+          <label class="option-label" for="mode">공고 유형</label>
+          <select id="mode">
+            <option value="pre">사전공고</option>
+            <option value="bid">본공고</option>
+          </select>
+        </div>
         <div class="option-group">
           <span class="option-label">업무구분</span>
           <label><input type="checkbox" value="물품" class="bsns-checkbox" checked /> 물품</label>

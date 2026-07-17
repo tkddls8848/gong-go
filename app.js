@@ -14,9 +14,7 @@ const appSubtitle = document.getElementById("app-subtitle");
 const periodLabel = document.getElementById("period-label");
 const resultsHintEl = document.getElementById("results-hint");
  
-const modeSwitch = document.getElementById("mode-switch");
-const modeIndicator = document.getElementById("mode-indicator");
-const modeButtons = Array.from(modeSwitch.querySelectorAll(".mode-btn"));
+const modeSelect = document.getElementById("mode");
  
 const institutionsBody = document.getElementById("institutions-body");
 const addRowBtn = document.getElementById("add-row-btn");
@@ -653,14 +651,6 @@ searchBtn.addEventListener("click", async () => {
   }
 });
  
-// ============================================================
-// 모드 전환 (토글 스위치)
-// ============================================================
-function positionIndicator(btn) {
-  modeIndicator.style.width = `${btn.offsetWidth}px`;
-  modeIndicator.style.transform = `translateX(${btn.offsetLeft}px)`;
-}
- 
 function applyMode(key) {
   currentMode = MODES[key];
  
@@ -671,13 +661,6 @@ function applyMode(key) {
   resultsHintEl.textContent = currentMode.resultsHint;
   document.title = `${currentMode.title}`;
  
-  // 스위치 활성 상태
-  modeButtons.forEach((b) => {
-    const active = b.dataset.mode === key;
-    b.classList.toggle("active", active);
-    if (active) positionIndicator(b);
-  });
- 
   // 모드가 바뀌면 이전 결과는 무효 → 초기화
   lastResultRows = [];
   resultsBody.innerHTML = "";
@@ -686,17 +669,8 @@ function applyMode(key) {
   closeFileModal();
 }
  
-modeButtons.forEach((btn) => {
-  btn.addEventListener("click", () => {
-    if (btn.dataset.mode === currentMode.key) return;
-    applyMode(btn.dataset.mode);
-  });
-});
- 
-// 창 크기 변경 시 인디케이터 위치 보정
-window.addEventListener("resize", () => {
-  const active = modeButtons.find((b) => b.classList.contains("active"));
-  if (active) positionIndicator(active);
+modeSelect.addEventListener("change", () => {
+  if (modeSelect.value !== currentMode.key) applyMode(modeSelect.value);
 });
  
 // ============================================================
@@ -704,5 +678,5 @@ window.addEventListener("resize", () => {
 // ============================================================
 initInstitutions();
 initDateRange();
-applyMode("pre"); // 기본: 사전공고
+applyMode(modeSelect.value); // 기본: 사전공고
  

@@ -3,8 +3,8 @@
 }
  
 body {
-  font-family: "맑은 고딕", -apple-system, sans-serif;
-  background: #f5f6f8;
+  font-family: "Pretendard", "Noto Sans KR", "맑은 고딕", -apple-system, sans-serif;
+  background: linear-gradient(180deg, #f8fafc 0, #f3f6f9 260px, #f5f6f8 100%);
   margin: 0;
   color: #222;
 }
@@ -12,12 +12,14 @@ body {
 .container {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 32px 20px 80px;
+  padding: 42px 24px 80px;
 }
  
 header h1 {
-  margin: 0 0 6px;
-  font-size: 24px;
+  margin: 0 0 7px;
+  font-size: 28px;
+  letter-spacing: -0.04em;
+  color: #142238;
 }
  
 .subtitle {
@@ -26,57 +28,13 @@ header h1 {
   font-size: 14px;
 }
  
-/* ============ 모드 토글 스위치 ============ */
-.mode-switch-wrap {
-  margin: 18px 0 6px;
-}
- 
-.mode-switch {
-  display: inline-flex;
-  position: relative;
-  background: #e8ebef;
-  border-radius: 999px;
-  padding: 4px;
-  gap: 4px;
-}
- 
-.mode-switch button {
-  position: relative;
-  z-index: 1;
-  border: none;
-  background: transparent;
-  padding: 9px 22px;
-  border-radius: 999px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  color: #667080;
-  transition: color 0.2s ease;
-  white-space: nowrap;
-}
- 
-.mode-switch button.active {
-  color: #fff;
-}
- 
-.mode-switch .indicator {
-  position: absolute;
-  left: 0;
-  top: 4px;
-  bottom: 4px;
-  z-index: 0;
-  border-radius: 999px;
-  background: #2874a6;
-  box-shadow: 0 2px 6px rgba(40, 116, 166, 0.35);
-  transition: transform 0.25s ease, width 0.25s ease;
-}
- 
 .panel {
   background: #fff;
-  border: 1px solid #e2e4e8;
-  border-radius: 8px;
-  padding: 20px 24px;
-  margin-top: 20px;
+  border: 1px solid #e0e6ed;
+  border-radius: 12px;
+  padding: 22px 24px;
+  margin-top: 18px;
+  box-shadow: 0 3px 12px rgba(24, 43, 68, 0.045);
 }
  
 .panel h2 {
@@ -111,7 +69,7 @@ table {
   width: 100%;
   padding: 6px 8px;
   border: 1px solid #d5d8dd;
-  border-radius: 4px;
+  border-radius: 6px;
   font-size: 14px;
 }
  
@@ -126,9 +84,9 @@ table {
 .secondary-btn {
   margin-top: 10px;
   padding: 8px 14px;
-  border: 1px solid #d5d8dd;
+  border: 1px solid #cfd8e3;
   background: #fff;
-  border-radius: 6px;
+  border-radius: 7px;
   cursor: pointer;
   font-size: 14px;
 }
@@ -141,16 +99,16 @@ table {
   margin-top: 16px;
   padding: 10px 20px;
   border: none;
-  background: #2874a6;
+  background: #256c9c;
   color: #fff;
-  border-radius: 6px;
+  border-radius: 7px;
   cursor: pointer;
   font-size: 15px;
   font-weight: 600;
 }
  
 .primary-btn:hover {
-  background: #1f5f87;
+  background: #1f5d87;
 }
  
 .primary-btn:disabled {
@@ -180,7 +138,7 @@ table {
 .date-input {
   padding: 6px 8px;
   border: 1px solid #d5d8dd;
-  border-radius: 4px;
+  border-radius: 6px;
   font-size: 14px;
   font-family: inherit;
 }
@@ -221,7 +179,7 @@ table {
 }
  
 .table-scroll {
-  overflow-x: auto;
+  overflow: visible;
   margin-top: 12px;
 }
  
@@ -234,21 +192,39 @@ table {
 #results-table th,
 #results-table td {
   padding: 8px 10px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid #e8edf2;
   font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
   vertical-align: top;
+}
+
+input[type="text"], .date-input, select, button, .secondary-btn, .primary-btn {
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease, transform 0.16s ease;
+}
+
+input[type="text"]:focus, .date-input:focus, select:focus {
+  outline: none;
+  border-color: #4b8fc0;
+  box-shadow: 0 0 0 3px rgba(75, 143, 192, 0.14);
+}
+
+.primary-btn:hover, .secondary-btn:hover { transform: translateY(-1px); }
+#results-table tbody tr:hover { background: #f7fafc; }
+
+@media (max-width: 700px) {
+  .container { padding: 28px 14px 56px; }
+  header h1 { font-size: 24px; }
+  .panel { padding: 18px; }
 }
  
 /* 열 너비 고정 */
-#results-table th:nth-child(1), #results-table td:nth-child(1) { width: 180px; }  /* 수요기관명 */
-#results-table th:nth-child(2), #results-table td:nth-child(2) { width: 70px;  }  /* 업무구분 */
-#results-table th:nth-child(3), #results-table td:nth-child(3) { width: 320px; }  /* 사업명 */
-#results-table th:nth-child(4), #results-table td:nth-child(4) { width: 130px; }  /* 입찰공고번호 */
-#results-table th:nth-child(5), #results-table td:nth-child(5) { width: 145px; }  /* 입찰공고일시 */
-#results-table th:nth-child(6), #results-table td:nth-child(6) { width: 145px; }  /* 입찰마감일시 */
+#results-table th:nth-child(1), #results-table td:nth-child(1) { width: 18%; }
+#results-table th:nth-child(2), #results-table td:nth-child(2) { width: 8%; }
+#results-table th:nth-child(3), #results-table td:nth-child(3) { width: 30%; }
+#results-table th:nth-child(4), #results-table td:nth-child(4) { width: 15%; }
+#results-table th:nth-child(5), #results-table td:nth-child(5) { width: 14.5%; }
+#results-table th:nth-child(6), #results-table td:nth-child(6) { width: 14.5%; }
  
 /* 긴 사업명은 여러 줄로 */
 #results-table td:nth-child(3) {
