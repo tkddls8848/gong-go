@@ -161,8 +161,9 @@ async function runPool(tasks, limit, onProgress) {
 async function fetchNotices(mode, operation, inst, inqryBgnDt, inqryEndDt) {
   const allItems = [];
   let pageNo = 1;
- 
-  while (true) {
+  let totalPages = 1;
+
+  while (pageNo <= totalPages) {
     const params = new URLSearchParams({
       type: "json",
       pageNo: String(pageNo),
@@ -181,11 +182,46 @@ async function fetchNotices(mode, operation, inst, inqryBgnDt, inqryEndDt) {
     const url = `${mode.baseUrl}/${operation}?${params.toString()}`;
  
     let data;
-    try {
-      const resp = await fetch(url);
-      data = await resp.json();
-    } catch (e) {
-      return { items: allItems, error: `${inst.name}: 요청 실패 (${e.message})` };
+    let lastError = "";
+    let receivedResponse = false;
+
+    // Cloudflare Pages can receive a transient 504 from the upstream API when
+    // several institution/date requests are in flight. Retry those responses
+    // before treating this institution/date chunk as failed.
+    for (let attempt = 0; attempt <= API_RETRY_COUNT; attempt += 1) {
+      try {
+        const resp = await fetch(url);
+        data = await resp.json();
+        receivedResponse = true;
+
+        const upstreamStatus = Number(data?.upstreamStatus || 0);
+        const retryable =
+          resp.status === 429 ||
+          resp.status >= 500 ||
+          upstreamStatus === 429 ||
+          upstreamStatus >= 500;
+
+        if (!retryable) {
+          lastError = "";
+          break;
+        }
+        lastError = data?.error || JSON.stringify(data);
+      } catch (e) {
+        lastError = `요청 실패 (${e.message})`;
+      }
+
+      if (attempt < API_RETRY_COUNT) {
+        await sleep(API_RETRY_BASE_DELAY_MS * 2 ** attempt);
+      }
+    }
+
+    if (!receivedResponse || lastError) {
+      return {
+        items: allItems,
+        error: `${inst.name}: ${lastError || "일시적인 API 오류"}`,
+        rawMsg: lastError,
+        transient: true,
+      };
     }
  
     const body = data?.response?.body;
@@ -206,9 +242,13 @@ async function fetchNotices(mode, operation, inst, inqryBgnDt, inqryEndDt) {
       itemList = [];
     }
     allItems.push(...itemList);
- 
+
+    // totalCount is the number of matching notices, not the number returned
+    // in this page. For example, totalCount=1000 and numOfRows=999 requires
+    // requests for page 1 and page 2.
     const totalCount = Number(body.totalCount || 0);
-    if (pageNo * NUM_OF_ROWS >= totalCount) break;
+    const pageSize = Number(body.numOfRows) || NUM_OF_ROWS;
+    totalPages = totalCount > 0 ? Math.ceil(totalCount / pageSize) : 1;
     pageNo += 1;
   }
  
@@ -219,9 +259,13 @@ function isRangeError(res) {
   const msg = res.rawMsg || res.error || "";
   return /기간|범위|초과|개월|일자|PERIOD|RANGE/i.test(msg);
 }
+
+function shouldSplitChunk(res) {
+  return isRangeError(res) || res.transient;
+}
  
 // ============================================================
-// 적응형 조회: 기간 초과 오류가 나면 절반으로 쪼개서 재시도
+// 적응형 조회: 기간 초과 또는 일시적 오류가 나면 기간을 축소해 재시도
 // ============================================================
 async function fetchChunkAdaptive(mode, operation, inst, chunk, depth = 0) {
   const inqryBgnDt = `${toYmd(chunk.begin)}0000`;
@@ -232,21 +276,28 @@ async function fetchChunkAdaptive(mode, operation, inst, chunk, depth = 0) {
   const spanDays = daysBetween(chunk.begin, chunk.end);
   const splittable = spanDays > 1 && depth < MAX_SPLIT_DEPTH;
  
-  if (!res.error || !isRangeError(res) || !splittable) {
+  if (!res.error || !shouldSplitChunk(res) || !splittable) {
     return res;
   }
  
-  const half = Math.floor(spanDays / 2);
-  mode.effectiveRangeDays = Math.min(mode.effectiveRangeDays, half);
- 
-  const midEnd = addDays(chunk.begin, half - 1);
+  // A 30-day API request that exceeds the allowed period is retried as a
+  // 28-day range plus the remaining days, rather than two 15-day ranges.
+  // If a 28-day (or shorter) range still fails, keep the existing halving
+  // fallback so the request can continue to converge.
+  const leftDays =
+    spanDays > RANGE_ERROR_FALLBACK_DAYS
+      ? RANGE_ERROR_FALLBACK_DAYS
+      : Math.floor(spanDays / 2);
+  mode.effectiveRangeDays = Math.min(mode.effectiveRangeDays, leftDays);
+
+  const midEnd = addDays(chunk.begin, leftDays - 1);
   const left = { begin: chunk.begin, end: midEnd, todayVal: chunk.todayVal };
   const right = { begin: addDays(midEnd, 1), end: chunk.end, todayVal: chunk.todayVal };
  
-  const [a, b] = await Promise.all([
-    fetchChunkAdaptive(mode, operation, inst, left, depth + 1),
-    fetchChunkAdaptive(mode, operation, inst, right, depth + 1),
-  ]);
+  // Keep fallback requests sequential. Running both alongside the other
+  // queued jobs can cause the same upstream timeout again.
+  const a = await fetchChunkAdaptive(mode, operation, inst, left, depth + 1);
+  const b = await fetchChunkAdaptive(mode, operation, inst, right, depth + 1);
  
   return {
     items: [...a.items, ...b.items],

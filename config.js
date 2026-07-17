@@ -12,6 +12,15 @@ const NUM_OF_ROWS = 999;
  
 // API 조회기간 제한 (일). 실측 30일.
 const MAX_RANGE_DAYS = 30;
+
+// API 기간 초과 오류 시 우선 재시도할 조회기간 (일)
+const RANGE_ERROR_FALLBACK_DAYS = 28;
+
+// 일시적인 업스트림 오류(429/5xx) 발생 시 최초 요청 뒤 재시도 횟수
+const API_RETRY_COUNT = 3;
+
+// 재시도 대기 시간(ms). 재시도할 때마다 두 배로 증가한다.
+const API_RETRY_BASE_DELAY_MS = 800;
  
 // 기간 초과 오류 시 재분할 최대 깊이
 const MAX_SPLIT_DEPTH = 6;
