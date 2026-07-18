@@ -19,7 +19,11 @@ function serializeCsv(rows) {
 
 function csv(value) {
   const text = value !== null && typeof value === "object" ? JSON.stringify(value) : String(value ?? "");
-  return `="${text.replaceAll('"', '""')}"`;
+  // Excel 텍스트 강제 수식(="..."; 앞자리 0·긴 숫자 보존)을 유지하되, 셀 전체를 RFC 4180
+  // 표준 따옴표로 감싼다. 필드가 "로 시작해야 외부 파서가 값 안의 쉼표·따옴표·개행을
+  // 구분자로 오인하지 않는다.
+  const formula = `="${text}"`;
+  return `"${formula.replaceAll('"', '""')}"`;
 }
 
 function parseCsv(text) {
@@ -29,7 +33,11 @@ function parseCsv(text) {
   return rows.slice(1).map((cells) => Object.fromEntries(header.map((key, index) => [key, fromTextCell(cells[index] || "")])));
 }
 
-function fromTextCell(value) { return value.startsWith("=") ? value.slice(1) : value; }
+function fromTextCell(value) {
+  const match = /^="([\s\S]*)"$/.exec(value);
+  if (match) return match[1]; // 신규 형식: ="값" 수식에서 원래 값을 복원
+  return value.startsWith("=") ? value.slice(1) : value; // 구 형식 파일 하위 호환
+}
 
 function parseLines(text) {
   const rows = [];

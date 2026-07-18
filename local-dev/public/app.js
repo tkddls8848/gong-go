@@ -67,7 +67,7 @@ function renderRows(rows) { const pageCount = Math.max(1, Math.ceil(rows.length 
 function csvCell(value) { const text = String(value ?? ""); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }
 function downloadFilteredRows() { if (!filtered.length) return; const headers = ["유형", "공고번호", "업무", "수요기관", "사업명(공고명)", "게시일", "마감일", "첨부파일"]; const lines = [headers.join(","), ...filtered.map((row) => [row.mode === "pre" ? "사전공고" : "본공고", displayNumber(row), row.businessType, row.institution, row.title, row.publishedAt, row.closeAt, normalizeFiles(row.files).map((file) => `${file.name} (${file.url})`).join(" | ")].map(csvCell).join(","))]; const blob = new Blob([`\uFEFF${lines.join("\n")}`], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `gong-go_${localDateValue(new Date()).replaceAll("-", "")}.csv`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url); }
 function parseCsv(text) { const lines = parseLines(text.replace(/^\uFEFF/, "")); const header = lines.shift() || []; return lines.map((cells) => Object.fromEntries(header.map((key, index) => [key, fromTextCell(cells[index] || "")]))).map(displayRow); }
-function fromTextCell(value) { return value.startsWith("=") ? value.slice(1) : value; }
+function fromTextCell(value) { const match = /^="([\s\S]*)"$/.exec(value); if (match) return match[1]; return value.startsWith("=") ? value.slice(1) : value; }
 function parseLines(text) { const rows = []; let row = [], cell = "", quoted = false; for (let i = 0; i < text.length; i += 1) { const char = text[i]; if (quoted && char === '"' && text[i + 1] === '"') { cell += char; i += 1; } else if (char === '"') quoted = !quoted; else if (char === "," && !quoted) { row.push(cell); cell = ""; } else if ((char === "\n" || char === "\r") && !quoted) { if (char === "\r" && text[i + 1] === "\n") i += 1; row.push(cell); if (row.some(Boolean)) rows.push(row); row = []; cell = ""; } else cell += char; } if (cell || row.length) rows.push([...row, cell]); return rows; }
 function safeJson(value, fallback) { try { return JSON.parse(value); } catch { return fallback; } }
 function displayRow(row) {
@@ -78,9 +78,9 @@ function displayRow(row) {
   return {
     ...row,
     mode,
-    announcementNumber: row.bfSpecRgstNo || row.bidNtceNo || "",
+    announcementNumber: mode === "bid" ? row.bidNtceNo || "" : row.bfSpecRgstNo || "",
     institution: row.rlDminsttNm || row.dminsttNm || "",
-    businessType: row.bsnsDivNm || "",
+    businessType: mode === "bid" ? row.ntceKindNm || "" : row.bsnsDivNm || "",
     title: row.prdctClsfcNoNm || row.bidNtceNm || "",
     publishedAt: row.rgstDt || row.bidNtceDt || "",
     closeAt: row.opninRgstClseDt || row.bidClseDt || "",

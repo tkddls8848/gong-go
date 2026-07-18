@@ -201,7 +201,7 @@ async function migrateLegacyCsv() {
 async function readState() { try { const state = JSON.parse(await fs.readFile(STATE_FILE, "utf8")); return { completedJobs: state.completedJobs || [] }; } catch (error) { if (error.code === "ENOENT") return { completedJobs: [] }; throw error; } }
 async function readConfig() { try { return JSON.parse(await fs.readFile(CONFIG_FILE, "utf8")); } catch (error) { if (error.code === "ENOENT") throw new Error("sync.config.example.json을 복사해 sync.config.json을 만드세요."); throw error; } }
 function parseCsv(text) { const rows = parseLines(text.replace(/^\uFEFF/, "")); if (rows.length < 2) return []; const header = rows[0]; return rows.slice(1).map((cells) => Object.fromEntries(header.map((key, i) => [key, fromTextCell(cells[i] || "")]))); }
-function fromTextCell(value) { return value.startsWith("=") ? value.slice(1) : value; }
+function fromTextCell(value) { const match = /^="([\s\S]*)"$/.exec(value); if (match) return match[1]; return value.startsWith("=") ? value.slice(1) : value; }
 async function removeGeneratedColumns() {
   const generated = new Set(["id", "mode", "noticeType", "announcementNumber", "institution", "businessType", "title", "publishedAt", "closeAt", "files", "updatedAt"]);
   for (const file of await dailyFiles()) {
