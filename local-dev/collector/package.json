@@ -2,6 +2,7 @@
   "name": "gong-go-local-dev",
   "private": true,
   "scripts": {
-    "collect": "node collector.js"
+    "collect": "node collector.js",
+    "test": "node --test"
   }
 }

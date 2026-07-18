@@ -16,10 +16,11 @@ node collector.js
 
 ## 조회
 
-`local-dev` 폴더에서 정적 파일 서버를 실행하고 `http://localhost:8788/public/`을 엽니다.
+`local-dev` 폴더에서 서버를 실행하고 `http://localhost:8788/public/`을 엽니다.
 
 ```powershell
+cd C:\gong-go\local-dev
 python -m http.server 8788
 ```
 
-정적 페이지는 `collector/data/index.json`과 `collector/data/YYYY/MM/DD.csv` 날짜별 CSV를 읽습니다.
+정적 페이지는 `collector/data/index.json`과 `collector/data/pre/YYYY/MM/DD.csv`, `collector/data/bid/YYYY/MM/DD.csv`를 읽습니다. `index.html`을 파일 탐색기에서 직접 열면 브라우저 보안 정책 때문에 CSV를 읽을 수 없습니다.
