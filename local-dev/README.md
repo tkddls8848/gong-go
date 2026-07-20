@@ -23,4 +23,4 @@ cd C:\gong-go\local-dev
 python -m http.server 8788
 ```
 
-정적 페이지는 `collector/data/index.json`과 `collector/data/pre/YYYY/MM/DD.csv`, `collector/data/bid/YYYY/MM/DD.csv`를 읽습니다. `index.html`을 파일 탐색기에서 직접 열면 브라우저 보안 정책 때문에 CSV를 읽을 수 없습니다.
+정적 페이지는 `collector/data/index.json`과 `collector/data/pre/YYYY/MM/DD.csv.gz`, `collector/data/bid/YYYY/MM/DD.csv.gz`를 읽습니다. 날짜별 파일은 gzip으로 압축 저장하고, 브라우저에서 `DecompressionStream`으로 즉시 해제해 표시합니다. `index.html`을 파일 탐색기에서 직접 열면 브라우저 보안 정책 때문에 CSV를 읽을 수 없습니다.
