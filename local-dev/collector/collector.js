@@ -2,6 +2,7 @@
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
+const zlib = require("node:zlib");
 const { serializeCsv } = require("./csv-record");
 
 const ROOT = __dirname;
@@ -15,7 +16,7 @@ const RANGE_DAYS = 28;
 const RETRIES = 3;
 const DEFAULT_CONCURRENCY = 8;
 const FILE_CONCURRENCY = 16;
-const MIGRATIONS = ["rebalance-v1", "drop-generated-v1"];
+const MIGRATIONS = ["rebalance-v1", "drop-generated-v1", "gzip-storage-v1"];
 const TYPES = ["물품", "외자", "용역", "공사"];
 const MODE_ALIASES = { 사전공고: "pre", 본공고: "bid", pre: "pre", bid: "bid" };
 const MODE_LABELS = { pre: "사전공고", bid: "본공고" };
@@ -44,6 +45,7 @@ async function main() {
   // 전체 CSV를 다시 읽는 일회성 정리 작업은 완료 표시를 남겨 다음 실행부터 건너뛴다.
   if (migrateOnly || !state.migrations.has("rebalance-v1")) { await rebalanceModeDirectories(); state.migrations.add("rebalance-v1"); }
   if (migrateOnly || !state.migrations.has("drop-generated-v1")) { await removeGeneratedColumns(); state.migrations.add("drop-generated-v1"); }
+  if (migrateOnly || !state.migrations.has("gzip-storage-v1")) { await gzipStorage(); state.migrations.add("gzip-storage-v1"); }
   await saveState(state);
   if (migrateOnly) { await writeIndex(); return; }
   if (!SERVICE_KEY) throw new Error(".env에 SERVICE_KEY를 설정하세요.");
@@ -146,7 +148,7 @@ async function requestJson(url) {
 // 훑지 않고 바뀐 버킷의 파일만 건드린다. counts는 index.json을 매번 다시 만들지
 // 않기 위한 메모리 상의 파일별 건수 캐시다.
 function bucketKeyOf(row) { return `${recordMode(row)}|${recordDate(row)}`; }
-function relativePath(mode, day) { const [year, month, date] = day.split("-"); return `${mode}/${year}/${month}/${date}.csv`; }
+function relativePath(mode, day) { const [year, month, date] = day.split("-"); return `${mode}/${year}/${month}/${date}.csv.gz`; }
 
 async function readStore(begin, end) {
   const files = await dailyFiles();
@@ -210,10 +212,11 @@ async function writeIndexFromStore(store) {
     .sort((a, b) => a.date.localeCompare(b.date) || a.mode.localeCompare(b.mode));
   await fs.writeFile(INDEX_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), files: entries }, null, 2), "utf8");
 }
-async function readCsv(file) { try { return parseCsv(await fs.readFile(file, "utf8")); } catch (error) { if (error.code === "ENOENT") return []; throw error; } }
-async function writeCsv(file, rows) { await fs.writeFile(file, `\uFEFF${serializeCsv(rows)}\n`, "utf8"); }
-function dataFile(day, mode) { const [year, month, date] = day.split("-"); return path.join(DATA_DIR, mode, year, month, `${date}.csv`); }
-async function dailyFiles() {
+async function readCsv(file) { try { return parseCsv(zlib.gunzipSync(await fs.readFile(file)).toString("utf8")); } catch (error) { if (error.code === "ENOENT") return []; throw error; } }
+async function writeCsv(file, rows) { await fs.writeFile(file, zlib.gzipSync(Buffer.from(`\uFEFF${serializeCsv(rows)}\n`, "utf8"))); }
+function dataFile(day, mode) { const [year, month, date] = day.split("-"); return path.join(DATA_DIR, mode, year, month, `${date}.csv.gz`); }
+async function dailyFiles(extension = "csv.gz") {
+  const pattern = new RegExp(`^\\d{2}\\.${extension.replaceAll(".", "\\.")}$`);
   const result = [];
   for (const mode of Object.keys(MODES)) {
     const modePath = path.join(DATA_DIR, mode);
@@ -228,7 +231,7 @@ async function dailyFiles() {
       const monthPath = path.join(yearPath, monthEntry.name);
       const days = await fs.readdir(monthPath, { withFileTypes: true });
       for (const dayEntry of days) {
-        if (!dayEntry.isFile() || !/^\d{2}\.csv$/.test(dayEntry.name)) continue;
+        if (!dayEntry.isFile() || !pattern.test(dayEntry.name)) continue;
         const date = `${yearEntry.name}-${monthEntry.name}-${dayEntry.name.slice(0, 2)}`;
         result.push({ mode, date, path: `${mode}/${yearEntry.name}/${monthEntry.name}/${dayEntry.name}` });
       }
@@ -236,6 +239,19 @@ async function dailyFiles() {
   }
   }
   return result.sort((a, b) => a.date.localeCompare(b.date) || a.mode.localeCompare(b.mode));
+}
+// \uAE30\uC874 \uD3C9\uBB38 CSV(.csv)\uB97C gzip(.csv.gz)\uC73C\uB85C \uC555\uCD95\uD574 \uC800\uC7A5 \uC6A9\uB7C9\uC744 \uC904\uC774\uB294 1\uD68C\uC131 \uB9C8\uC774\uADF8\uB808\uC774\uC158.
+async function gzipStorage() {
+  const plainFiles = await dailyFiles("csv");
+  if (!plainFiles.length) return;
+  await mapPool(plainFiles, FILE_CONCURRENCY, async (file) => {
+    const source = path.join(DATA_DIR, file.path);
+    const text = await fs.readFile(source, "utf8");
+    await fs.writeFile(`${source}.gz`, zlib.gzipSync(Buffer.from(text, "utf8")));
+    await fs.rm(source);
+  });
+  await writeIndex();
+  console.log(`\uAE30\uC874 CSV ${plainFiles.length}\uAC1C\uB97C gzip\uC73C\uB85C \uC555\uCD95\uD588\uC2B5\uB2C8\uB2E4.`);
 }
 async function writeIndex(changedDates) {
   const files = await dailyFiles();
@@ -249,7 +265,7 @@ function recordMode(row) { return row.bidNtceNo ? "bid" : row.bfSpecRgstNo ? "pr
 function recordDate(row) { const match = String(row.rgstDt || row.bidNtceDt || "").match(/^(\d{4})[-.]?(\d{2})[-.]?(\d{2})/); return match ? `${match[1]}-${match[2]}-${match[3]}` : "undated"; }
 function isInRange(value, range) { return value >= range.begin && value <= range.end; }
 async function migrateLegacyCsv() {
-  const existingDailyFiles = [...await dailyFiles(), ...await legacyDailyFiles()];
+  const existingDailyFiles = [...await dailyFiles(), ...await dailyFiles("csv"), ...await legacyDailyFiles()];
   if (existingDailyFiles.length) return;
   const backupFile = path.join(DATA_DIR, "notices.legacy.csv");
   let source = LEGACY_CSV_FILE;
