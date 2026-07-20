@@ -3,5 +3,6 @@
   "end": "",
   "modes": ["사전공고", "본공고"],
   "businessTypes": ["물품", "외자", "용역", "공사"],
-  "resume": true
+  "resume": true,
+  "concurrency": 8
 }

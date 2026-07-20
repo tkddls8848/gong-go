@@ -13,6 +13,9 @@ const CONFIG_FILE = path.join(ROOT, "sync.config.json");
 const PAGE_SIZE = 999;
 const RANGE_DAYS = 28;
 const RETRIES = 3;
+const DEFAULT_CONCURRENCY = 8;
+const FILE_CONCURRENCY = 16;
+const MIGRATIONS = ["rebalance-v1", "drop-generated-v1"];
 const TYPES = ["물품", "외자", "용역", "공사"];
 const MODE_ALIASES = { 사전공고: "pre", 본공고: "bid", pre: "pre", bid: "bid" };
 const MODE_LABELS = { pre: "사전공고", bid: "본공고" };
@@ -34,11 +37,15 @@ main().catch((error) => { console.error(`수집 실패: ${error.message}`); proc
 
 async function main() {
   await fs.mkdir(DATA_DIR, { recursive: true });
+  const state = await readState();
+  const migrateOnly = process.argv.includes("--migrate-only");
   await migrateLegacyCsv();
   await migrateModeDirectories();
-  await rebalanceModeDirectories();
-  await removeGeneratedColumns();
-  if (process.argv.includes("--migrate-only")) { await writeIndex(); return; }
+  // 전체 CSV를 다시 읽는 일회성 정리 작업은 완료 표시를 남겨 다음 실행부터 건너뛴다.
+  if (migrateOnly || !state.migrations.has("rebalance-v1")) { await rebalanceModeDirectories(); state.migrations.add("rebalance-v1"); }
+  if (migrateOnly || !state.migrations.has("drop-generated-v1")) { await removeGeneratedColumns(); state.migrations.add("drop-generated-v1"); }
+  await saveState(state);
+  if (migrateOnly) { await writeIndex(); return; }
   if (!SERVICE_KEY) throw new Error(".env에 SERVICE_KEY를 설정하세요.");
   const config = await readConfig();
   const begin = parseDate(config.begin || "2015-01-01");
@@ -48,103 +55,160 @@ async function main() {
   const types = (config.businessTypes || TYPES).filter((type) => TYPES.includes(type));
   const jobs = [];
   for (const range of chunks(begin, end)) for (const mode of modes) for (const type of types) jobs.push({ range, mode, type });
-  const state = await readState();
-  const records = new Map((await readRecords(begin, end)).map((row) => [recordKey(row), row]).filter(([key]) => key));
+  httpLimit = Math.max(1, Number(config.concurrency) || DEFAULT_CONCURRENCY);
+  const store = await readStore(begin, end);
   const errors = [];
-  console.log(`전체 공고 수집 시작: ${jobs.length}개 작업, 기존 ${records.size}건`);
+  const completed = new Set(state.completedJobs);
+  const entries = jobs.map((job, index) => ({ job, index, id: JSON.stringify(job) }));
+  const pending = config.resume === false ? entries : entries.filter((entry) => !completed.has(entry.id));
+  console.log(`전체 공고 수집 시작: ${jobs.length}개 작업(대상 ${pending.length}개), 기존 ${store.location.size}건, 동시 요청 ${httpLimit}`);
 
-  for (let index = 0; index < jobs.length; index += 1) {
-    const job = jobs[index];
-    const id = JSON.stringify(job);
-    if (config.resume !== false && state.completedJobs.includes(id)) {
-      console.log(`[${index + 1}/${jobs.length}] 완료 구간 건너뜀 ${MODE_LABELS[job.mode]}/${job.type}/${job.range.begin}`);
-      continue;
+  // 배치 단위로 API를 동시에 호출하고, 병합·저장은 배치마다 한 번씩만 수행한다.
+  for (let offset = 0; offset < pending.length; offset += httpLimit) {
+    const batch = pending.slice(offset, offset + httpLimit);
+    const results = await mapPool(batch, batch.length, async (entry) => {
+      try { return { entry, items: await fetchJob(entry.job) }; } catch (error) { return { entry, error }; }
+    });
+    const changed = new Set();
+    for (const { entry, items, error } of results) {
+      const label = `[${entry.index + 1}/${jobs.length}] ${MODE_LABELS[entry.job.mode]}/${entry.job.type}/${entry.job.range.begin}`;
+      if (error) { errors.push({ job: entry.job, error: error.message }); console.error(`${label} 실패: ${error.message}`); continue; }
+      if (config.resume === false) clearJobRange(store, entry.job, changed);
+      applyItems(store, items, changed);
+      state.completedJobs.push(entry.id);
+      console.log(`${label}~${entry.job.range.end}: ${items.length}건`);
     }
-    try {
-      const items = await fetchJob(job);
-      const definition = MODES[job.mode];
-      const changedDates = new Set();
-      if (config.resume === false) {
-        for (const [recordId, record] of records) {
-          if (recordMode(record) !== job.mode || record.bsnsDivNm !== job.type || !isInRange(recordDate(record), job.range)) continue;
-          changedDates.add(recordDate(record));
-          records.delete(recordId);
-        }
-      }
-      for (const item of items) {
-        const key = recordKey(item);
-        if (!key) continue;
-        const previous = records.get(key);
-        if (previous) changedDates.add(recordDate(previous));
-        records.set(key, item);
-        changedDates.add(recordDate(item));
-      }
-      state.completedJobs.push(id);
-      await writeRecords([...records.values()], changedDates);
-      await fs.writeFile(STATE_FILE, JSON.stringify(state, null, 2), "utf8");
-      console.log(`[${index + 1}/${jobs.length}] ${MODE_LABELS[job.mode]}/${job.type}/${job.range.begin}~${job.range.end}: ${items.length}건`);
-    } catch (error) {
-      errors.push({ job, error: error.message });
-      console.error(`[${index + 1}/${jobs.length}] 실패 ${MODE_LABELS[job.mode]}/${job.type}/${job.range.begin}: ${error.message}`);
-    }
+    await writeRecords(store, changed);
+    await saveState(state);
   }
   await fs.writeFile(path.join(DATA_DIR, "sync-errors.json"), JSON.stringify(errors, null, 2), "utf8");
-  console.log(`완료: ${records.size}건 저장, 실패 ${errors.length}건`);
+  console.log(`완료: ${store.location.size}건 저장, 실패 ${errors.length}건`);
 }
 
 async function fetchJob(job) {
+  // 1페이지로 전체 페이지 수를 확인한 뒤 나머지 페이지를 동시에 받는다.
+  const first = await fetchPage(job, 1);
+  if (first.totalPages <= 1) return first.items;
+  const rest = await Promise.all(Array.from({ length: first.totalPages - 1 }, (_, index) => fetchPage(job, index + 2)));
+  return [...first.items, ...rest.flatMap((page) => page.items)];
+}
+
+async function fetchPage(job, pageNo) {
   const definition = MODES[job.mode];
-  const result = [];
-  let pageNo = 1;
-  let totalPages = 1;
-  while (pageNo <= totalPages) {
-    const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(PAGE_SIZE), inqryDiv: "1", inqryBgnDt: `${ymd(job.range.begin)}0000`, inqryEndDt: `${ymd(job.range.end)}2359`, ServiceKey: SERVICE_KEY });
-    const data = await requestJson(`${definition.base}/${definition.ops[job.type]}?${params}`);
-    const body = data?.response?.body;
-    if (!body) throw new Error(data?.response?.header?.resultMsg || JSON.stringify(data));
-    const items = Array.isArray(body.items) ? body.items : body.items?.item ? (Array.isArray(body.items.item) ? body.items.item : [body.items.item]) : [];
-    result.push(...items);
-    totalPages = Math.max(1, Math.ceil(Number(body.totalCount || 0) / Number(body.numOfRows || PAGE_SIZE)));
-    pageNo += 1;
-  }
-  return result;
+  const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(PAGE_SIZE), inqryDiv: "1", inqryBgnDt: `${ymd(job.range.begin)}0000`, inqryEndDt: `${ymd(job.range.end)}2359`, ServiceKey: SERVICE_KEY });
+  const data = await requestJson(`${definition.base}/${definition.ops[job.type]}?${params}`);
+  const body = data?.response?.body;
+  if (!body) throw new Error(data?.response?.header?.resultMsg || JSON.stringify(data));
+  const items = Array.isArray(body.items) ? body.items : body.items?.item ? (Array.isArray(body.items.item) ? body.items.item : [body.items.item]) : [];
+  return { items, totalPages: Math.max(1, Math.ceil(Number(body.totalCount || 0) / Number(body.numOfRows || PAGE_SIZE))) };
+}
+
+// 전역 HTTP 동시 실행 제한. 작업·페이지 병렬을 모두 이 세마포어 하나로 묶어
+// 나라장터 API에 동시에 나가는 요청 수를 한 값으로 통제한다.
+let httpLimit = DEFAULT_CONCURRENCY;
+let httpActive = 0;
+const httpQueue = [];
+function acquireHttp() { if (httpActive < httpLimit) { httpActive += 1; return Promise.resolve(); } return new Promise((resolve) => httpQueue.push(resolve)); }
+function releaseHttp() { const next = httpQueue.shift(); if (next) next(); else httpActive -= 1; }
+
+// 동시 실행 수를 제한하며 비동기 작업을 수행한다.
+async function mapPool(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) { const index = cursor; cursor += 1; results[index] = await worker(items[index], index); }
+  });
+  await Promise.all(runners);
+  return results;
 }
 
 async function requestJson(url) {
-  let lastError;
-  console.log(`[API 호출] ${url}`);
-  for (let attempt = 0; attempt <= RETRIES; attempt += 1) {
-    try {
-      const response = await fetch(url, { headers: { Accept: "application/json" } });
-      const text = await response.text();
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
-      return JSON.parse(text);
-    } catch (error) {
-      lastError = error;
-      if (attempt < RETRIES) await sleep(800 * 2 ** attempt);
+  await acquireHttp();
+  try {
+    let lastError;
+    for (let attempt = 0; attempt <= RETRIES; attempt += 1) {
+      try {
+        const response = await fetch(url, { headers: { Accept: "application/json" } });
+        const text = await response.text();
+        if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+        return JSON.parse(text);
+      } catch (error) {
+        lastError = error;
+        if (attempt < RETRIES) await sleep(800 * 2 ** attempt);
+      }
     }
+    throw lastError;
+  } finally {
+    releaseHttp();
   }
-  throw lastError;
 }
-async function readRecords(begin, end) {
+// 레코드를 (공고구분|일자) 버킷으로 나눠 들고 있어, 저장할 때 전체 배열을 다시
+// 훑지 않고 바뀐 버킷의 파일만 건드린다. counts는 index.json을 매번 다시 만들지
+// 않기 위한 메모리 상의 파일별 건수 캐시다.
+function bucketKeyOf(row) { return `${recordMode(row)}|${recordDate(row)}`; }
+function relativePath(mode, day) { const [year, month, date] = day.split("-"); return `${mode}/${year}/${month}/${date}.csv`; }
+
+async function readStore(begin, end) {
   const files = await dailyFiles();
   const beginDate = iso(begin);
   const endDate = iso(end);
+  const store = { buckets: new Map(), location: new Map(), counts: new Map() };
+  let previous = new Map();
+  try { previous = new Map(JSON.parse(await fs.readFile(INDEX_FILE, "utf8")).files.map((file) => [file.path, file.count])); } catch (error) { if (error.code !== "ENOENT") throw error; }
   const selected = files.filter((file) => file.date >= beginDate && file.date <= endDate);
-  const groups = await Promise.all(selected.map((file) => readCsv(path.join(DATA_DIR, file.path))));
-  return groups.flat();
-}
-async function writeRecords(rows, changedDates) {
-  for (const day of changedDates) {
-    for (const mode of Object.keys(MODES)) {
-      const file = dataFile(day, mode);
-      const dailyRows = rows.filter((row) => recordDate(row) === day && recordMode(row) === mode);
-      if (!dailyRows.length) { await fs.rm(file, { force: true }); continue; }
-      await fs.mkdir(path.dirname(file), { recursive: true });
-      await writeCsv(file, dailyRows);
+  await mapPool(selected, FILE_CONCURRENCY, async (file) => {
+    for (const row of await readCsv(path.join(DATA_DIR, file.path))) {
+      const key = recordKey(row);
+      if (!key) continue;
+      bucketFor(store, bucketKeyOf(row)).set(key, row);
+      store.location.set(key, bucketKeyOf(row));
     }
+  });
+  for (const [key, bucket] of store.buckets) { const [mode, day] = key.split("|"); store.counts.set(relativePath(mode, day), bucket.size); }
+  // 수집 범위 밖 파일은 읽지 않고 기존 index.json 건수를 그대로 승계한다.
+  const missing = files.filter((file) => !store.counts.has(file.path));
+  await mapPool(missing, FILE_CONCURRENCY, async (file) => {
+    store.counts.set(file.path, previous.has(file.path) ? previous.get(file.path) : (await readCsv(path.join(DATA_DIR, file.path))).length);
+  });
+  return store;
+}
+
+function bucketFor(store, key) { let bucket = store.buckets.get(key); if (!bucket) { bucket = new Map(); store.buckets.set(key, bucket); } return bucket; }
+
+function applyItems(store, items, changed) {
+  for (const item of items) {
+    const key = recordKey(item);
+    if (!key) continue;
+    const target = bucketKeyOf(item);
+    const source = store.location.get(key);
+    // 등록일이 바뀐 공고는 이전 일자 파일에서 빼야 중복이 남지 않는다.
+    if (source && source !== target) { store.buckets.get(source)?.delete(key); changed.add(source); }
+    bucketFor(store, target).set(key, item);
+    store.location.set(key, target);
+    changed.add(target);
   }
-  await writeIndex(changedDates);
+}
+
+async function writeRecords(store, changed) {
+  for (const key of changed) {
+    const [mode, day] = key.split("|");
+    if (!mode || day === "undated") continue;
+    const file = dataFile(day, mode);
+    const rows = [...(store.buckets.get(key)?.values() ?? [])];
+    if (!rows.length) { await fs.rm(file, { force: true }); store.buckets.delete(key); store.counts.delete(relativePath(mode, day)); continue; }
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await writeCsv(file, rows);
+    store.counts.set(relativePath(mode, day), rows.length);
+  }
+  await writeIndexFromStore(store);
+}
+
+// 디렉터리를 다시 훑거나 CSV를 다시 파싱하지 않고 메모리 건수로 index.json을 쓴다.
+async function writeIndexFromStore(store) {
+  const entries = [...store.counts.entries()]
+    .map(([file, count]) => { const [mode, year, month, name] = file.split("/"); return { mode, date: `${year}-${month}-${name.slice(0, 2)}`, path: file, count }; })
+    .sort((a, b) => a.date.localeCompare(b.date) || a.mode.localeCompare(b.mode));
+  await fs.writeFile(INDEX_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), files: entries }, null, 2), "utf8");
 }
 async function readCsv(file) { try { return parseCsv(await fs.readFile(file, "utf8")); } catch (error) { if (error.code === "ENOENT") return []; throw error; } }
 async function writeCsv(file, rows) { await fs.writeFile(file, `\uFEFF${serializeCsv(rows)}\n`, "utf8"); }
@@ -198,7 +262,30 @@ async function migrateLegacyCsv() {
   if (source === LEGACY_CSV_FILE) await fs.rename(LEGACY_CSV_FILE, backupFile);
   console.log(`기존 notices.csv를 ${grouped.size}개 일자별 파일로 분할했습니다.`);
 }
-async function readState() { try { const state = JSON.parse(await fs.readFile(STATE_FILE, "utf8")); return { completedJobs: state.completedJobs || [] }; } catch (error) { if (error.code === "ENOENT") return { completedJobs: [] }; throw error; } }
+async function readState() {
+  try {
+    const state = JSON.parse(await fs.readFile(STATE_FILE, "utf8"));
+    return { completedJobs: state.completedJobs || [], migrations: new Set(state.migrations || []) };
+  } catch (error) {
+    if (error.code === "ENOENT") return { completedJobs: [], migrations: new Set(MIGRATIONS) }; // 새 데이터 디렉터리는 이관할 대상이 없다
+    throw error;
+  }
+}
+async function saveState(state) { await fs.writeFile(STATE_FILE, JSON.stringify({ completedJobs: [...new Set(state.completedJobs)], migrations: [...state.migrations] }, null, 2), "utf8"); }
+
+// resume:false일 때 해당 작업 구간의 기존 레코드를 비운다. 버킷 단위라 구간 밖은 건드리지 않는다.
+function clearJobRange(store, job, changed) {
+  for (const [key, bucket] of store.buckets) {
+    const [mode, day] = key.split("|");
+    if (mode !== job.mode || !isInRange(day, job.range)) continue;
+    for (const [recordId, record] of bucket) {
+      if (record.bsnsDivNm !== job.type) continue;
+      bucket.delete(recordId);
+      store.location.delete(recordId);
+      changed.add(key);
+    }
+  }
+}
 async function readConfig() { try { return JSON.parse(await fs.readFile(CONFIG_FILE, "utf8")); } catch (error) { if (error.code === "ENOENT") throw new Error("sync.config.example.json을 복사해 sync.config.json을 만드세요."); throw error; } }
 function parseCsv(text) { const rows = parseLines(text.replace(/^\uFEFF/, "")); if (rows.length < 2) return []; const header = rows[0]; return rows.slice(1).map((cells) => Object.fromEntries(header.map((key, i) => [key, fromTextCell(cells[i] || "")]))); }
 function fromTextCell(value) { const match = /^="([\s\S]*)"$/.exec(value); if (match) return match[1]; return value.startsWith("=") ? value.slice(1) : value; }
