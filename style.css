@@ -27,6 +27,50 @@ header h1 {
   color: #666;
   font-size: 14px;
 }
+
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 7px;
+}
+
+.header-top h1 {
+  margin: 0;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  background: #e8edf3;
+  border: 1px solid #d3dbe4;
+  border-radius: 9px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.mode-toggle-btn {
+  border: none;
+  background: transparent;
+  padding: 8px 20px;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #5b6b7d;
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.mode-toggle-btn:hover {
+  color: #256c9c;
+}
+
+.mode-toggle-btn.active {
+  background: #256c9c;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(37, 108, 156, 0.3);
+}
  
 .panel {
   background: #fff;

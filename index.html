@@ -9,9 +9,14 @@
 <body>
   <div class="container">
     <header>
-      <h1 id="app-title">나라장터 사전공고 조회</h1>
+      <div class="header-top">
+        <h1 id="app-title">나라장터 사전공고 조회</h1>
+        <div class="mode-toggle" id="mode-toggle" role="group" aria-label="공고 유형 선택">
+          <button type="button" class="mode-toggle-btn" data-mode="pre" aria-pressed="true">사전공고</button>
+          <button type="button" class="mode-toggle-btn" data-mode="bid" aria-pressed="false">본공고</button>
+        </div>
+      </div>
       <p class="subtitle" id="app-subtitle"></p>
- 
     </header>
  
     <section class="panel">
@@ -37,13 +42,6 @@
     <section class="panel">
       <h2>조회 조건</h2>
       <div class="options-row">
-        <div class="option-group">
-          <label class="option-label" for="mode">공고 유형</label>
-          <select id="mode">
-            <option value="pre">사전공고</option>
-            <option value="bid">본공고</option>
-          </select>
-        </div>
         <div class="option-group">
           <span class="option-label">업무구분</span>
           <label><input type="checkbox" value="물품" class="bsns-checkbox" checked /> 물품</label>

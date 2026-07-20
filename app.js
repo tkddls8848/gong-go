@@ -14,7 +14,8 @@ const appSubtitle = document.getElementById("app-subtitle");
 const periodLabel = document.getElementById("period-label");
 const resultsHintEl = document.getElementById("results-hint");
  
-const modeSelect = document.getElementById("mode");
+const modeToggle = document.getElementById("mode-toggle");
+const modeToggleBtns = modeToggle.querySelectorAll(".mode-toggle-btn");
  
 const institutionsBody = document.getElementById("institutions-body");
 const addRowBtn = document.getElementById("add-row-btn");
@@ -653,7 +654,14 @@ searchBtn.addEventListener("click", async () => {
  
 function applyMode(key) {
   currentMode = MODES[key];
- 
+
+  // 상단 토글버튼 활성 상태 갱신
+  modeToggleBtns.forEach((btn) => {
+    const active = btn.dataset.mode === key;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", String(active));
+  });
+
   // 헤더/문구 갱신
   appTitle.textContent = currentMode.title;
   appSubtitle.textContent = currentMode.subtitle;
@@ -669,8 +677,9 @@ function applyMode(key) {
   closeFileModal();
 }
  
-modeSelect.addEventListener("change", () => {
-  if (modeSelect.value !== currentMode.key) applyMode(modeSelect.value);
+modeToggle.addEventListener("click", (e) => {
+  const btn = e.target.closest(".mode-toggle-btn");
+  if (btn && btn.dataset.mode !== currentMode.key) applyMode(btn.dataset.mode);
 });
  
 // ============================================================
@@ -678,5 +687,5 @@ modeSelect.addEventListener("change", () => {
 // ============================================================
 initInstitutions();
 initDateRange();
-applyMode(modeSelect.value); // 기본: 사전공고
+applyMode("pre"); // 기본: 사전공고
  
