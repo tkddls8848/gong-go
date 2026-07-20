@@ -26,6 +26,8 @@ const resultsBody = document.getElementById("results-body");
 const downloadBtn = document.getElementById("download-btn");
 const beginDateInput = document.getElementById("begin-date");
 const endDateInput = document.getElementById("end-date");
+const titleFilterInput = document.getElementById("title-filter");
+const noticeNoInput = document.getElementById("notice-no-filter");
  
 const fileModal = document.getElementById("file-modal");
 const modalTitle = document.getElementById("modal-title");
@@ -157,7 +159,7 @@ async function runPool(tasks, limit, onProgress) {
 // ============================================================
 // 나라장터 API 호출 (단일 기간) - 현재 모드 설정 사용
 // ============================================================
-async function fetchNotices(mode, operation, inst, inqryBgnDt, inqryEndDt) {
+async function fetchNotices(mode, operation, inst, inqryBgnDt, inqryEndDt, filters) {
   const allItems = [];
   let pageNo = 1;
   let totalPages = 1;
@@ -171,13 +173,19 @@ async function fetchNotices(mode, operation, inst, inqryBgnDt, inqryEndDt) {
       inqryBgnDt,
       inqryEndDt,
     });
- 
+
     if (inst.code) {
       params.set("dminsttCd", inst.code);
     } else {
       params.set("dminsttNm", inst.name);
     }
- 
+
+    // 조회조건 개별 필터(사업명/공고번호)를 지원 API 파라미터로 전달
+    for (const [uiKey, def] of Object.entries(mode.searchFields || {})) {
+      const val = filters && filters[uiKey];
+      if (val) params.set(def.param, val);
+    }
+
     const url = `${mode.baseUrl}/${operation}?${params.toString()}`;
  
     let data;
@@ -266,11 +274,11 @@ function shouldSplitChunk(res) {
 // ============================================================
 // 적응형 조회: 기간 초과 또는 일시적 오류가 나면 기간을 축소해 재시도
 // ============================================================
-async function fetchChunkAdaptive(mode, operation, inst, chunk, depth = 0) {
+async function fetchChunkAdaptive(mode, operation, inst, chunk, filters, depth = 0) {
   const inqryBgnDt = `${toYmd(chunk.begin)}0000`;
   const inqryEndDt = `${toYmd(chunk.end)}${endTimeFor(chunk.end, chunk.todayVal)}`;
- 
-  const res = await fetchNotices(mode, operation, inst, inqryBgnDt, inqryEndDt);
+
+  const res = await fetchNotices(mode, operation, inst, inqryBgnDt, inqryEndDt, filters);
  
   const spanDays = daysBetween(chunk.begin, chunk.end);
   const splittable = spanDays > 1 && depth < MAX_SPLIT_DEPTH;
@@ -295,8 +303,8 @@ async function fetchChunkAdaptive(mode, operation, inst, chunk, depth = 0) {
  
   // Keep fallback requests sequential. Running both alongside the other
   // queued jobs can cause the same upstream timeout again.
-  const a = await fetchChunkAdaptive(mode, operation, inst, left, depth + 1);
-  const b = await fetchChunkAdaptive(mode, operation, inst, right, depth + 1);
+  const a = await fetchChunkAdaptive(mode, operation, inst, left, filters, depth + 1);
+  const b = await fetchChunkAdaptive(mode, operation, inst, right, filters, depth + 1);
  
   return {
     items: [...a.items, ...b.items],
@@ -366,6 +374,27 @@ function collectInstitutions() {
 function collectBusinessTypes() {
   const checkboxes = document.querySelectorAll(".bsns-checkbox:checked");
   return Array.from(checkboxes).map((cb) => cb.value);
+}
+
+// 조회조건 개별 필터(사업명/공고번호) 입력값 수집 (빈 값은 제외)
+function collectFilters() {
+  const filters = {};
+  const title = titleFilterInput.value.trim();
+  const noticeNo = noticeNoInput.value.trim();
+  if (title) filters["사업명"] = title;
+  if (noticeNo) filters["공고번호"] = noticeNo;
+  return filters;
+}
+
+// API가 필터 파라미터를 무시하는 경우를 대비한 클라이언트 보조필터
+function rowMatchesFilters(row, filters, mode) {
+  for (const [uiKey, def] of Object.entries(mode.searchFields || {})) {
+    const q = norm(filters[uiKey]).toLowerCase();
+    if (!q) continue;
+    const val = norm(row[def.column]).toLowerCase();
+    if (!val.includes(q)) return false;
+  }
+  return true;
 }
  
 function showStatus(message, type = "info") {
@@ -551,7 +580,8 @@ searchBtn.addEventListener("click", async () => {
  
   const institutions = collectInstitutions();
   const businessTypes = collectBusinessTypes();
- 
+  const filters = collectFilters();
+
   if (institutions.length === 0) {
     showStatus("관심 기관을 한 개 이상 입력해주세요.", "error");
     return;
@@ -591,7 +621,7 @@ searchBtn.addEventListener("click", async () => {
   try {
     const tasks = jobs.map(
       ({ inst, bsnsDiv, chunk }) => () =>
-        fetchChunkAdaptive(mode, mode.operations[bsnsDiv], inst, chunk)
+        fetchChunkAdaptive(mode, mode.operations[bsnsDiv], inst, chunk, filters)
     );
     const results = await runPool(tasks, CONCURRENCY, showProgress);
  
@@ -614,6 +644,7 @@ searchBtn.addEventListener("click", async () => {
         if (key) seen.add(key);
  
         const row = mode.mapRow(item, bsnsDiv);
+        if (!rowMatchesFilters(row, filters, mode)) continue;
         row._files = mode.extractFiles(item);
         rows.push(row);
       }
@@ -671,6 +702,8 @@ function applyMode(key) {
  
   // 모드가 바뀌면 이전 결과는 무효 → 초기화
   lastResultRows = [];
+  titleFilterInput.value = "";
+  noticeNoInput.value = "";
   resultsBody.innerHTML = "";
   resultsPanel.style.display = "none";
   clearStatus();

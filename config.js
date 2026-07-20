@@ -111,6 +111,12 @@ const MODES = {
         입찰마감일시: item.opninRgstClseDt || "",
       };
     },
+    // 조회조건 개별 필터 → API 파라미터 매핑 + 결과 컬럼(클라이언트 보조필터용)
+    //  · 사업명: prdctClsfcNoNm(품명), 공고번호: bfSpecRgstNo(사전규격등록번호)
+    searchFields: {
+      사업명: { param: "prdctClsfcNoNm", column: "사업명" },
+      공고번호: { param: "bfSpecRgstNo", column: "입찰공고번호" },
+    },
     // 첨부파일: specDocFileUrl1~5 (파일명 미제공)
     extractFiles(item) {
       const files = [];
@@ -156,6 +162,12 @@ const MODES = {
         입찰공고일시: item.bidNtceDt || "",
         입찰마감일시: item.bidClseDt || "",
       };
+    },
+    // 조회조건 개별 필터 → API 파라미터 매핑 + 결과 컬럼(클라이언트 보조필터용)
+    //  · 사업명: bidNtceNm(입찰공고명), 공고번호: bidNtceNo(입찰공고번호)
+    searchFields: {
+      사업명: { param: "bidNtceNm", column: "사업명" },
+      공고번호: { param: "bidNtceNo", column: "입찰공고번호" },
     },
     // 첨부파일: ntceSpecDocUrl1~10 + ntceSpecFileNm1~10 (파일명 제공)
     extractFiles(item) {

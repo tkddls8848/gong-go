@@ -186,6 +186,19 @@ table {
   font-size: 14px;
   font-family: inherit;
 }
+
+.text-input {
+  padding: 6px 10px;
+  border: 1px solid #d5d8dd;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  min-width: 220px;
+}
+
+.filter-row {
+  margin-top: 14px;
+}
  
 .date-sep {
   color: #888;
