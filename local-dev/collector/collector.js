@@ -3,7 +3,7 @@ const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
 const zlib = require("node:zlib");
-const { serializeCsv } = require("./csv-record");
+const { serializeCsv, parseCsv } = require("./csv-record");
 
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
@@ -16,7 +16,7 @@ const RANGE_DAYS = 28;
 const RETRIES = 3;
 const DEFAULT_CONCURRENCY = 8;
 const FILE_CONCURRENCY = 16;
-const MIGRATIONS = ["rebalance-v1", "drop-generated-v1", "gzip-storage-v1"];
+const MIGRATIONS = ["rebalance-v1", "drop-generated-v1", "gzip-storage-v1", "compact-empty-v1"];
 const TYPES = ["물품", "외자", "용역", "공사"];
 const MODE_ALIASES = { 사전공고: "pre", 본공고: "bid", pre: "pre", bid: "bid" };
 const MODE_LABELS = { pre: "사전공고", bid: "본공고" };
@@ -43,9 +43,13 @@ async function main() {
   await migrateLegacyCsv();
   await migrateModeDirectories();
   // 전체 CSV를 다시 읽는 일회성 정리 작업은 완료 표시를 남겨 다음 실행부터 건너뛴다.
-  if (migrateOnly || !state.migrations.has("rebalance-v1")) { await rebalanceModeDirectories(); state.migrations.add("rebalance-v1"); }
-  if (migrateOnly || !state.migrations.has("drop-generated-v1")) { await removeGeneratedColumns(); state.migrations.add("drop-generated-v1"); }
-  if (migrateOnly || !state.migrations.has("gzip-storage-v1")) { await gzipStorage(); state.migrations.add("gzip-storage-v1"); }
+  // 완료된 작업은 --migrate-only로도 다시 돌리지 않는다. rebalanceModeDirectories는
+  // 전체 행을 한꺼번에 메모리에 올려, 현재 데이터 규모에서 재실행하면 힙이 터진다.
+  // 정말 다시 돌려야 하면 sync-state.json의 migrations에서 해당 항목을 지우면 된다.
+  if (!state.migrations.has("rebalance-v1")) { await rebalanceModeDirectories(); state.migrations.add("rebalance-v1"); }
+  if (!state.migrations.has("drop-generated-v1")) { await removeGeneratedColumns(); state.migrations.add("drop-generated-v1"); }
+  if (!state.migrations.has("gzip-storage-v1")) { await gzipStorage(); state.migrations.add("gzip-storage-v1"); }
+  if (!state.migrations.has("compact-empty-v1")) { await compactEmptyCells(); state.migrations.add("compact-empty-v1"); }
   await saveState(state);
   if (migrateOnly) { await writeIndex(); return; }
   if (!SERVICE_KEY) throw new Error(".env에 SERVICE_KEY를 설정하세요.");
@@ -253,6 +257,21 @@ async function gzipStorage() {
   await writeIndex();
   console.log(`\uAE30\uC874 CSV ${plainFiles.length}\uAC1C\uB97C gzip\uC73C\uB85C \uC555\uCD95\uD588\uC2B5\uB2C8\uB2E4.`);
 }
+// 빈 셀을 감싸던 ="" 수식을 걷어내는 1회성 마이그레이션. 새 직렬화로 다시 쓰기만 하면
+// 되고, 값·컬럼·행 순서는 그대로라 index.json은 다시 만들지 않는다.
+async function compactEmptyCells() {
+  const files = await dailyFiles();
+  if (!files.length) return;
+  let saved = 0;
+  await mapPool(files, FILE_CONCURRENCY, async (file) => {
+    const target = path.join(DATA_DIR, file.path);
+    const before = (await fs.stat(target)).size;
+    await writeCsv(target, await readCsv(target));
+    const after = (await fs.stat(target)).size;
+    saved += before - after; // await를 낀 누적은 값을 잃으므로 한 문장으로 더한다
+  });
+  console.log(`빈 셀 래핑을 제거해 ${files.length}개 파일에서 ${(saved / 1024 / 1024).toFixed(1)}MB를 줄였습니다.`);
+}
 async function writeIndex(changedDates) {
   const files = await dailyFiles();
   let previous = new Map();
@@ -303,8 +322,6 @@ function clearJobRange(store, job, changed) {
   }
 }
 async function readConfig() { try { return JSON.parse(await fs.readFile(CONFIG_FILE, "utf8")); } catch (error) { if (error.code === "ENOENT") throw new Error("sync.config.example.json을 복사해 sync.config.json을 만드세요."); throw error; } }
-function parseCsv(text) { const rows = parseLines(text.replace(/^\uFEFF/, "")); if (rows.length < 2) return []; const header = rows[0]; return rows.slice(1).map((cells) => Object.fromEntries(header.map((key, i) => [key, fromTextCell(cells[i] || "")]))); }
-function fromTextCell(value) { const match = /^="([\s\S]*)"$/.exec(value); if (match) return match[1]; return value.startsWith("=") ? value.slice(1) : value; }
 async function removeGeneratedColumns() {
   const generated = new Set(["id", "mode", "noticeType", "announcementNumber", "institution", "businessType", "title", "publishedAt", "closeAt", "files", "updatedAt"]);
   for (const file of await dailyFiles()) {
@@ -375,7 +392,6 @@ async function rebalanceModeDirectories() {
   for (const file of files) { const source = path.join(DATA_DIR, file.path); if (!targets.has(source)) await fs.rm(source, { force: true }); }
   await writeIndex(new Set(files.map((file) => file.date)));
 }
-function parseLines(text) { const rows = []; let row = [], cell = "", quoted = false; for (let i = 0; i < text.length; i += 1) { const char = text[i]; if (quoted && char === '"' && text[i + 1] === '"') { cell += char; i += 1; } else if (char === '"') quoted = !quoted; else if (char === "," && !quoted) { row.push(cell); cell = ""; } else if ((char === "\n" || char === "\r") && !quoted) { if (char === "\r" && text[i + 1] === "\n") i += 1; row.push(cell); if (row.some(Boolean)) rows.push(row); row = []; cell = ""; } else cell += char; } if (cell || row.length) rows.push([...row, cell]); return rows; }
 function chunks(begin, end) { const result = []; for (let cursor = new Date(begin); cursor <= end;) { const finish = new Date(Math.min(addDays(cursor, RANGE_DAYS - 1), end)); result.push({ begin: iso(cursor), end: iso(finish) }); cursor = addDays(finish, 1); } return result; }
 function parseDate(value) { const result = new Date(`${value}T00:00:00`); return Number.isNaN(result.valueOf()) ? null : result; }
 function addDays(value, days) { const result = new Date(value); result.setDate(result.getDate() + days); return result; }
