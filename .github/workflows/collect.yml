@@ -1,0 +1,79 @@
+name: collect
+
+# 나라장터 공고를 매일 수집해 local-dev/collector/data 의 gzip을 갱신하고,
+# 바뀐 파일만 커밋한다. Pages는 이 커밋을 받아 자동 재배포한다.
+on:
+  schedule:
+    - cron: "0 20 * * *" # UTC 20:00 = KST 05:00
+  workflow_dispatch:
+    inputs:
+      begin:
+        description: "수집 시작일(YYYY-MM-DD). 비우면 최근 35일."
+        required: false
+        default: ""
+      end:
+        description: "수집 종료일(YYYY-MM-DD). 비우면 오늘."
+        required: false
+        default: ""
+
+# 같은 브랜치에서 수집이 겹치지 않게 한다(부분 커밋/충돌 방지).
+concurrency:
+  group: collect-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 갱신된 데이터를 브랜치에 커밋
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 커밋된 gzip을 그대로 받아 증분 수집의 기준으로 삼는다.
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Compute range
+        id: range
+        run: |
+          BEGIN="${{ github.event.inputs.begin }}"
+          END="${{ github.event.inputs.end }}"
+          # 스케줄 실행은 최근 35일만. 과거 날짜는 이미 커밋된 gzip을 승계한다.
+          if [ -z "$BEGIN" ]; then BEGIN="$(date -u -d '35 days ago' +%Y-%m-%d)"; fi
+          echo "begin=$BEGIN" >> "$GITHUB_OUTPUT"
+          echo "end=$END" >> "$GITHUB_OUTPUT"
+          echo "수집 범위: ${BEGIN:-(최근35일)} ~ ${END:-(오늘)}"
+
+      - name: Collect
+        working-directory: local-dev/collector
+        env:
+          SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+          SYNC_BEGIN: ${{ steps.range.outputs.begin }}
+          SYNC_END: ${{ steps.range.outputs.end }}
+        run: node collector.js
+
+      - name: Fail on collect errors
+        working-directory: local-dev/collector
+        run: |
+          if [ -s data/sync-errors.json ] && [ "$(node -e 'process.stdout.write(String(require("./data/sync-errors.json").length))')" != "0" ]; then
+            echo "수집 중 실패한 작업이 있습니다:" >&2
+            cat data/sync-errors.json >&2
+            exit 1
+          fi
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add local-dev/collector/data
+          if git diff --cached --quiet; then
+            echo "변경된 데이터 없음 — 커밋 생략."
+            exit 0
+          fi
+          git commit -m "data: ${{ steps.range.outputs.begin }} 이후 공고 갱신 (자동 수집)"
+          git push origin HEAD:${{ github.ref_name }}

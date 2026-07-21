@@ -14,13 +14,13 @@ const modalClose = $("#modal-close");
 const downloadAllBtn = $("#download-all-btn");
 const downloadBtn = $("#download-btn");
 
-const DATA_BASE = "../collector/data";
+const DATA_BASE = "/data";
 
 if (location.protocol === "file:") {
-  $("#status").textContent = "CSV 조회는 웹 서버에서만 가능합니다. C:\\gong-go\\local-dev에서 python -m http.server 8788 실행 후 http://localhost:8788/public/ 를 여세요.";
+  $("#status").textContent = "CSV 조회는 웹 서버에서만 가능합니다. 배포된 주소로 접속하거나, 로컬에서는 local-dev 폴더에서 python -m http.server 8788 실행 후 http://localhost:8788/public/ 를 여세요.";
   renderRows([]);
 } else fetch(`${DATA_BASE}/index.json`)
-  .then((response) => { if (!response.ok) throw new Error("CSV 경로를 찾지 못했습니다. C:\\gong-go\\local-dev에서 python -m http.server 8788을 실행했는지 확인하세요."); return response.json(); })
+  .then((response) => { if (!response.ok) throw new Error("데이터를 찾지 못했습니다. 잠시 후 다시 시도해 주세요."); return response.json(); })
   .then((index) => { fileIndex = index.files || []; setDefaultSearchRange(); $("#status").textContent = `${fileIndex.length}개 일자별 CSV를 찾았습니다.`; applyFilters(); })
   .catch((error) => { $("#status").textContent = error.message; renderRows([]); });
 

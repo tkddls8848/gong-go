@@ -50,8 +50,9 @@ async function main() {
   if (migrateOnly) { await writeIndex(); return; }
   if (!SERVICE_KEY) throw new Error(".env에 SERVICE_KEY를 설정하세요.");
   const config = await readConfig();
-  const begin = parseDate(config.begin || "2015-01-01");
-  const end = parseDate(config.end || today());
+  // 크론 러너는 sync.config.json을 고치지 않고 SYNC_BEGIN/SYNC_END로 이번 실행 범위만 좁힌다.
+  const begin = parseDate(process.env.SYNC_BEGIN || config.begin || "2015-01-01");
+  const end = parseDate(process.env.SYNC_END || config.end || today());
   if (!begin || !end || begin > end) throw new Error("sync.config.json의 기간을 확인하세요.");
   const modes = (config.modes || ["사전공고", "본공고"]).map((mode) => MODE_ALIASES[mode]).filter((mode) => MODES[mode]);
   const types = (config.businessTypes || TYPES).filter((type) => TYPES.includes(type));

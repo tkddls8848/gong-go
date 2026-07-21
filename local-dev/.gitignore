@@ -1,2 +1,10 @@
 collector/.env
-collector/data/
+
+# 배포용 데이터(gzip)는 추적한다. 러너/로컬 상태 파일만 제외.
+collector/data/sync-state.json
+collector/data/sync-errors.json
+collector/data/notices.csv
+collector/data/notices.legacy.csv
+
+# Pages 빌드가 collector/data → public/data로 복사하는 산출물(커밋 대상 아님).
+public/data/
