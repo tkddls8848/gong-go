@@ -1,10 +1,15 @@
 # local-dev 클라우드플레어 배포 계획
 
-`local-dev`(수집기 + CSV 뷰어)를 Cloudflare에 올려 여러 사람이 브라우저로 접근할 수 있게 하는 계획.
+`local-dev`(수집기 + CSV 뷰어)를 Cloudflare Pages에 올려 여러 사람이 브라우저로 접근할 수 있게 하는 계획.
 
-- **저장**: Cloudflare R2 (CSV) + Cloudflare Pages (앱)
-- **수집**: GitHub Actions 크론 (매일 자동)
+- **저장**: gzip 데이터를 Git에 커밋 → Cloudflare Pages가 정적 파일로 서빙
+- **수집**: GitHub Actions 크론 (매일 자동) → 바뀐 gzip만 커밋 → Pages 자동 재배포
 - **대상**: 기존 `gong-go.pages.dev`와 **별도 Pages 프로젝트** (예: `gong-go-archive`)
+
+> 이전 판은 데이터를 R2에 두는 안이었다. 그 사이 수집기가 날짜별 파일을 이미 gzip으로
+> 저장하도록 바뀌어 전체 규모가 수십 MB로 작아졌다. 이 규모에서는 gzip을 그대로 Git에
+> 커밋해 Pages 정적 파일로 서빙하는 편이 훨씬 단순하다(R2·바인딩·업로드 스크립트 불필요).
+> R2는 데이터가 수 GB로 커질 때의 대안으로 6장에 남겨 둔다.
 
 ---
 
@@ -15,197 +20,196 @@
 | 위치 | 역할 | 실행 환경 |
 |---|---|---|
 | `/`(루트) | 나라장터 API 실시간 조회 앱 | Pages + Functions (배포 완료) |
-| `local-dev/collector/` | 공공데이터 API 수집기 | 로컬 Node |
-| `local-dev/public/` | 수집된 CSV 뷰어 | 로컬 정적 서버 |
+| `local-dev/collector/` | 공공데이터 API 수집기 | 로컬 Node / GitHub Actions |
+| `local-dev/public/` | 수집된 CSV 뷰어 | 로컬 정적 서버 / Pages |
 
 두 앱은 완전히 분리되어 있다. 루트 앱은 API를 실시간 프록시하고, `local-dev`는 미리 수집한 CSV를 읽는다.
 
-### 실측 데이터 규모
+### 이미 끝나 있는 것 (수집기 마이그레이션)
 
-`collector/data/bid/2025/01/06.csv` 기준:
+`collector.js`는 다음을 이미 수행했다. 이전 배포계획서의 "슬림본 생성" 상당 부분이 gzip 압축으로 대체된 셈이다.
 
-| 항목 | 값 |
-|---|---|
-| 컬럼 수 | 170 |
-| 행 수 | 1,019 |
-| 원본 크기 | 3.0 MB (행당 약 3 KB) |
-| gzip | 279 KB |
-| 뷰어가 실제 쓰는 컬럼 | 12개 + 첨부 URL/파일명 20개 |
-| 슬림화 후 | 1.1 MB / gzip 105 KB |
+- `gzip-storage-v1`: 날짜별 파일을 `.csv.gz`로 압축 저장(수백 개, 총 수십 MB).
+- `drop-generated-v1`: 파생 컬럼(`id`·`mode`·`title` 등) 제거 → 뷰어가 읽을 때 `displayRow()`로 재생성.
+- 프론트(`public/app.js`)는 `fetchCsvGz()` + `DecompressionStream("gzip")`으로 gzip을 브라우저에서 직접 해제.
 
-현재 `data/` 전체는 24일치 **86 MB**. `sync.config.json`의 범위가 `2025-01-01 ~ 오늘`이므로 전 구간 수집 시 **원본 약 2 GB / 슬림 약 700 MB**로 늘어난다.
+### 배포를 막던 세 가지 → 해소 방법
 
-### 배포를 막는 세 가지
-
-1. **데이터가 Git에 없다.** `local-dev/.gitignore`가 `collector/data/`를 제외하므로 Git 기반 Pages 빌드로는 CSV가 올라가지 않는다. (추적 파일 12개 확인)
-2. **프론트가 범위 내 CSV를 전부 받아 브라우저에서 파싱한다.** `public/app.js:48`이 `Promise.all`로 대상 파일을 모두 fetch한다. 기본 7일 창 = 원본 42 MB 파싱. 로컬 디스크에서는 문제없지만 네트워크 너머에서는 체감이 나쁘다.
-3. **접근 통제가 없다.** 루트의 `functions/_middleware.js` 게이트는 해당 Pages 프로젝트에만 적용된다. 새 프로젝트에는 별도로 넣어야 한다.
+1. **데이터가 Git에 없다.** `local-dev/.gitignore`가 `collector/data/`를 통째로 제외했다.
+   → **[해결]** 상태 파일만 제외하도록 좁히고 gzip 데이터는 추적한다.
+2. **프론트 경로가 로컬 전용.** `DATA_BASE = "../collector/data"`, `file:` 분기와 로컬 안내 문구.
+   → **[해결]** `DATA_BASE`를 `/data`로 바꾸고 문구를 정리했다.
+3. **접근 통제가 새 프로젝트엔 없다.** 게이트(`_middleware.js`)는 루트 프로젝트에만 적용된다.
+   → **[해결]** 루트 게이트를 `local-dev/functions/_middleware.js`로 복사했다.
 
 ### 무료 한도 (확인 완료)
 
 | 서비스 | 한도 |
 |---|---|
-| R2 저장 | 10 GB/월 |
-| R2 Class A(쓰기) | 100만 요청/월 |
-| R2 Class B(읽기) | 1,000만 요청/월 |
-| R2 이그레스 | **무료** |
 | Pages 파일 수 | 20,000 (Free) |
 | Pages 파일 크기 | 25 MiB |
 | Pages 빌드 | 500회/월 |
+| Pages 이그레스 | **무료** |
+| GitHub Actions(공개 저장소) | 무료 |
 
-슬림 700 MB는 R2 무료 10 GB 안에 여유 있게 들어간다. 이그레스가 무료라 CSV를 아무리 내려받아도 전송 비용이 없다 — 이것이 R2를 고른 결정적 이유다.
+gzip 수백 개(각 수백 KB)는 20,000 파일·25 MiB 한도에 여유 있게 들어간다. 이그레스가 무료라 CSV를 아무리 내려받아도 전송 비용이 없다.
 
 ---
 
 ## 2. 목표 아키텍처
 
 ```
-GitHub Actions (매일 크론)
-  └─ node collector.js         공공데이터 API 수집
-     └─ 슬림 CSV 생성
-        └─ R2 PUT (변경된 날짜만)
-                 │
-                 ▼
-        R2 버킷  gong-go-data
-         ├─ index.json
-         ├─ pre/2025/01/04.csv
-         └─ bid/2025/01/06.csv
-                 │
-                 ▼
-Cloudflare Pages  gong-go-archive
-  ├─ _middleware.js         비밀번호 게이트 (루트에서 복사)
-  ├─ functions/data/[[path]].js   R2 바인딩 → CSV 서빙 + 캐시 헤더
-  └─ index.html / app.js / style.css
+GitHub Actions 크론 (매일 KST 05:00)
+  └ cd local-dev/collector && node collector.js   SYNC_BEGIN으로 최근 35일만 수집
+     └ 바뀐 data/**/*.csv.gz + index.json 만 브랜치에 커밋·푸시
+        └ Cloudflare Pages (푸시 시 자동 빌드)
+           빌드: bash build.sh  →  collector/data 를 public/data 로 복사
+           출력: local-dev/public
+           ├ _middleware.js   비밀번호 게이트 (루트에서 복사)
+           ├ /data/index.json, /data/{pre,bid}/YYYY/MM/DD.csv.gz  ← 정적 서빙
+           └ index.html / app.js / style.css
 ```
 
-프론트는 `DATA_BASE`를 `../collector/data` → `/data`로 바꾸는 것만으로 동작한다. R2 접근은 Pages Function이 바인딩으로 중계하므로 버킷을 공개할 필요가 없고, 게이트 통과 후에만 데이터에 닿는다.
+게이트(`_middleware.js`)가 모든 요청보다 먼저 실행되므로 `/data/**` gzip도 자동으로 게이트 뒤에 놓인다. 데이터는 Pages가 정적 파일로 직접 서빙하고, 프론트는 `DATA_BASE`를 `/data`로 바꾸는 것만으로 동작한다.
 
 ---
 
 ## 3. 단계별 실행
 
-### 1단계 — 수집기에 슬림 출력 추가
+1~5단계의 **코드 변경은 이미 브랜치에 반영**되어 있다. 각 단계 끝의 파일이 실제 커밋된 산출물이다. 대시보드/시크릿 작업만 남는다(4장).
 
-**목적:** 전송량과 브라우저 파싱 부하를 3배 줄인다. 이것이 나머지 모든 단계의 비용을 낮추므로 가장 먼저 한다.
+### 1단계 — 데이터를 배포 대상으로 편입 ✅
 
-- `collector/csv-record.js`에 화이트리스트 기반 투영(projection) 함수 추가
-  - 유지: `bidNtceNo`, `bfSpecRgstNo`, `rlDminsttNm`, `dminsttNm`, `ntceKindNm`, `bsnsDivNm`, `prdctClsfcNoNm`, `bidNtceNm`, `rgstDt`, `bidNtceDt`, `opninRgstClseDt`, `bidClseDt`
-  - 유지: `ntceSpecDocUrl1~10`, `specDocFileUrl1~5`, `ntceSpecFileNm1~10`
-  - 나머지 약 138개 컬럼 제거
-- 원본은 로컬에 그대로 두고 **배포용 슬림본을 따로 생성**한다(`data/` → `dist/`). 나중에 컬럼을 추가하고 싶을 때 재수집이 필요 없다.
-- `csv-record.test.js`에 투영 테스트 추가
+`local-dev/.gitignore`를 상태 파일만 제외하도록 좁혔다.
 
-**검증:** 슬림 CSV를 로컬 뷰어로 열어 기존과 동일하게 표시되는지 확인.
+```
+collector/.env
+collector/data/sync-state.json
+collector/data/sync-errors.json
+collector/data/notices.csv
+collector/data/notices.legacy.csv
+public/data/                 # 빌드 산출물(커밋 대상 아님)
+```
 
-### 2단계 — R2 버킷 생성과 업로드 경로
+`pre/**`·`bid/**`·`index.json`은 이제 추적된다. 첫 적재는 4장 3번(초기 워크플로 실행)에서 러너가 만들어 커밋한다.
 
-- R2 버킷 `gong-go-data` 생성 (공개 접근 **비활성화** 유지)
-- `collector/`에 업로드 스크립트 추가 (`upload.js`)
-  - `index.json`과 변경된 날짜의 CSV만 PUT
-  - 로컬 해시 캐시로 무변경 파일 건너뛰기 → Class A 요청 절약
-  - `Content-Type: text/csv; charset=utf-8` 지정
-- 인증: R2 S3 호환 API 토큰 (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`)
+### 2단계 — 빌드 시 `/data` 서빙 ✅
 
-**검증:** 로컬에서 한 번 수동 실행해 R2 대시보드에 파일이 올라오는지 확인.
+데이터가 출력 디렉터리(`public`) 밖(`collector/data`)에 있으므로 빌드 때 복사한다. `local-dev/build.sh`:
 
-### 3단계 — Pages 프로젝트 생성
+- `collector/data/index.json` + `pre/` + `bid/`만 `public/data/`로 복사(상태 파일 제외).
+- Pages 설정: 루트 디렉터리 `local-dev`, 빌드 명령 `bash build.sh`, 출력 디렉터리 `public`.
 
-- 새 Pages 프로젝트 `gong-go-archive`, 빌드 출력 디렉터리 `local-dev/public`
-- `local-dev/functions/data/[[path]].js` 신규 작성
-  ```js
-  export async function onRequestGet({ env, params }) {
-    const key = params.path.join("/");
-    if (!/^(index\.json|(pre|bid)\/\d{4}\/\d{2}\/\d{2}\.csv)$/.test(key))
-      return new Response("Not found", { status: 404 });
-    const obj = await env.DATA.get(key);
-    if (!obj) return new Response("Not found", { status: 404 });
-    return new Response(obj.body, {
-      headers: {
-        "Content-Type": key.endsWith(".json")
-          ? "application/json; charset=utf-8"
-          : "text/csv; charset=utf-8",
-        // 과거 날짜 CSV는 불변 → 길게 캐시. index.json은 짧게.
-        "Cache-Control": key.endsWith(".json")
-          ? "public, max-age=300"
-          : "public, max-age=86400",
-      },
-    });
-  }
-  ```
-  키 정규식으로 경로를 제한해 버킷 내 임의 키 열람을 막는다.
-- 설정 > 바인딩 > R2 버킷 → 변수명 `DATA`, 버킷 `gong-go-data`
-- `functions/_middleware.js`를 루트에서 복사, 환경변수 `GATE_PASSWORD` 설정
-- `public/app.js`의 `DATA_BASE`를 `/data`로 변경, `file:` 프로토콜 분기(19~21행)와 로컬 안내 문구 정리
+**검증 포인트:** `.csv.gz`는 Pages가 **`Content-Encoding` 없이 원본 바이트로** 서빙해야 한다. 프론트가 직접 `DecompressionStream`으로 해제하므로, Pages가 자동 해제하면 이중 처리로 깨진다. 배포 후 `/data/bid/2025/01/06.csv.gz` 하나만 열어 확인한다(로컬 `python http.server`와 동일 동작이라 대개 문제없음).
 
-**검증:** 게이트 통과 → 목록 표시 → 첨부 모달 → CSV 다운로드까지 확인.
+### 3단계 — 프론트 경로 정리 ✅
 
-### 4단계 — GitHub Actions 크론
+`public/app.js`:
 
-`.github/workflows/collect.yml` 신규:
+- `DATA_BASE` `../collector/data` → `/data`.
+- `file:` 분기와 `python -m http.server` 안내 문구를 배포용 문구로 교체.
+
+### 4단계 — 게이트 이식 ✅
+
+- 루트 `functions/_middleware.js`를 `local-dev/functions/_middleware.js`로 복사.
+- Pages 환경변수 `GATE_PASSWORD`(필수), `GATE_COOKIE_NAME`(선택) 설정 → 4장 참조.
+
+### 5단계 — GitHub Actions 크론 ✅
+
+`.github/workflows/collect.yml`:
 
 ```yaml
 on:
   schedule:
     - cron: "0 20 * * *"   # UTC 20:00 = KST 05:00
   workflow_dispatch:
+    inputs:
+      begin: { description: "수집 시작일(YYYY-MM-DD). 비우면 최근 35일.", default: "" }
+      end:   { description: "수집 종료일(YYYY-MM-DD). 비우면 오늘.",      default: "" }
 ```
 
-- Node 20 설치 → `collector.js` 실행 → 슬림 생성 → `upload.js`로 R2 반영
-- Secrets: `SERVICE_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
-- **증분 수집 상태(`sync-state.json`)를 R2에 함께 보관**한다. Actions 러너는 매번 초기화되므로 상태가 없으면 전 구간을 다시 긁는다. 시작 시 내려받고 종료 시 올린다.
-- `sync.config.json`의 `begin`을 워크플로에서 "최근 N일"로 덮어써 매일 실행분을 짧게 유지 (초기 전체 적재는 `workflow_dispatch`로 1회 수동)
-- 실패 시 알림: `sync-errors.json`이 비어있지 않으면 워크플로를 실패 처리
+- Node 20 → `collector.js` 실행 → 바뀐 `data/**/*.csv.gz`·`index.json`을 브랜치에 커밋·푸시. Pages가 이 커밋으로 자동 재배포한다.
+- **범위 좁히기:** `sync-state.json`을 커밋하지 않으므로 러너는 매번 resume 상태 없이 시작한다. 그대로 두면 전 구간을 매일 재수집하므로, 워크플로가 `SYNC_BEGIN`(환경변수)으로 **최근 35일**만 수집하도록 좁힌다(과거 날짜는 이미 커밋된 gzip을 승계). `collector.js`는 `process.env.SYNC_BEGIN || config.begin` 순으로 범위를 정한다 — `sync.config.json`은 러너에서 건드리지 않는다.
+- **빈 빌드 방지:** 변경이 없으면 커밋을 생략한다(`git diff --cached --quiet`).
+- **실패 처리:** `sync-errors.json`이 비어있지 않으면 워크플로를 실패시킨다.
+- **Secret:** `SERVICE_KEY` 하나면 된다.
 
-**검증:** `workflow_dispatch`로 수동 1회 실행해 성공 확인 후 크론 활성화.
+> **주의 — 실행 브랜치.** 크론이 프로덕션 데이터를 갱신하려면 **Pages가 빌드하는 브랜치(보통 `main`)에서** 워크플로가 돌아야 한다. 스케줄/`workflow_dispatch`는 기본 브랜치에서 실행되며, 워크플로는 실행된 브랜치(`github.ref_name`)로 커밋한다. 따라서 이 변경을 `main`에 병합하면 크론이 `main`에서 돌고 `main`으로 커밋한다.
 
-### 5단계 — 조회 UX 보완 (선택, 데이터가 커진 뒤)
+### 6단계 — 조회 UX 보완 (선택, 데이터가 커진 뒤)
 
-슬림화 후에도 넓은 범위 조회는 무겁다. 필요해지면:
+넓은 범위 조회는 여전히 무겁다. 필요해지면 순서대로:
 
-- 조회 범위 상한을 UI에서 제한 (예: 최대 31일) — 가장 싸게 효과를 본다
-- 파일 단위 순차 로딩 + 진행률 표시 (현재는 `Promise.all`로 동시 요청)
-- 그래도 부족하면 D1로 이전해 서버측 필터링
+- 조회 범위 상한을 UI에서 제한(예: 최대 31일) — 가장 싸게 효과를 본다.
+- 파일 단위 순차 로딩 + 진행률 표시(현재는 `Promise.all` 동시 요청).
+- 그래도 부족하면 D1로 이전해 서버측 필터링.
 
-지금 단계에서 미리 할 필요는 없다. 실제 사용 패턴을 보고 판단한다.
+지금 단계에서 미리 할 필요는 없다.
 
 ---
 
-## 4. 보안 점검
+## 4. 남은 작업 (대시보드 · 시크릿)
+
+코드 밖 작업이라 저장소 커밋만으로는 끝나지 않는다.
+
+1. **Cloudflare Pages 새 프로젝트**(예 `gong-go-archive`) 생성 → 저장소 연결
+   - 루트 디렉터리 `local-dev`, 빌드 명령 `bash build.sh`, 출력 디렉터리 `public`
+   - 환경변수 `GATE_PASSWORD`(게이트 암호), 선택 `GATE_COOKIE_NAME`
+2. **GitHub 시크릿** `SERVICE_KEY` 등록(공공데이터 인증키)
+3. **초기 전 구간 적재:** Actions에서 `collect`를 `workflow_dispatch`로 1회 실행(`begin=2025-01-01`) → 러너가 데이터를 만들어 커밋 → Pages 첫 배포. 이후 매일 크론이 최근 35일만 갱신한다.
+4. **배포 검증:** 게이트 통과 → 목록 표시 → 첨부 모달 → CSV 다운로드, 그리고 2단계의 gzip 서빙 확인.
+
+---
+
+## 5. 보안 점검
 
 | 항목 | 상태 |
 |---|---|
-| `collector/.env` Git 커밋 이력 | **없음** (`git log --all` 확인 완료) |
-| `collector/data/` 추적 여부 | 제외됨 |
+| `collector/.env` Git 커밋 이력 | 없음 (`.gitignore`로 제외) |
+| `collector/data/` 상태 파일 추적 | `sync-state.json`·`sync-errors.json` 등 제외, gzip 데이터만 추적 |
 | `SERVICE_KEY` | Actions Secret으로만 주입, 클라이언트 노출 없음 |
-| R2 버킷 공개 설정 | 비공개 유지, Pages Function 바인딩으로만 접근 |
-| 접근 통제 | `_middleware.js` 공유 비밀번호 게이트 |
+| 데이터 접근 통제 | `_middleware.js` 공유 비밀번호 게이트(정적 `/data`도 게이트 뒤) |
+| 커밋 데이터 민감도 | 공공데이터 공개 공고 정보 — 개인정보 아님 |
 
 게이트는 단일 공유 암호라 유출 시 개인별 차단이 불가능하다. 사용자가 늘거나 데이터 민감도가 올라가면 Cloudflare Access(SSO)로 교체를 검토한다.
 
 ---
 
-## 5. 비용
+## 6. 대안 — R2로 전환하는 기준
 
-전 구간 슬림 700 MB 기준, **월 $0**로 무료 한도 안에 들어간다.
+Git-정적 방식의 약점은 **저장소 히스토리 비대화**다. 매일 커밋이 쌓이고, 데이터가 수 GB / 파일 수천 개로 커지면 클론·빌드가 무거워진다. 그 시점에는 R2로 옮긴다.
 
-| 항목 | 예상 | 한도 |
-|---|---|---|
-| R2 저장 | 0.7 GB | 10 GB |
-| R2 쓰기(Class A) | 일 약 60건 × 30일 ≈ 1,800 | 100만 |
-| R2 읽기(Class B) | 조회당 약 15건, 넉넉히 잡아도 수천 | 1,000만 |
-| 이그레스 | — | 무료 |
-| Pages 빌드 | 코드 변경 시에만 | 500회/월 |
+- Cloudflare R2 버킷(예 `gong-go-data`) 생성, 공개 접근 비활성화.
+- 5단계의 "커밋" 대신 `collector/upload.js`로 변경된 날짜만 R2에 PUT(로컬 해시 캐시로 무변경 건너뛰기). `sync-state.json`도 R2에 왕복 보관해 증분 상태를 유지한다.
+- 2단계의 정적 복사 대신 `local-dev/functions/data/[[path]].js`를 두어 R2 바인딩(`DATA`)으로 중계하고, 키 정규식으로 경로를 제한한다.
 
-데이터 수집 범위를 몇 년으로 늘려도 R2 10 GB 안에서 여유가 있다.
+  ```js
+  export async function onRequestGet({ env, params }) {
+    const key = params.path.join("/");
+    if (!/^(index\.json|(pre|bid)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz)$/.test(key))
+      return new Response("Not found", { status: 404 });
+    const obj = await env.DATA.get(key);
+    if (!obj) return new Response("Not found", { status: 404 });
+    return new Response(obj.body, {
+      headers: {
+        "Content-Type": key.endsWith(".json") ? "application/json; charset=utf-8" : "application/gzip",
+        "Cache-Control": key.endsWith(".json") ? "public, max-age=300" : "public, max-age=86400",
+      },
+    });
+  }
+  ```
+
+R2 무료 한도(저장 10 GB, 이그레스 무료)로 수년치도 월 $0에 들어간다. 지금 gzip 규모에서는 과설계이므로 필요해질 때 전환한다.
 
 ---
 
-## 6. 작업 순서 요약
+## 7. 작업 순서 요약
 
-1. 슬림 투영 함수 + 테스트 (`csv-record.js`)
-2. R2 버킷 생성, `upload.js` 작성, 수동 업로드 1회
-3. Pages 프로젝트 + `functions/data/[[path]].js` + 게이트 + `DATA_BASE` 변경
-4. GitHub Actions 크론 + Secrets + 상태 파일 R2 왕복
-5. (선택) 조회 범위 상한·순차 로딩
+1. `.gitignore` 축소 + 프론트 `/data` + 게이트 복사 + `build.sh` + 크론 워크플로 — **완료(브랜치 반영)**
+2. Pages 프로젝트 생성(루트 `local-dev`, 빌드 `bash build.sh`, 출력 `public`) + `GATE_PASSWORD`
+3. GitHub 시크릿 `SERVICE_KEY`
+4. `workflow_dispatch`로 초기 전 구간 적재 1회 → Pages 첫 배포
+5. 배포 검증(게이트·목록·첨부·gzip 서빙)
+6. (선택) 조회 범위 상한 등 UX 보완
 
-1~3단계까지 마치면 배포된 상태로 동작하고, 4단계에서 자동 갱신이 붙는다.
+1은 끝났고, 2~4를 마치면 배포된 상태로 자동 갱신까지 동작한다.
