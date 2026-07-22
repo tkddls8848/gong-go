@@ -3,6 +3,9 @@
   "private": true,
   "scripts": {
     "collect": "node collector.js",
+    "attachments": "node attachments.js",
+    "convert": "node convert.js",
+    "analyze": "node analyze.js",
     "test": "node --test"
   }
 }
