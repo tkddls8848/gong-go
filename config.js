@@ -47,7 +47,6 @@ const DEFAULT_INSTITUTIONS = [
   { name: "한국고용정보원", code: "" },
   { name: "재단법인자동차손해배상진흥원", code: "" },
   { name: "공영홈쇼핑", code: "" },
-  { name: "한국지능정보사회진흥원", code: "" },
 ];
  
 const norm = (v) => String(v ?? "").replace(/\s+/g, "").trim();
