@@ -1,5 +1,5 @@
 // 다운로드한 첨부를 HWPX/Markdown으로 정규화한다. HWP 변환은 한글 COM을 PowerShell에서만 호출한다.
-const { ROOT, DATA_DIR, fs, path, mapPool, readJson, writeJson, writeGzipText } = require("./pipeline-utils");
+const { DATA_DIR, fs, path, mapPool, readJson, writeJson, writeGzipText } = require("../shared/pipeline-utils");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { readZip } = require("./zip-read");
@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 const FILES_ROOT = path.join(DATA_DIR, "files", "bid");
 const NORM_ROOT = path.join(DATA_DIR, "norm", "bid");
 const TEXT_ROOT = path.join(DATA_DIR, "text", "bid");
-const PS_SCRIPT = path.join(ROOT, "hwp-to-hwpx.ps1");
+const PS_SCRIPT = path.join(__dirname, "hwp-to-hwpx.ps1");
 const HWP_TIMEOUT = numberFlag("--hwp-timeout-ms", 120000);
 
 main().catch((error) => { console.error(`변환 실패: ${error.message}`); process.exitCode = 1; });

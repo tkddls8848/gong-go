@@ -1,4 +1,3 @@
-collector/.env
-collector/data/
-collector/download-errors.json
+.env
+data/
 rfp_sample/

@@ -1,16 +1,14 @@
 // 로컬 전용 전체 공고 수집기. Cloudflare Pages/Functions와 무관하게 실행된다.
 const fs = require("node:fs/promises");
-const fsSync = require("node:fs");
 const path = require("node:path");
 const zlib = require("node:zlib");
-const { serializeCsv, parseCsv } = require("./csv-record");
+const { serializeCsv, parseCsv } = require("../shared/csv-record");
+const { ROOT, DATA_DIR, loadEnv, mapPool, sleep } = require("../shared/pipeline-utils");
 
-const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, "data");
+const CONFIG_FILE = path.join(__dirname, "sync.config.json");
 const LEGACY_CSV_FILE = path.join(DATA_DIR, "notices.csv");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
 const STATE_FILE = path.join(DATA_DIR, "sync-state.json");
-const CONFIG_FILE = path.join(ROOT, "sync.config.json");
 const PAGE_SIZE = 999;
 const RANGE_DAYS = 28;
 const RETRIES = 3;
@@ -116,17 +114,6 @@ let httpActive = 0;
 const httpQueue = [];
 function acquireHttp() { if (httpActive < httpLimit) { httpActive += 1; return Promise.resolve(); } return new Promise((resolve) => httpQueue.push(resolve)); }
 function releaseHttp() { const next = httpQueue.shift(); if (next) next(); else httpActive -= 1; }
-
-// 동시 실행 수를 제한하며 비동기 작업을 수행한다.
-async function mapPool(items, limit, worker) {
-  const results = new Array(items.length);
-  let cursor = 0;
-  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) { const index = cursor; cursor += 1; results[index] = await worker(items[index], index); }
-  });
-  await Promise.all(runners);
-  return results;
-}
 
 async function requestJson(url) {
   await acquireHttp();
@@ -398,5 +385,3 @@ function addDays(value, days) { const result = new Date(value); result.setDate(r
 function iso(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
 function ymd(value) { return String(value).replaceAll("-", ""); }
 function today() { return iso(new Date()); }
-function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
-function loadEnv(file) { try { fsSync.readFileSync(file, "utf8").split(/\r?\n/).forEach((line) => { const match = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/); if (match && !process.env[match[1]]) process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, ""); }); } catch (error) { if (error.code !== "ENOENT") throw error; } }

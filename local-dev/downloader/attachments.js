@@ -1,7 +1,7 @@
 // 관심 본공고의 제안요청서/과업내용서만 로컬 data/files에 내려받는다.
-const { ROOT, DATA_DIR, fs, path, mapPool, readJson, readCsvGz, noticeNumber, rowDate, institution, title, normalizeFiles, safeFileName, writeJson } = require("./pipeline-utils");
+const { DATA_DIR, fs, path, mapPool, readJson, readCsvGz, noticeNumber, rowDate, institution, title, normalizeFiles, safeFileName, writeJson } = require("../shared/pipeline-utils");
 
-const CONFIG_FILE = path.join(ROOT, "analyze.config.json");
+const CONFIG_FILE = path.join(__dirname, "download.config.json");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
 const ERROR_FILE = path.join(DATA_DIR, "download-errors.json");
 
@@ -9,7 +9,7 @@ main().catch((error) => { console.error(`첨부 다운로드 실패: ${error.mes
 
 async function main() {
   const config = await readJson(CONFIG_FILE);
-  if (!config) throw new Error("analyze.config.json을 찾지 못했습니다.");
+  if (!config) throw new Error("downloader/download.config.json을 찾지 못했습니다.");
   const limit = numberFlag("--limit", config.maxNoticesPerRun ?? 50);
   const dryRun = process.argv.includes("--dry-run");
   const pattern = new RegExp(config.fileNamePattern || ".", "i");

@@ -1,0 +1,11 @@
+{
+  "name": "gong-go-local-dev",
+  "private": true,
+  "scripts": {
+    "collect": "node collector/collector.js",
+    "attachments": "node downloader/attachments.js",
+    "convert": "node converter/convert.js",
+    "analyze": "node analyzer/analyze.js",
+    "test": "node --test"
+  }
+}

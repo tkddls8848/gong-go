@@ -16,13 +16,15 @@
 |---|---|---|
 | `/`(루트) | 나라장터 API 실시간 조회 앱 | Pages + Functions (배포 완료) |
 | `local-dev/collector/` | 공공데이터 API 수집기 | 로컬 Node |
+| `local-dev/downloader`·`converter`·`analyzer/` | 첨부 다운로드 → 문서 변환 → ECR 추출 | 로컬 Node |
+| `local-dev/data/` | 모든 단계의 공용 데이터 디렉터리 | — |
 | `local-dev/public/` | 수집된 CSV 뷰어 | 로컬 정적 서버 |
 
 두 앱은 완전히 분리되어 있다. 루트 앱은 API를 실시간 프록시하고, `local-dev`는 미리 수집한 CSV를 읽는다.
 
 ### 실측 데이터 규모
 
-`collector/data/bid/2025/01/06.csv` 기준:
+`data/bid/2025/01/06.csv` 기준:
 
 | 항목 | 값 |
 |---|---|
@@ -37,7 +39,7 @@
 
 ### 배포를 막는 세 가지
 
-1. **데이터가 Git에 없다.** `local-dev/.gitignore`가 `collector/data/`를 제외하므로 Git 기반 Pages 빌드로는 CSV가 올라가지 않는다. (추적 파일 12개 확인)
+1. **데이터가 Git에 없다.** `local-dev/.gitignore`가 `data/`를 제외하므로 Git 기반 Pages 빌드로는 CSV가 올라가지 않는다. (추적 파일 12개 확인)
 2. **프론트가 범위 내 CSV를 전부 받아 브라우저에서 파싱한다.** `public/app.js:48`이 `Promise.all`로 대상 파일을 모두 fetch한다. 기본 7일 창 = 원본 42 MB 파싱. 로컬 디스크에서는 문제없지만 네트워크 너머에서는 체감이 나쁘다.
 3. **접근 통제가 없다.** 루트의 `functions/_middleware.js` 게이트는 해당 Pages 프로젝트에만 적용된다. 새 프로젝트에는 별도로 넣어야 한다.
 
@@ -61,7 +63,7 @@
 
 ```
 GitHub Actions (매일 크론)
-  └─ node collector.js         공공데이터 API 수집
+  └─ node collector/collector.js   공공데이터 API 수집
      └─ 슬림 CSV 생성
         └─ R2 PUT (변경된 날짜만)
                  │
@@ -78,7 +80,7 @@ Cloudflare Pages  gong-go-archive
   └─ index.html / app.js / style.css
 ```
 
-프론트는 `DATA_BASE`를 `../collector/data` → `/data`로 바꾸는 것만으로 동작한다. R2 접근은 Pages Function이 바인딩으로 중계하므로 버킷을 공개할 필요가 없고, 게이트 통과 후에만 데이터에 닿는다.
+프론트는 `DATA_BASE`를 `../data` → `/data`로 바꾸는 것만으로 동작한다. R2 접근은 Pages Function이 바인딩으로 중계하므로 버킷을 공개할 필요가 없고, 게이트 통과 후에만 데이터에 닿는다.
 
 ---
 
@@ -88,7 +90,7 @@ Cloudflare Pages  gong-go-archive
 
 **목적:** 전송량과 브라우저 파싱 부하를 3배 줄인다. 이것이 나머지 모든 단계의 비용을 낮추므로 가장 먼저 한다.
 
-- `collector/csv-record.js`에 화이트리스트 기반 투영(projection) 함수 추가
+- `shared/csv-record.js`에 화이트리스트 기반 투영(projection) 함수 추가
   - 유지: `bidNtceNo`, `bfSpecRgstNo`, `rlDminsttNm`, `dminsttNm`, `ntceKindNm`, `bsnsDivNm`, `prdctClsfcNoNm`, `bidNtceNm`, `rgstDt`, `bidNtceDt`, `opninRgstClseDt`, `bidClseDt`
   - 유지: `ntceSpecDocUrl1~10`, `specDocFileUrl1~5`, `ntceSpecFileNm1~10`
   - 나머지 약 138개 컬럼 제거
@@ -100,7 +102,7 @@ Cloudflare Pages  gong-go-archive
 ### 2단계 — R2 버킷 생성과 업로드 경로
 
 - R2 버킷 `gong-go-data` 생성 (공개 접근 **비활성화** 유지)
-- `collector/`에 업로드 스크립트 추가 (`upload.js`)
+- `uploader/`에 업로드 스크립트 추가 (`upload.js`)
   - `index.json`과 변경된 날짜의 CSV만 PUT
   - 로컬 해시 캐시로 무변경 파일 건너뛰기 → Class A 요청 절약
   - `Content-Type: text/csv; charset=utf-8` 지정
@@ -150,7 +152,7 @@ on:
   workflow_dispatch:
 ```
 
-- Node 20 설치 → `collector.js` 실행 → 슬림 생성 → `upload.js`로 R2 반영
+- Node 20 설치 → `collector/collector.js` 실행 → 슬림 생성 → `upload.js`로 R2 반영
 - Secrets: `SERVICE_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
 - **증분 수집 상태(`sync-state.json`)를 R2에 함께 보관**한다. Actions 러너는 매번 초기화되므로 상태가 없으면 전 구간을 다시 긁는다. 시작 시 내려받고 종료 시 올린다.
 - `sync.config.json`의 `begin`을 워크플로에서 "최근 N일"로 덮어써 매일 실행분을 짧게 유지 (초기 전체 적재는 `workflow_dispatch`로 1회 수동)
@@ -174,8 +176,8 @@ on:
 
 | 항목 | 상태 |
 |---|---|
-| `collector/.env` Git 커밋 이력 | **없음** (`git log --all` 확인 완료) |
-| `collector/data/` 추적 여부 | 제외됨 |
+| `local-dev/.env` Git 커밋 이력 | **없음** (`git log --all` 확인 완료) |
+| `local-dev/data/` 추적 여부 | 제외됨 |
 | `SERVICE_KEY` | Actions Secret으로만 주입, 클라이언트 노출 없음 |
 | R2 버킷 공개 설정 | 비공개 유지, Pages Function 바인딩으로만 접근 |
 | 접근 통제 | `_middleware.js` 공유 비밀번호 게이트 |

@@ -1,4 +1,4 @@
-const $ = (s) => document.querySelector(s), DATA_BASE = "../collector/data", PAGE_SIZE = 50;
+const $ = (s) => document.querySelector(s), DATA_BASE = "../data", PAGE_SIZE = 50;
 let records = [], filtered = [], fileIndex = [], page = 1, searchVersion = 0, currentRow = null, currentAnalysis = null;
 const analyses = new Map(), modal = $("#file-modal");
 
