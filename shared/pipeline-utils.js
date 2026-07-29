@@ -5,7 +5,7 @@ const zlib = require("node:zlib");
 const { parseCsv } = require("./csv-record");
 
 // 모든 단계(collector/downloader/converter/analyzer)가 공유하는 경로.
-// ROOT는 local-dev 루트이고, 산출물은 전부 ROOT/data 아래에 모인다.
+// ROOT는 저장소 루트이고, 산출물은 전부 ROOT/data 아래에 모인다.
 const ROOT = path.join(__dirname, "..");
 const DATA_DIR = path.join(ROOT, "data");
 

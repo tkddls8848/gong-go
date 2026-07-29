@@ -32,7 +32,7 @@ async function main() {
   console.log(`분석 대상 ${targets.length}건 · 입력 약 ${format(estimate.tokens)} tokens · ${cost}${PROVIDER === "ollama" ? ` · context ${format(OLLAMA_CONTEXT)}` : ""}`);
   if (dryRun || !targets.length) return;
   if (!["ollama", "anthropic"].includes(PROVIDER)) throw new Error(`지원하지 않는 provider: ${PROVIDER}`);
-  if (PROVIDER === "anthropic" && !process.env.ANTHROPIC_API_KEY) throw new Error("local-dev/.env에 ANTHROPIC_API_KEY를 설정하세요.");
+  if (PROVIDER === "anthropic" && !process.env.ANTHROPIC_API_KEY) throw new Error("루트의 .env에 ANTHROPIC_API_KEY를 설정하세요.");
   if (PROVIDER === "anthropic" && !process.argv.includes("--yes")) await confirm();
   const concurrency = numberFlag("--concurrency", 1);
   await mapPool(targets, concurrency, async (target) => {

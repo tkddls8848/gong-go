@@ -21,6 +21,6 @@ node analyzer/analyze.js --provider anthropic --model claude-opus-4-8 --yes
 | `--force` | — | 이미 완료한 공고도 다시 분석 |
 | `--yes` | — | Anthropic 비용 확인 생략 |
 
-Ollama는 변환된 Markdown(HWPX 경로)이 필요하고 PDF 원문은 바로 분석하지 않습니다. Anthropic을 선택한 경우에만 `local-dev/.env`의 `ANTHROPIC_API_KEY`와 비용 승인이 필요합니다. API 키는 CLI에서만 읽으며 브라우저 코드에는 전달되지 않습니다.
+Ollama는 변환된 Markdown(HWPX 경로)이 필요하고 PDF 원문은 바로 분석하지 않습니다. Anthropic을 선택한 경우에만 루트 `.env`의 `ANTHROPIC_API_KEY`와 비용 승인이 필요합니다. API 키는 CLI에서만 읽으며 브라우저 코드에는 전달되지 않습니다.
 
 결과는 `../data/analysis/bid/<공고번호>.json`, 목록은 `../data/analysis-index.json`, 진행 상태는 `../data/analysis-state.json`에 저장됩니다.

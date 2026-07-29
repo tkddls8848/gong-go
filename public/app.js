@@ -2,7 +2,7 @@ const $ = (s) => document.querySelector(s), DATA_BASE = "../data", PAGE_SIZE = 5
 let records = [], filtered = [], fileIndex = [], page = 1, searchVersion = 0, currentRow = null, currentAnalysis = null;
 const analyses = new Map(), modal = $("#file-modal");
 
-if (location.protocol === "file:") { $("#status").textContent = "CSV 조회는 웹 서버에서만 가능합니다. C:\\gong-go\\local-dev에서 python -m http.server 8788 실행 후 http://localhost:8788/public/ 를 여세요."; renderRows([]); }
+if (location.protocol === "file:") { $("#status").textContent = "CSV 조회는 웹 서버에서만 가능합니다. C:\\gong-go에서 python -m http.server 8788 실행 후 http://localhost:8788/public/ 를 여세요."; renderRows([]); }
 else Promise.all([getJson(`${DATA_BASE}/index.json`), getJson(`${DATA_BASE}/analysis-index.json`).catch(() => ({ entries: [] }))]).then(([index, analysis]) => { fileIndex = index.files || []; (analysis.entries || []).forEach((entry) => analyses.set(entry.notice, entry)); defaultRange(); $("#status").textContent = `${fileIndex.length}개 일자별 CSV를 찾았습니다.`; applyFilters(); }).catch((error) => { $("#status").textContent = error.message; renderRows([]); });
 
 $("#search").onclick = () => { page = 1; applyFilters(); }; $("#reset").onclick = () => { ["#q", "#mode", "#business-type"].forEach((s) => { $(s).value = ""; }); defaultRange(); page = 1; applyFilters(); }; $("#q").onkeydown = (event) => { if (event.key === "Enter") { page = 1; applyFilters(); } }; $("#mode").onchange = () => { page = 1; applyFilters(); };

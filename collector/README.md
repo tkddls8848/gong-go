@@ -2,7 +2,7 @@
 
 공공데이터포털 나라장터 API에서 사전공고·본공고를 받아 날짜별 CSV로 저장합니다.
 
-1. 루트의 `.env.example`을 복사해 `local-dev/.env`를 만들고 `SERVICE_KEY`를 설정합니다.
+1. 루트의 `.env.example`을 복사해 루트에 `.env`를 만들고 `SERVICE_KEY`를 설정합니다.
 2. `sync.config.json`에서 수집 기간·공고 구분·업무 구분·동시성을 조정합니다.
 3. `node collector/collector.js`를 루트에서 실행합니다.
 

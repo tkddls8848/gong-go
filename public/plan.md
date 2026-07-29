@@ -1,6 +1,6 @@
 # ECR 규격 자동 추출 계획
 
-본공고 첨부(제안요청서·과업내용서)에서 **ECR(Equipment Composition Requirement, 시스템 장비구성 요구사항)** 항목을 뽑아 구조화된 표로 정리한다. 로컬 도구(`local-dev/`) 안에서만 동작하며 프로덕션 Pages 앱은 건드리지 않는다.
+본공고 첨부(제안요청서·과업내용서)에서 **ECR(Equipment Composition Requirement, 시스템 장비구성 요구사항)** 항목을 뽑아 구조화된 표로 정리한다. 이 브랜치의 로컬 파이프라인 안에서만 동작하며 `main` 브랜치의 프로덕션 Pages 앱은 건드리지 않는다.
 
 이 문서의 설계 판단은 전부 실측에 근거한다. 첨부 확장자 분포는 수집된 CSV 전체(공고 41.8만건 / 첨부 107만개)를 집계했고, 문서 구조와 변환 품질은 `public/rfp_sample/`의 실제 파일 5건으로 확인했다.
 
@@ -252,7 +252,7 @@ ECR이 사내 표준 양식(고정 컬럼 셋)을 따라야 한다면 **이 파�
 ## 5. 목표 구조
 
 ```
-local-dev/collector/
+collector/
   attachments.js            1단계 - 첨부파일 다운로드
   convert.js                2단계 - 형식 정규화 (HWP→HWPX, zip 전개)
   hwp-to-hwpx.ps1                 한글 COM 어댑터
@@ -270,7 +270,7 @@ local-dev/collector/
     analysis-index.json                       뷰어용 인덱스
     analysis-state.json                       완료/실패 상태
 
-local-dev/public/
+public/
   app.js, index.html        4단계 - 모달에 ECR 표 표시
 ```
 
@@ -340,7 +340,7 @@ local-dev/public/
 
 ### 5단계 — 온디맨드 분석 (선택)
 
-정적 페이지는 Node를 못 돌리므로 지금은 CLI로 미리 돌려두는 방식이다. 화면에서 버튼으로 분석하고 싶어지면 `local-dev/server.js`(Node 내장 `http`)로 `public/`과 `collector/data/`를 서빙하며 `POST /api/analyze`만 추가한다. 실행법이 `python -m http.server` → `node server.js`로 바뀌므로 README 갱신이 따라온다. **API 키는 서버 쪽에만 둔다.**
+정적 페이지는 Node를 못 돌리므로 지금은 CLI로 미리 돌려두는 방식이다. 화면에서 버튼으로 분석하고 싶어지면 루트의 `server.js`(Node 내장 `http`)로 `public/`과 `collector/data/`를 서빙하며 `POST /api/analyze`만 추가한다. 실행법이 `python -m http.server` → `node server.js`로 바뀌므로 README 갱신이 따라온다. **API 키는 서버 쪽에만 둔다.**
 
 지금 할 필요는 없다. 1~4단계로 쓰다가 CLI 반복이 실제로 번거로워지면 그때 한다.
 
