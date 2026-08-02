@@ -4,6 +4,7 @@ const path = require("node:path");
 const zlib = require("node:zlib");
 const { serializeCsv, parseCsv } = require("../shared/csv-record");
 const { ROOT, DATA_DIR, loadEnv, mapPool, sleep } = require("../shared/pipeline-utils");
+const { project } = require("../shared/service-columns");
 
 const CONFIG_FILE = path.join(__dirname, "sync.config.json");
 const LEGACY_CSV_FILE = path.join(DATA_DIR, "notices.csv");
@@ -52,9 +53,13 @@ async function main() {
   if (migrateOnly) { await writeIndex(); return; }
   if (!SERVICE_KEY) throw new Error(".env에 SERVICE_KEY를 설정하세요.");
   const config = await readConfig();
-  const begin = parseDate(config.begin || "2015-01-01");
-  const end = parseDate(config.end || today());
-  if (!begin || !end || begin > end) throw new Error("sync.config.json의 기간을 확인하세요.");
+  // --begin/--end/--no-resume은 sync.config.json을 건드리지 않고 이번 실행에만 적용된다.
+  // 갱신 버튼(devserver)이 최근 구간만 다시 받을 때 사용한다.
+  const args = parseArgs();
+  const resume = args.resume === false ? false : config.resume;
+  const begin = parseDate(args.begin || config.begin || "2015-01-01");
+  const end = parseDate(args.end || config.end || today());
+  if (!begin || !end || begin > end) throw new Error("수집 기간을 확인하세요(sync.config.json 또는 --begin/--end).");
   const modes = (config.modes || ["사전공고", "본공고"]).map((mode) => MODE_ALIASES[mode]).filter((mode) => MODES[mode]);
   const types = (config.businessTypes || TYPES).filter((type) => TYPES.includes(type));
   const jobs = [];
@@ -64,7 +69,7 @@ async function main() {
   const errors = [];
   const completed = new Set(state.completedJobs);
   const entries = jobs.map((job, index) => ({ job, index, id: JSON.stringify(job) }));
-  const pending = config.resume === false ? entries : entries.filter((entry) => !completed.has(entry.id));
+  const pending = resume === false ? entries : entries.filter((entry) => !completed.has(entry.id));
   console.log(`전체 공고 수집 시작: ${jobs.length}개 작업(대상 ${pending.length}개), 기존 ${store.location.size}건, 동시 요청 ${httpLimit}`);
 
   // 배치 단위로 API를 동시에 호출하고, 병합·저장은 배치마다 한 번씩만 수행한다.
@@ -77,7 +82,7 @@ async function main() {
     for (const { entry, items, error } of results) {
       const label = `[${entry.index + 1}/${jobs.length}] ${MODE_LABELS[entry.job.mode]}/${entry.job.type}/${entry.job.range.begin}`;
       if (error) { errors.push({ job: entry.job, error: error.message }); console.error(`${label} 실패: ${error.message}`); continue; }
-      if (config.resume === false) clearJobRange(store, entry.job, changed);
+      if (resume === false) clearJobRange(store, entry.job, changed);
       applyItems(store, items, changed);
       state.completedJobs.push(entry.id);
       console.log(`${label}~${entry.job.range.end}: ${items.length}건`);
@@ -150,7 +155,9 @@ async function readStore(begin, end) {
   try { previous = new Map(JSON.parse(await fs.readFile(INDEX_FILE, "utf8")).files.map((file) => [file.path, file.count])); } catch (error) { if (error.code !== "ENOENT") throw error; }
   const selected = files.filter((file) => file.date >= beginDate && file.date <= endDate);
   await mapPool(selected, FILE_CONCURRENCY, async (file) => {
-    for (const row of await readCsv(path.join(DATA_DIR, file.path))) {
+    // 원본이 남아 있으면 원본을 읽는다. 서비스 파일만 읽으면 재수집 때 손대지 않은 공고의
+    // 원본 컬럼이 백업에서 사라진다.
+    for (const row of await readSourceCsv(file.path)) {
       const key = recordKey(row);
       if (!key) continue;
       bucketFor(store, bucketKeyOf(row)).set(key, row);
@@ -188,7 +195,7 @@ async function writeRecords(store, changed) {
     if (!mode || day === "undated") continue;
     const file = dataFile(day, mode);
     const rows = [...(store.buckets.get(key)?.values() ?? [])];
-    if (!rows.length) { await fs.rm(file, { force: true }); store.buckets.delete(key); store.counts.delete(relativePath(mode, day)); continue; }
+    if (!rows.length) { await fs.rm(file, { force: true }); await fs.rm(path.join(DATA_DIR, "raw", path.relative(DATA_DIR, file)), { force: true }); store.buckets.delete(key); store.counts.delete(relativePath(mode, day)); continue; }
     await fs.mkdir(path.dirname(file), { recursive: true });
     await writeCsv(file, rows);
     store.counts.set(relativePath(mode, day), rows.length);
@@ -204,7 +211,17 @@ async function writeIndexFromStore(store) {
   await fs.writeFile(INDEX_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), files: entries }, null, 2), "utf8");
 }
 async function readCsv(file) { try { return parseCsv(zlib.gunzipSync(await fs.readFile(file)).toString("utf8")); } catch (error) { if (error.code === "ENOENT") return []; throw error; } }
-async function writeCsv(file, rows) { await fs.writeFile(file, zlib.gzipSync(Buffer.from(`\uFEFF${serializeCsv(rows)}\n`, "utf8"))); }
+async function readSourceCsv(relative) { const raw = await readCsv(path.join(DATA_DIR, "raw", relative)); return raw.length ? raw : readCsv(path.join(DATA_DIR, relative)); }
+// \uC11C\uBE44\uC2A4\uC6A9 \uC77C\uC790\uBCC4 \uD30C\uC77C\uC5D0\uB294 \uD544\uC694\uD55C \uCEEC\uB7FC\uB9CC, \uC6D0\uBCF8 \uC804\uCCB4\uB294 data/raw \uC544\uB798 \uAC19\uC740 \uAD6C\uC870\uB85C \uB530\uB85C \uBCF4\uAD00\uD55C\uB2E4.
+// \uC6D0\uBCF8\uC744 \uC77C\uC790\uBCC4\uB85C \uB450\uB294 \uC774\uC720\uB294 \uC99D\uBD84 \uBCD1\uD569\u00B7\uC911\uBCF5 \uC81C\uAC70\uAC00 \uADF8\uB300\uB85C \uC131\uB9BD\uD558\uAE30 \uB54C\uBB38\uC774\uB2E4. \uB2E8\uC77C CSV\uC5D0
+// append\uB9CC \uD558\uBA74 \uBC30\uCE58\uB9C8\uB2E4 \uCEEC\uB7FC \uC9D1\uD569\uC774 \uB2EC\uB77C\uC838 \uC5F4\uC774 \uC5B4\uAE0B\uB098\uACE0, \uAC31\uC2E0\uBD84\uC774 \uC911\uBCF5\uC73C\uB85C \uC313\uC778\uB2E4.
+// \uD558\uB098\uB85C \uD06C\uAC8C \uBB36\uC740 \uBC31\uC5C5\uC740 collector/export-raw.js\uAC00 data/raw\uB97C \uD6D1\uC5B4 \uD55C \uBC88\uC5D0 \uB9CC\uB4E0\uB2E4.
+async function writeCsv(file, rows) {
+  await fs.writeFile(file, zlib.gzipSync(Buffer.from(`\uFEFF${serializeCsv(rows.map((row) => project(row)))}\n`, "utf8")));
+  const rawFile = path.join(DATA_DIR, "raw", path.relative(DATA_DIR, file));
+  await fs.mkdir(path.dirname(rawFile), { recursive: true });
+  await fs.writeFile(rawFile, zlib.gzipSync(Buffer.from(`\uFEFF${serializeCsv(rows)}\n`, "utf8")));
+}
 function dataFile(day, mode) { const [year, month, date] = day.split("-"); return path.join(DATA_DIR, mode, year, month, `${date}.csv.gz`); }
 async function dailyFiles(extension = "csv.gz") {
   const pattern = new RegExp(`^\\d{2}\\.${extension.replaceAll(".", "\\.")}$`);
@@ -380,6 +397,7 @@ async function rebalanceModeDirectories() {
   await writeIndex(new Set(files.map((file) => file.date)));
 }
 function chunks(begin, end) { const result = []; for (let cursor = new Date(begin); cursor <= end;) { const finish = new Date(Math.min(addDays(cursor, RANGE_DAYS - 1), end)); result.push({ begin: iso(cursor), end: iso(finish) }); cursor = addDays(finish, 1); } return result; }
+function parseArgs() { const args = {}; for (const arg of process.argv.slice(2)) { if (arg === "--no-resume") { args.resume = false; continue; } const match = arg.match(/^--(begin|end)=(\d{4}-\d{2}-\d{2})$/); if (match) args[match[1]] = match[2]; } return args; }
 function parseDate(value) { const result = new Date(`${value}T00:00:00`); return Number.isNaN(result.valueOf()) ? null : result; }
 function addDays(value, days) { const result = new Date(value); result.setDate(result.getDate() + days); return result; }
 function iso(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }

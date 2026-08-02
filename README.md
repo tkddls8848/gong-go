@@ -54,12 +54,19 @@ node analyzer/analyze.js --provider ollama --model qwen3.5-hermes-64k:latest
 
 ## 조회
 
-저장소 루트에서 서버를 실행하고 `http://localhost:8788/public/`을 엽니다.
+저장소 루트에서 로컬 개발 서버를 실행하고 `http://localhost:8788/public/`을 엽니다.
 
 ```powershell
-cd C:\gong-go
-python -m http.server 8788
+npm run serve
 ```
+
+`devserver/server.js`는 저장소 루트를 정적 서빙하면서 갱신용 `/api/refresh`를 함께 제공합니다. 조회만 할 것이라면 `python -m http.server 8788`로도 되지만, 이 경우 **보유데이터 갱신 버튼은 동작하지 않습니다.**
+
+### 보유데이터 갱신
+
+페이지 상단에 보유 데이터의 날짜 범위와 건수가 표시되고, 옆의 **보유데이터 갱신** 버튼을 누르면 `/api/refresh`가 수집기를 실행합니다. 범위는 **보유 데이터의 마지막 날짜 ~ 오늘**로 자동 결정되며(마지막 날짜는 이후 추가 등록분을 반영하려고 다시 받습니다), 내부적으로 `node collector/collector.js --begin=... --end=... --no-resume`을 실행합니다. 수집이 끝나면 페이지가 `index.json`을 다시 읽어 늘어난 날짜를 자동으로 반영합니다.
+
+전체 기간을 다시 받으려면 버튼이 아니라 `npm run collect`를 쓰세요. `sync.config.json`의 `begin`이 `2025-01-01`이라 전체 백필이 돕니다.
 
 정적 페이지는 `data/index.json`과 `data/pre/YYYY/MM/DD.csv.gz`, `data/bid/YYYY/MM/DD.csv.gz`를 읽습니다. 날짜별 파일은 gzip으로 압축 저장하고, 브라우저에서 `DecompressionStream`으로 즉시 해제해 표시합니다. `index.html`을 파일 탐색기에서 직접 열면 브라우저 보안 정책 때문에 CSV를 읽을 수 없습니다.
 

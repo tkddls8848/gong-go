@@ -1,3 +1,9 @@
 .env
 data/
+# 원본 백업(170컬럼)은 절대 커밋하지 않는다. 배포계획서 5-1에서 위 data/ 규칙을 상태 파일만
+# 제외하도록 좁힐 때, 이 줄이 없으면 640MB 원본이 저장소로 딸려 들어간다.
+data/raw/
+data/backup/
 rfp_sample/
+backfill.log
+backfill.err

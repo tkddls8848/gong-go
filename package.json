@@ -2,7 +2,10 @@
   "name": "gong-go-dev",
   "private": true,
   "scripts": {
+    "serve": "node devserver/server.js",
     "collect": "node collector/collector.js",
+    "slim": "node collector/slim.js",
+    "export-raw": "node collector/export-raw.js",
     "attachments": "node downloader/attachments.js",
     "convert": "node converter/convert.js",
     "analyze": "node analyzer/analyze.js",
