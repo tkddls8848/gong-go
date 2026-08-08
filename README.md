@@ -6,12 +6,14 @@
 
 | 폴더 | 역할 | 실행 |
 | --- | --- | --- |
-| `collector/` | 공공데이터 API 공고 수집 (사전공고·본공고 CSV) | `npm run collect` |
+| `collector/` | 공공데이터 API 공고 수집 (사전공고·본공고 CSV), 월별 봉인 | `npm run collect`, `npm run compact` |
 | `downloader/` | 관심 공고의 첨부(제안요청서·과업내용서) 다운로드 | `npm run attachments` |
 | `converter/` | HWP·HWPX·PDF·ZIP 첨부를 HWPX/Markdown으로 변환 | `npm run convert` |
 | `analyzer/` | 변환 텍스트에서 ECR 규격 추출·검증 | `npm run analyze` |
+| `uploader/` | 배포 대상 산출물을 Cloudflare R2로 업로드 | `npm run upload` |
 | `shared/` | 공용 유틸(CSV 직렬화/파싱, 경로·gzip·동시성 헬퍼, 서비스 컬럼 정의) | — |
 | `public/` | 수집 데이터를 읽어 표시하는 순수 정적 페이지 | 정적 서버 |
+| `functions/` | Cloudflare Pages Functions — 접근 게이트, R2 중계(`/data/**`) | Pages |
 | `devserver/` | 로컬 전용 정적 서버 + 갱신 API(`/api/refresh`) | `npm run serve` |
 | `docs/` | 배포 계획(Git-정적 방식 / R2 방식) | — |
 | `data/` | 모든 단계의 입출력 데이터 (gitignore) | — |
@@ -27,6 +29,7 @@
 ```
 data/
 ├─ pre|bid/YYYY/MM/DD.csv.gz          collector 산출물(날짜별 공고, 서비스 컬럼만)
+├─ pre|bid/YYYY/MM.csv.gz             compact 산출물(재수집 창 밖 완료 월 봉인)
 ├─ index.json, sync-state.json        파일 목록·수집 진행 상태
 ├─ raw/pre|bid/YYYY/MM/DD.csv.gz      슬림화 전 원본(170여 컬럼) 백업
 ├─ backup/raw-full.csv.gz             원본을 한 파일로 합친 백업
@@ -102,14 +105,33 @@ npm run serve
 
 전체 기간을 다시 받으려면 버튼이 아니라 `node collector/backfill.js`를 쓰세요. `sync.config.json`의 `begin`이 `2020-01-01`이라 `npm run collect`로 전체 백필을 돌리면 한 프로세스에 6년치가 쌓여 힙이 터집니다.
 
-정적 페이지는 `data/index.json`과 `data/pre/YYYY/MM/DD.csv.gz`, `data/bid/YYYY/MM/DD.csv.gz`를 읽습니다. 날짜별 파일은 gzip으로 압축 저장하고, 브라우저에서 `DecompressionStream`으로 즉시 해제해 표시합니다. `index.html`을 파일 탐색기에서 직접 열면 브라우저 보안 정책 때문에 CSV를 읽을 수 없습니다.
+정적 페이지는 `/data/index.json`과 `/data/{pre,bid}/YYYY/MM/DD.csv.gz`(봉인된 달은 `/data/{pre,bid}/YYYY/MM.csv.gz`)를 읽습니다. 경로는 절대경로 `/data`이며, 로컬에서는 `devserver`가 저장소 루트를 서빙해 그대로 `data/`를 가리키고 배포본에서는 같은 경로가 R2 중계 Function으로 잡힙니다. 파일은 gzip으로 압축 저장하고 브라우저에서 `DecompressionStream`으로 즉시 해제합니다. `index.html`을 파일 탐색기에서 직접 열면 브라우저 보안 정책 때문에 CSV를 읽을 수 없습니다.
+
+인덱스 항목은 구간입니다(`{mode, begin, end, path, count}`, 일별은 `begin === end`). 조회는 **항목 구간과 조회 구간이 겹치는** 파일을 받고 행 단위로 다시 거르므로, 월 봉인 파일을 통째로 받아도 결과는 정확합니다.
 
 ## 배포
 
-아직 배포 전이며 계획 문서만 있습니다.
+`docs/배포계획-R2.md`의 코드 작업(1~7단계)이 끝난 상태이고, 대시보드·시크릿 작업(8~11단계)이 남아 있습니다.
 
-- `docs/배포계획.md`: gzip 데이터를 Git에 커밋해 Cloudflare Pages가 정적 서빙하는 방식
-- `docs/배포계획-R2.md`: 2026-08-03 실측(배포 대상 288MB·4,754파일·321만건, `data/raw` 651MB)을 근거로 **R2 방식을 채택**한 실행 계획. 되돌릴 수 없는 Git 커밋 대신 R2 버킷 + 중계 Function을 쓰고, 호출당 비용을 줄이려고 월별 봉인(`collector/compact.js`)과 업로더를 추가합니다
+- `docs/배포계획.md`: gzip 데이터를 Git에 커밋해 Cloudflare Pages가 정적 서빙하는 방식(대안으로 남겨 둔 원안)
+- `docs/배포계획-R2.md`: 2026-08-03 실측(배포 대상 288MB·4,754파일·321만건, `data/raw` 651MB)을 근거로 **R2 방식을 채택**한 실행 계획
+
+```powershell
+npm run compact              # 월별 봉인 (월 1회, 로컬에서만)
+npm run compact -- --prune   # 결과 확인 후 일별 파일 정리
+npm run upload               # R2로 변경분만 업로드
+```
+
+배포 구성은 다음과 같습니다.
+
+| 조각 | 위치 | 역할 |
+|---|---|---|
+| 게이트 | `functions/_middleware.js` | 공유 암호(`GATE_PASSWORD`). 모든 요청보다 먼저 실행되므로 `/data/**`도 뒤에 놓인다 |
+| R2 중계 | `functions/data/[[path]].js` | 바인딩 `DATA`를 화이트리스트 정규식으로만 중계. `raw/`·`state/`는 도달 불가. 과거 파일은 `immutable` 1년, 재수집 창 안쪽은 5분 |
+| 업로더 | `uploader/upload.js` | ETag 비교로 변경분만 PUT. 삭제는 버킷 상태로만 판정한다([uploader/README.md](uploader/README.md)) |
+| 크론 | `.github/workflows/collect.yml` | 매일 KST 05:00. **워크플로 파일은 `main`에 두고** 잡에서 `ref: dev`를 체크아웃한다 — `on: schedule`은 기본 브랜치의 워크플로만 트리거한다 |
+
+크론은 저장소에 푸시하지 않으므로 Pages 재배포가 일어나지 않고, 권한도 `contents: read`로 족합니다.
 
 ## 테스트
 

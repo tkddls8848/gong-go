@@ -35,6 +35,29 @@ async function readGzipText(file) { return zlib.gunzipSync(await fs.readFile(fil
 async function writeGzipText(file, text) { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, zlib.gzipSync(Buffer.from(text, "utf8"))); }
 async function readCsvGz(file) { try { return parseCsv(await readGzipText(file)); } catch (error) { if (error.code === "ENOENT") return []; throw error; } }
 
+// index.json 항목 스키마는 {mode, begin, end, path, count}로 통일한다. 일별 파일은
+// begin === end이고, collector/compact.js가 만든 월별 봉인 파일은 그 달 전체를 덮는다.
+// 프런트(public/app.js)는 이 구간이 조회 구간과 겹치는 항목만 받으므로, 일별과 월별을
+// 같은 모양으로 두면 양쪽을 구분하지 않고 고를 수 있다.
+const SEALED_PATH = /^(pre|bid)\/(\d{4})\/(\d{2})\.csv\.gz$/;
+function lastDayOfMonth(year, month) { return String(new Date(Number(year), Number(month), 0).getDate()).padStart(2, "0"); }
+function indexEntry(relative, count) {
+  const sealed = relative.match(SEALED_PATH);
+  if (sealed) { const [, mode, year, month] = sealed; return { mode, begin: `${year}-${month}-01`, end: `${year}-${month}-${lastDayOfMonth(year, month)}`, path: relative, count }; }
+  const [mode, year, month, name] = relative.split("/");
+  const date = `${year}-${month}-${name.slice(0, 2)}`;
+  return { mode, begin: date, end: date, path: relative, count };
+}
+// 같은 달에 월별 봉인 파일과 일별 파일이 함께 있으면(봉인 직후 --prune 전) 월 파일만 남긴다.
+// 둘 다 두면 프런트가 같은 행을 두 번 읽는다.
+function buildIndexEntries(counts) {
+  const entries = [...counts].map(([relative, count]) => indexEntry(relative, count));
+  const sealed = new Set(entries.filter((entry) => SEALED_PATH.test(entry.path)).map((entry) => `${entry.mode}|${entry.begin.slice(0, 7)}`));
+  return entries
+    .filter((entry) => SEALED_PATH.test(entry.path) || !sealed.has(`${entry.mode}|${entry.begin.slice(0, 7)}`))
+    .sort((a, b) => a.begin.localeCompare(b.begin) || a.mode.localeCompare(b.mode));
+}
+
 function noticeNumber(row) { return String(row.bidNtceNo || row.bfSpecRgstNo || row.announcementNumber || "").trim(); }
 function rowDate(row) { return String(row.rgstDt || row.bidNtceDt || row.publishedAt || "").replace(/\D/g, "").slice(0, 8); }
 function institution(row) { return String(row.rlDminsttNm || row.dminsttNm || row.institution || ""); }
@@ -56,4 +79,4 @@ function safeFileName(name, fallback = "attachment") {
 }
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-module.exports = { ROOT, DATA_DIR, fs, path, loadEnv, mapPool, readJson, writeJson, readGzipText, writeGzipText, readCsvGz, noticeNumber, rowDate, institution, title, normalizeFiles, safeFileName, sleep };
+module.exports = { ROOT, DATA_DIR, fs, path, loadEnv, mapPool, readJson, writeJson, readGzipText, writeGzipText, readCsvGz, SEALED_PATH, lastDayOfMonth, indexEntry, buildIndexEntries, noticeNumber, rowDate, institution, title, normalizeFiles, safeFileName, sleep };

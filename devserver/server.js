@@ -43,7 +43,8 @@ async function handleRefresh(request, response) {
 // 그날 데이터가 수집 시점 이후에 더 등록됐을 수 있기 때문이다.
 async function refreshRange() {
   const index = await readJson(path.join(DATA_DIR, "index.json"), null);
-  const dates = (index?.files || []).map((file) => file.date).filter(Boolean).sort();
+  // 인덱스 항목은 구간({begin,end})이다. 월별 봉인 항목이 섞여 있어도 마지막 날짜는 end가 정한다.
+  const dates = (index?.files || []).map((file) => file.end || file.date).filter(Boolean).sort();
   if (!dates.length) return null;
   return { begin: dates.at(-1), end: today() };
 }

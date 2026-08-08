@@ -3,7 +3,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const zlib = require("node:zlib");
 const { serializeCsv, parseCsv } = require("../shared/csv-record");
-const { ROOT, DATA_DIR, loadEnv, mapPool, sleep } = require("../shared/pipeline-utils");
+const { ROOT, DATA_DIR, loadEnv, mapPool, sleep, buildIndexEntries } = require("../shared/pipeline-utils");
 const { project } = require("../shared/service-columns");
 
 const CONFIG_FILE = path.join(__dirname, "sync.config.json");
@@ -57,8 +57,10 @@ async function main() {
   // 갱신 버튼(devserver)이 최근 구간만 다시 받을 때 사용한다.
   const args = parseArgs();
   const resume = args.resume === false ? false : config.resume;
-  const begin = parseDate(args.begin || config.begin || "2015-01-01");
-  const end = parseDate(args.end || config.end || today());
+  // SYNC_BEGIN/SYNC_END는 GitHub Actions 크론이 최근 며칠만 다시 받게 하려고 둔 출구다.
+  // 우선순위는 CLI 인자 > 환경변수 > sync.config.json 순이다.
+  const begin = parseDate(args.begin || process.env.SYNC_BEGIN || config.begin || "2015-01-01");
+  const end = parseDate(args.end || process.env.SYNC_END || config.end || today());
   if (!begin || !end || begin > end) throw new Error("수집 기간을 확인하세요(sync.config.json 또는 --begin/--end).");
   const modes = (config.modes || ["사전공고", "본공고"]).map((mode) => MODE_ALIASES[mode]).filter((mode) => MODES[mode]);
   const types = (config.businessTypes || TYPES).filter((type) => TYPES.includes(type));
@@ -148,8 +150,13 @@ function relativePath(mode, day) { const [year, month, date] = day.split("-"); r
 
 async function readStore(begin, end) {
   const files = await dailyFiles();
+  const sealed = await sealedFiles();
   const beginDate = iso(begin);
   const endDate = iso(end);
+  // 봉인된 월(compact.js)로 다시 수집하면, 새로 받은 행은 일별 파일에 쓰이지만 인덱스는
+  // 월 파일만 가리키므로 뷰어에 보이지 않는다. 되살리려면 그 달을 다시 봉인해야 한다.
+  const overlap = sealed.filter((file) => file.month >= beginDate.slice(0, 7) && file.month <= endDate.slice(0, 7));
+  if (overlap.length) console.warn(`경고: 수집 범위가 봉인된 월 ${overlap.length}개(${overlap[0].month}~${overlap.at(-1).month})와 겹칩니다. 수집 후 node collector/compact.js로 다시 봉인하세요.`);
   const store = { buckets: new Map(), location: new Map(), counts: new Map() };
   let previous = new Map();
   try { previous = new Map(JSON.parse(await fs.readFile(INDEX_FILE, "utf8")).files.map((file) => [file.path, file.count])); } catch (error) { if (error.code !== "ENOENT") throw error; }
@@ -166,7 +173,15 @@ async function readStore(begin, end) {
   });
   for (const [key, bucket] of store.buckets) { const [mode, day] = key.split("|"); store.counts.set(relativePath(mode, day), bucket.size); }
   // 수집 범위 밖 파일은 읽지 않고 기존 index.json 건수를 그대로 승계한다.
-  const missing = files.filter((file) => !store.counts.has(file.path));
+  // compact.js가 만든 월별 봉인 파일도 여기서 건수만 승계한다. 일별로 되풀지 않는 이유는
+  // 되풀면 writeRecords가 봉인을 일별 파일로 되돌려 놓기 때문이다.
+  //
+  // 봉인된 달의 일별 파일은 세지 않는다. 그 달은 인덱스에 월 항목 하나로만 오르므로
+  // (buildIndexEntries) 건수가 쓰이지 않는데, 인덱스에 없다는 이유로 승계에 실패해
+  // --prune 전에는 4,700여 개를 전부 다시 파싱하게 된다.
+  const sealedMonths = new Set(sealed.map((file) => `${file.mode}|${file.month}`));
+  const countable = files.filter((file) => !sealedMonths.has(`${file.mode}|${file.date.slice(0, 7)}`));
+  const missing = [...countable, ...sealed].filter((file) => !store.counts.has(file.path));
   await mapPool(missing, FILE_CONCURRENCY, async (file) => {
     store.counts.set(file.path, previous.has(file.path) ? previous.get(file.path) : (await readCsv(path.join(DATA_DIR, file.path))).length);
   });
@@ -205,10 +220,7 @@ async function writeRecords(store, changed) {
 
 // 디렉터리를 다시 훑거나 CSV를 다시 파싱하지 않고 메모리 건수로 index.json을 쓴다.
 async function writeIndexFromStore(store) {
-  const entries = [...store.counts.entries()]
-    .map(([file, count]) => { const [mode, year, month, name] = file.split("/"); return { mode, date: `${year}-${month}-${name.slice(0, 2)}`, path: file, count }; })
-    .sort((a, b) => a.date.localeCompare(b.date) || a.mode.localeCompare(b.mode));
-  await fs.writeFile(INDEX_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), files: entries }, null, 2), "utf8");
+  await fs.writeFile(INDEX_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), files: buildIndexEntries(store.counts) }, null, 2), "utf8");
 }
 async function readCsv(file) { try { return parseCsv(zlib.gunzipSync(await fs.readFile(file)).toString("utf8")); } catch (error) { if (error.code === "ENOENT") return []; throw error; } }
 async function readSourceCsv(relative) { const raw = await readCsv(path.join(DATA_DIR, "raw", relative)); return raw.length ? raw : readCsv(path.join(DATA_DIR, relative)); }
@@ -248,6 +260,23 @@ async function dailyFiles(extension = "csv.gz") {
   }
   return result.sort((a, b) => a.date.localeCompare(b.date) || a.mode.localeCompare(b.mode));
 }
+// collector/compact.js가 만든 월별 봉인 파일. 일별 파일과 달리 YYYY 아래에 바로 놓인다
+// ({pre,bid}/YYYY/MM.csv.gz). 수집기는 이 파일을 읽지 않고 index.json 건수만 승계한다.
+async function sealedFiles() {
+  const result = [];
+  for (const mode of Object.keys(MODES)) {
+    let years;
+    try { years = await fs.readdir(path.join(DATA_DIR, mode), { withFileTypes: true }); } catch (error) { if (error.code === "ENOENT") continue; throw error; }
+    for (const yearEntry of years) {
+      if (!yearEntry.isDirectory() || !/^\d{4}$/.test(yearEntry.name)) continue;
+      for (const entry of await fs.readdir(path.join(DATA_DIR, mode, yearEntry.name), { withFileTypes: true })) {
+        if (!entry.isFile() || !/^\d{2}\.csv\.gz$/.test(entry.name)) continue;
+        result.push({ mode, month: `${yearEntry.name}-${entry.name.slice(0, 2)}`, path: `${mode}/${yearEntry.name}/${entry.name}` });
+      }
+    }
+  }
+  return result.sort((a, b) => a.month.localeCompare(b.month) || a.mode.localeCompare(b.mode));
+}
 // \uAE30\uC874 \uD3C9\uBB38 CSV(.csv)\uB97C gzip(.csv.gz)\uC73C\uB85C \uC555\uCD95\uD574 \uC800\uC7A5 \uC6A9\uB7C9\uC744 \uC904\uC774\uB294 1\uD68C\uC131 \uB9C8\uC774\uADF8\uB808\uC774\uC158.
 async function gzipStorage() {
   const plainFiles = await dailyFiles("csv");
@@ -277,11 +306,11 @@ async function compactEmptyCells() {
   console.log(`빈 셀 래핑을 제거해 ${files.length}개 파일에서 ${(saved / 1024 / 1024).toFixed(1)}MB를 줄였습니다.`);
 }
 async function writeIndex(changedDates) {
-  const files = await dailyFiles();
+  const files = [...await dailyFiles(), ...await sealedFiles()];
   let previous = new Map();
   try { previous = new Map(JSON.parse(await fs.readFile(INDEX_FILE, "utf8")).files.map((file) => [file.path, file.count])); } catch (error) { if (error.code !== "ENOENT") throw error; }
-  const entries = await Promise.all(files.map(async (file) => ({ ...file, count: changedDates?.has(file.date) || !previous.has(file.path) ? (await readCsv(path.join(DATA_DIR, file.path))).length : previous.get(file.path) })));
-  await fs.writeFile(INDEX_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), files: entries }, null, 2), "utf8");
+  const counts = new Map(await Promise.all(files.map(async (file) => [file.path, changedDates?.has(file.date) || !previous.has(file.path) ? (await readCsv(path.join(DATA_DIR, file.path))).length : previous.get(file.path)])));
+  await fs.writeFile(INDEX_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), files: buildIndexEntries(counts) }, null, 2), "utf8");
 }
 function recordKey(row) { const number = String(row.bfSpecRgstNo || row.bidNtceNo || "").trim(); return number ? `${recordMode(row)}:${number}` : ""; }
 function recordMode(row) { return row.bidNtceNo ? "bid" : row.bfSpecRgstNo ? "pre" : ""; }

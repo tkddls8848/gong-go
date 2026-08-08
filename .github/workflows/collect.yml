@@ -1,0 +1,104 @@
+# 매일 나라장터 공고를 수집해 R2에 올린다. (docs/배포계획-R2.md R2-8)
+#
+# 이 파일은 반드시 기본 브랜치(main)에 있어야 한다 — on.schedule은 기본 브랜치의 워크플로만
+# 트리거한다. 코드는 dev에 있으므로 잡에서 ref: dev를 체크아웃한다.
+#
+# 저장소에 푸시하지 않는다. 데이터는 R2로만 가므로 Pages 재배포가 일어나지 않고,
+# 빌드 500회/월 한도와 무관해진다. Pages 배포는 코드를 고칠 때만 일어난다.
+name: collect
+
+on:
+  schedule:
+    - cron: "0 20 * * *" # UTC 20:00 = KST 05:00
+  workflow_dispatch:
+    inputs:
+      begin:
+        description: "수집 시작일(YYYY-MM-DD). 비우면 최근 35일."
+        default: ""
+      end:
+        description: "수집 종료일(YYYY-MM-DD). 비우면 오늘."
+        default: ""
+
+# 저장소에 쓰지 않는다. Git-정적 방식보다 권한이 좁다.
+permissions:
+  contents: read
+
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      # 수집 범위를 먼저 정한다. 기본은 최근 35일 — 나라장터는 지난 공고를 소급 수정하므로
+      # 어제 하루만 받으면 그 사이 바뀐 건을 놓친다.
+      - name: 수집 범위 결정
+        id: range
+        run: |
+          BEGIN="${{ inputs.begin }}"
+          END="${{ inputs.end }}"
+          [ -n "$BEGIN" ] || BEGIN=$(date -u -d "35 days ago" +%Y-%m-%d)
+          [ -n "$END" ] || END=$(date -u +%Y-%m-%d)
+          echo "begin=$BEGIN" >> "$GITHUB_OUTPUT"
+          echo "end=$END" >> "$GITHUB_OUTPUT"
+          echo "수집 범위 $BEGIN ~ $END"
+
+      # 마이그레이션 완료 표시를 승계한다. 러너는 매번 새 체크아웃이라 data/가 비어 있다.
+      - name: sync-state 내려받기
+        run: node uploader/upload.js --pull-state
+
+      # --no-resume: 이전 실행의 completedJobs 때문에 일부 업무구분을 건너뛰면, 그날 파일이
+      # 그 구분만 빠진 채로 쓰여 R2의 온전한 파일을 덮어쓴다. 창이 35일뿐이라 작업이
+      # 16개(2구간 x 2모드 x 4구분)밖에 안 되므로 resume으로 아낄 것도 없다.
+      - name: 수집
+        env:
+          SYNC_BEGIN: ${{ steps.range.outputs.begin }}
+          SYNC_END: ${{ steps.range.outputs.end }}
+        run: node collector/collector.js --no-resume
+
+      # collector는 개별 작업이 실패해도 종료 코드 0으로 끝난다. 종료 코드만 보면 데이터가
+      # 빠진 채로 성공했다고 착각한다(collector/backfill.js와 같은 이유).
+      #
+      # 여기서 멈추는 것이 중요하다. 러너는 로컬에 기존 파일이 없어 실패한 작업의 몫이
+      # 그대로 구멍으로 남고, 그 상태로 올리면 R2의 온전한 파일을 불완전한 것으로 덮어쓴다.
+      # 업로드 전에 끊어야 버킷이 마지막 정상 상태를 유지한다.
+      - name: 수집 실패 확인
+        run: |
+          COUNT=$(node -p "try{require('./data/sync-errors.json').length}catch{0}")
+          echo "실패 작업 $COUNT건"
+          [ "$COUNT" = "0" ] || { node -p "JSON.stringify(require('./data/sync-errors.json').slice(0,10),null,2)"; exit 1; }
+
+      # 삭제 판정이 이 구간을 본다(uploader/upload.js의 vanishedDaily). 수집과 같은 값이어야 한다.
+      - name: 업로드
+        env:
+          SYNC_BEGIN: ${{ steps.range.outputs.begin }}
+          SYNC_END: ${{ steps.range.outputs.end }}
+        run: node uploader/upload.js
+
+      # 수집이 실패해 위에서 멈춰도 무엇이 틀렸는지는 남긴다.
+      - name: 오류 로그 보관
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-errors
+          path: data/sync-errors.json
+          if-no-files-found: ignore
+          retention-days: 14

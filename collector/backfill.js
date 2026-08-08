@@ -100,9 +100,11 @@ function quarters(from, to) {
 function describeIndex() {
   try {
     const index = JSON.parse(fs.readFileSync(INDEX_FILE, "utf8"));
-    const dates = [...new Set(index.files.map((file) => file.date))].sort();
+    // 인덱스 항목은 구간이라 "일수"를 셀 수 없다(월별 봉인 항목 하나가 한 달을 덮는다).
+    const begins = index.files.map((file) => file.begin || file.date).sort();
+    const ends = index.files.map((file) => file.end || file.date).sort();
     const rows = index.files.reduce((sum, file) => sum + (Number(file.count) || 0), 0);
-    return `${dates[0]} ~ ${dates.at(-1)} · ${dates.length}일 · ${index.files.length}파일 · ${rows.toLocaleString("ko-KR")}건`;
+    return `${begins[0]} ~ ${ends.at(-1)} · ${index.files.length}파일 · ${rows.toLocaleString("ko-KR")}건`;
   } catch { return "index.json 없음"; }
 }
 
