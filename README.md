@@ -16,7 +16,7 @@
 | `src/worker.js` | Cloudflare Worker — 접근 게이트, R2 중계(`/data/**`), 정적 자산 전달 | Workers |
 | `wrangler.jsonc` | 정적 자산·R2 바인딩과 Worker 우선 실행을 선언하는 배포 설정 | Wrangler |
 | `devserver/` | 로컬 전용 정적 서버 + 갱신 API(`/api/refresh`) | `npm run serve` |
-| `docs/` | 배포 계획(Git-정적 방식 / R2 방식) | — |
+| `docs/` | 배포 절차와 계획(R2 방식 / Git-정적 대안) | — |
 | `data/` | 모든 단계의 입출력 데이터 (gitignore) | — |
 
 설정과 비밀값 위치는 다음과 같습니다.
@@ -117,8 +117,9 @@ Worker 프로젝트에 잘못 배포하면 게이트가 실행되지 않은 채 
 Workers 구조로 전환했습니다. 배포는 대시보드의 빌드 출력 설정이 아니라 저장소의
 `wrangler.jsonc`가 정적 자산과 R2 바인딩을 함께 선언합니다.
 
-- `docs/배포계획.md`: gzip 데이터를 Git에 커밋해 Cloudflare Pages가 정적 서빙하는 방식(대안으로 남겨 둔 원안)
-- `docs/배포계획-R2.md`: 2026-08-03 실측(배포 대상 288MB·4,754파일·321만건, `data/raw` 651MB)을 근거로 **R2 방식을 채택**한 실행 계획
+- `docs/워커-배포절차.md`: **배포·검증·사고 대응의 기준 문서.** 현재 배포 상태와 단계별 명령
+- `docs/배포계획-R2.md`: 2026-08-03 실측(배포 대상 288MB·4,754파일·321만건, `data/raw` 651MB)을 근거로 **R2 방식을 채택**한 설계
+- `docs/배포계획.md`: gzip 데이터를 Git에 커밋해 정적 서빙하는 방식(대안으로 남겨 둔 원안)과 선택 기준
 
 ```powershell
 npm run compact              # 월별 봉인 (월 1회, 로컬에서만)
@@ -135,9 +136,15 @@ npm run upload               # R2로 변경분만 업로드
 | 업로더 | `uploader/upload.js` | ETag 비교로 변경분만 PUT. 삭제는 버킷 상태로만 판정한다([uploader/README.md](uploader/README.md)) |
 | 크론 | `.github/workflows/collect.yml` | 매일 KST 05:00. **워크플로 파일은 `main`에 두고** 잡에서 `ref: dev`를 체크아웃한다 — `on: schedule`은 기본 브랜치의 워크플로만 트리거한다 |
 
+배포본은 <https://gong-go-dev.tkddls8848.workers.dev>입니다. 명령 순서와 검증은
+[docs/워커-배포절차.md](docs/워커-배포절차.md)를 따릅니다.
+
 `GATE_PASSWORD`는 설정 파일에 넣지 않고 `npx wrangler secret put GATE_PASSWORD`로 등록합니다.
-배포 순서는 `npm ci`, `npx wrangler login`, 시크릿 등록, `npm run deploy`입니다. 크론은 저장소에
-푸시하지 않으므로 Worker 재배포가 일어나지 않고, 권한도 `contents: read`로 족합니다.
+**값이 비어 있으면 `src/worker.js`가 통과 모드로 떨어져 사이트 전체가 무인증으로 열립니다.**
+등록 성공 메시지는 증거가 아니므로, 시크릿을 바꾼 뒤에는 반드시 미인증 `/`와 `/app.js`가
+401인지 확인합니다(실제로 빈 값이 등록되어 5분간 공개된 사고가 있었습니다 — 절차서 11장).
+
+크론은 저장소에 푸시하지 않으므로 Worker 재배포가 일어나지 않고, 권한도 `contents: read`로 족합니다.
 
 `dev`의 Worker 게이트는 전환 당시 `main`의 `functions/_middleware.js` 동작을 옮긴 것입니다.
 이제 파일을 바이트 동일하게 복사하는 Pages 방식이 아니므로 한쪽 게이트를 수정하면 다른 쪽과
