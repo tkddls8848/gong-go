@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "serve": "node devserver/server.js",
+    "worker:dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
     "collect": "node collector/collector.js",
     "compact": "node collector/compact.js",
     "upload": "node uploader/upload.js",
@@ -15,5 +17,8 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.700.0"
+  },
+  "devDependencies": {
+    "wrangler": "4.120.0"
   }
 }

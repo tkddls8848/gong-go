@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "gong-go-dev",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-08-08",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Cloudflare Static Assets는 기본이 asset-first다. 게이트가 /와 /app.js보다 먼저 실행되게 한다.
+    "run_worker_first": true
+  },
+  "r2_buckets": [
+    {
+      "binding": "DATA",
+      "bucket_name": "gong-go-data"
+    }
+  ]
+}
