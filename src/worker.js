@@ -167,8 +167,11 @@ function clearCookie(name, secure) {
   return attrs.join("; ");
 }
 
+// 백슬래시도 막는다. "/\evil.com"은 여기서 통과해도 브라우저가 URL 정규화 단계에서
+// "//evil.com"으로 바꿔 프로토콜-상대 URL이 되므로, 로그인에 성공한 요청이 외부로 튕긴다.
 function safePath(path) {
-  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) return "/";
+  if (typeof path !== "string" || !path.startsWith("/")) return "/";
+  if (path.startsWith("//") || path.includes("\\")) return "/";
   return path;
 }
 
