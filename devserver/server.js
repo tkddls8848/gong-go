@@ -1,5 +1,5 @@
 // 로컬 개발 전용 서버. 저장소 루트를 정적 서빙하면서 갱신 버튼용 수집기 실행 API를 붙인다.
-// 배포(Cloudflare Pages)는 정적 서빙만 하므로 /api/refresh는 로컬에서만 존재한다.
+// 배포본의 같은 API는 Worker가 GitHub Actions를 실행한다.
 const http = require("node:http");
 const { spawn } = require("node:child_process");
 const { ROOT, DATA_DIR, fs, path, readJson } = require("../shared/pipeline-utils");

@@ -1,35 +1,34 @@
-// Cloudflare Workers 단일 진입점.
-// Pages의 파일 기반 실행 순서 대신 여기서 게이트 → R2/정적 자산 순서를 명시적으로 고정한다.
-// wrangler.jsonc의 assets.run_worker_first=true도 반드시 함께 유지해야 정적 자산이 먼저 새지 않는다.
+// 인증 후 정적 자산, R2 데이터, GitHub Actions 갱신 API를 제공한다.
 
-const COOKIE_NAME_DEFAULT = "gong_gate";
-const HEADER_NAME = "x-gate-password";
+const COOKIE_NAME = "gong_gate";
 const LOGIN_PATH = "/__gate/login";
 const LOGOUT_PATH = "/__gate/logout";
 const DATA_PREFIX = "/data/";
+const REFRESH_PATH = "/api/refresh";
 const KEY = /^(index\.json|analysis-index\.json|(pre|bid)\/\d{4}\/\d{2}(\/\d{2})?\.csv\.gz|analysis\/bid\/[^/]{1,160}\.json)$/;
 const RECENT_DAYS = 40;
+const GITHUB_API = "https://api.github.com/repos/tkddls8848/gong-go";
+const WORKFLOW = "collect.yml";
+const WORKFLOW_REF = "dev";
 
 export default {
   async fetch(request, env) {
     const password = env.GATE_PASSWORD;
 
-    // 설정 누락으로 운영자가 잠겨 버리는 것을 피하기 위한 기존 통과 모드.
-    if (!password) return routeRequest(request, env);
+    if (!password) return new Response("GATE_PASSWORD is not configured", { status: 500 });
 
     const url = new URL(request.url);
-    const cookieName = env.GATE_COOKIE_NAME || COOKIE_NAME_DEFAULT;
     const secure = url.protocol === "https:";
 
     if (url.pathname === LOGOUT_PATH) {
-      return redirect("/", clearCookie(cookieName, secure));
+      return redirect("/", clearCookie(COOKIE_NAME, secure));
     }
 
     if (request.method === "POST" && url.pathname === LOGIN_PATH) {
-      return handleLogin(request, password, cookieName, secure);
+      return handleLogin(request, password, secure);
     }
 
-    if (await isAuthenticated(request, password, cookieName)) {
+    if (await isAuthenticated(request, password)) {
       return routeRequest(request, env);
     }
 
@@ -42,6 +41,7 @@ export default {
 
 async function routeRequest(request, env) {
   const url = new URL(request.url);
+  if (url.pathname === REFRESH_PATH) return handleRefresh(request, env, url);
   if (url.pathname.startsWith(DATA_PREFIX)) {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
@@ -49,6 +49,58 @@ async function routeRequest(request, env) {
     return serveData(request, env, url.pathname.slice(DATA_PREFIX.length));
   }
   return env.ASSETS.fetch(request);
+}
+
+async function handleRefresh(request, env, url) {
+  if (!env.GITHUB_TOKEN) return jsonResponse({ message: "GITHUB_TOKEN 시크릿이 설정되지 않았습니다." }, 501);
+  if (request.method === "POST") {
+    const response = await github(env, `/actions/workflows/${WORKFLOW}/dispatches`, {
+      method: "POST",
+      body: JSON.stringify({ ref: WORKFLOW_REF, inputs: { begin: "", end: "" } }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return jsonResponse({ message: data.message || `GitHub Actions 실행 요청 실패 (${response.status})` }, response.status);
+    return jsonResponse({ running: true, runId: data.workflow_run_id, runUrl: data.html_url, lastLine: "GitHub Actions 실행을 요청했습니다." }, 202);
+  }
+  if (request.method !== "GET") return jsonResponse({ message: "GET 또는 POST만 지원합니다." }, 405, { Allow: "GET, POST" });
+
+  const runId = url.searchParams.get("runId");
+  const endpoint = runId && /^\d+$/.test(runId)
+    ? `/actions/runs/${runId}`
+    : `/actions/workflows/${WORKFLOW}/runs?branch=${WORKFLOW_REF}&event=workflow_dispatch&per_page=1`;
+  const response = await github(env, endpoint);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return jsonResponse({ message: data.message || `GitHub Actions 상태 조회 실패 (${response.status})` }, response.status);
+  const run = runId ? data : data.workflow_runs?.[0];
+  if (!run) return jsonResponse({ running: false });
+  const running = run.status !== "completed";
+  return jsonResponse({
+    running,
+    runId: run.id,
+    runUrl: run.html_url,
+    startedAt: run.run_started_at || run.created_at,
+    finishedAt: running ? null : run.updated_at,
+    error: !running && run.conclusion !== "success" ? `GitHub Actions가 ${run.conclusion || "실패"} 상태로 끝났습니다.` : null,
+    lastLine: running ? `GitHub Actions ${run.status}` : `GitHub Actions ${run.conclusion}`,
+  });
+}
+
+function github(env, path, init = {}) {
+  return fetch(`${GITHUB_API}${path}`, {
+    ...init,
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+      "Content-Type": "application/json",
+      "User-Agent": "gong-go-worker",
+      "X-GitHub-Api-Version": "2026-03-10",
+      ...init.headers,
+    },
+  });
+}
+
+function jsonResponse(value, status = 200, headers = {}) {
+  return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers } });
 }
 
 async function serveData(request, env, encodedKey) {
@@ -86,12 +138,9 @@ function cacheControl(key) {
   return days > RECENT_DAYS ? "private, max-age=31536000, immutable" : "private, max-age=300";
 }
 
-async function isAuthenticated(request, password, cookieName) {
-  const headerPw = request.headers.get(HEADER_NAME);
-  if (headerPw && timingSafeEqual(headerPw, password)) return true;
-
+async function isAuthenticated(request, password) {
   const cookies = parseCookies(request.headers.get("Cookie") || "");
-  const token = cookies[cookieName];
+  const token = cookies[COOKIE_NAME];
   if (token) {
     const expected = await tokenFor(password);
     if (timingSafeEqual(token, expected)) return true;
@@ -99,7 +148,7 @@ async function isAuthenticated(request, password, cookieName) {
   return false;
 }
 
-async function handleLogin(request, password, cookieName, secure) {
+async function handleLogin(request, password, secure) {
   let form;
   try {
     form = await request.formData();
@@ -118,7 +167,7 @@ async function handleLogin(request, password, cookieName, secure) {
   }
 
   const token = await tokenFor(password);
-  return redirect(dest, buildCookie(cookieName, token, { secure }));
+  return redirect(dest, buildCookie(COOKIE_NAME, token, { secure }));
 }
 
 async function tokenFor(password) {

@@ -8,8 +8,6 @@
     "collect": "node collector/collector.js",
     "compact": "node collector/compact.js",
     "upload": "node uploader/upload.js",
-    "slim": "node collector/slim.js",
-    "export-raw": "node collector/export-raw.js",
     "attachments": "node downloader/attachments.js",
     "convert": "node converter/convert.js",
     "analyze": "node analyzer/analyze.js",

@@ -58,12 +58,11 @@ function buildIndexEntries(counts) {
     .sort((a, b) => a.begin.localeCompare(b.begin) || a.mode.localeCompare(b.mode));
 }
 
-function noticeNumber(row) { return String(row.bidNtceNo || row.bfSpecRgstNo || row.announcementNumber || "").trim(); }
-function rowDate(row) { return String(row.rgstDt || row.bidNtceDt || row.publishedAt || "").replace(/\D/g, "").slice(0, 8); }
-function institution(row) { return String(row.rlDminsttNm || row.dminsttNm || row.institution || ""); }
-function title(row) { return String(row.prdctClsfcNoNm || row.bidNtceNm || row.title || ""); }
+function noticeNumber(row) { return String(row.bidNtceNo || row.bfSpecRgstNo || "").trim(); }
+function rowDate(row) { return String(row.rgstDt || row.bidNtceDt || "").replace(/\D/g, "").slice(0, 8); }
+function institution(row) { return String(row.rlDminsttNm || row.dminsttNm || ""); }
+function title(row) { return String(row.prdctClsfcNoNm || row.bidNtceNm || ""); }
 function normalizeFiles(row) {
-  if (Array.isArray(row.files)) return row.files.map((file, index) => typeof file === "string" ? { url: file, name: guessName(file, index) } : { url: file.url || "", name: file.name || guessName(file.url, index) });
   const pre = row.bfSpecRgstNo && !row.bidNtceNo;
   const prefix = pre ? "specDocFileUrl" : "ntceSpecDocUrl";
   const namePrefix = pre ? "specDocFileNm" : "ntceSpecFileNm";

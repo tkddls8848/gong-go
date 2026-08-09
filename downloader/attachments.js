@@ -16,9 +16,7 @@ async function main() {
   const index = await readJson(INDEX_FILE, { files: [] });
   const begin = String(config.begin || "0000-01-01").replaceAll("-", "");
   const mode = config.mode || "bid";
-  // 인덱스 항목은 구간이다. 월별 봉인 항목은 end가 begin 이후면 걸린다(그 달 앞부분이 섞여
-  // 들어와도 아래에서 게시일 내림차순으로 정렬해 최신부터 고르므로 결과는 달라지지 않는다).
-  const files = (index.files || []).filter((file) => file.mode === mode && (file.end || file.date).replaceAll("-", "") >= begin);
+  const files = (index.files || []).filter((file) => file.mode === mode && file.end.replaceAll("-", "") >= begin);
   const rows = (await Promise.all(files.map((file) => readCsvGz(path.join(DATA_DIR, file.path)))).then((sets) => sets.flat()))
     .filter((row) => noticeNumber(row) && (!config.institutions?.length || config.institutions.some((name) => institution(row).includes(name))))
     .sort((a, b) => rowDate(b).localeCompare(rowDate(a)));

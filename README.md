@@ -1,158 +1,90 @@
-# 나라장터 수집·분석 도구 (dev)
+# 나라장터 공고·ECR 조회
 
-나라장터 공고를 수집해 첨부 문서에서 ECR 규격까지 뽑아내는 개발 브랜치입니다. 기능 단위로 폴더를 나누고, 모든 산출물은 공용 `data/` 한 곳에 모입니다.
+나라장터 사전공고와 본공고를 수집해 검색하고, 본공고 첨부 문서에서 ECR 규격을 추출하는 개인용 서비스입니다. 운영 경로는 Cloudflare Worker + R2이며, 매일 GitHub Actions가 최근 35일을 다시 수집합니다.
 
-> 운영 중인 실시간 조회 웹앱(`gong-go.pages.dev`)은 `main` 브랜치에 있습니다. 이 브랜치는 그 앱을 대체하지 않는 별도의 개발 라인입니다.
+## 구성
 
-| 폴더 | 역할 | 실행 |
-| --- | --- | --- |
-| `collector/` | 공공데이터 API 공고 수집 (사전공고·본공고 CSV), 월별 봉인 | `npm run collect`, `npm run compact` |
-| `downloader/` | 관심 공고의 첨부(제안요청서·과업내용서) 다운로드 | `npm run attachments` |
-| `converter/` | HWP·HWPX·PDF·ZIP 첨부를 HWPX/Markdown으로 변환 | `npm run convert` |
-| `analyzer/` | 변환 텍스트에서 ECR 규격 추출·검증 | `npm run analyze` |
-| `uploader/` | 배포 대상 산출물을 Cloudflare R2로 업로드 | `npm run upload` |
-| `shared/` | 공용 유틸(CSV 직렬화/파싱, 경로·gzip·동시성 헬퍼, 서비스 컬럼 정의) | — |
-| `public/` | 수집 데이터를 읽어 표시하는 순수 정적 페이지 | 정적 서버 |
-| `src/worker.js` | Cloudflare Worker — 접근 게이트, R2 중계(`/data/**`), 정적 자산 전달 | Workers |
-| `wrangler.jsonc` | 정적 자산·R2 바인딩과 Worker 우선 실행을 선언하는 배포 설정 | Wrangler |
-| `devserver/` | 로컬 전용 정적 서버 + 갱신 API(`/api/refresh`) | `npm run serve` |
-| `docs/` | 배포 절차와 계획(R2 방식 / Git-정적 대안) | — |
-| `data/` | 모든 단계의 입출력 데이터 (gitignore) | — |
+- `collector/`: 공공데이터 API 수집, 일별 gzip CSV 저장, 지난 월 봉인
+- `downloader/` → `converter/` → `analyzer/`: 첨부 다운로드, HWPX/Markdown 변환, ECR 분석
+- `uploader/`: 변경된 데이터만 R2 업로드
+- `public/`: 조회 화면
+- `src/worker.js`: 비밀번호 인증, 정적 자산/R2 제공, 원격 갱신 실행
+- `shared/`: CSV와 파이프라인 공용 함수
 
-설정과 비밀값 위치는 다음과 같습니다.
+산출물은 모두 gitignore된 `data/`에 저장합니다.
 
-- `.env` (루트, gitignore): `SERVICE_KEY`, 필요 시 `ANTHROPIC_API_KEY`. `.env.example`을 복사해 만듭니다.
-- `collector/sync.config.json`: 수집 기간·공고 구분·업무 구분·동시성 (현재 `begin`은 `2020-01-01`)
-- `downloader/download.config.json`: 대상 기관·첨부 파일명 패턴·1회 처리 건수
-
-## 데이터 레이아웃
-
-```
+```text
 data/
-├─ pre|bid/YYYY/MM/DD.csv.gz          collector 산출물(날짜별 공고, 서비스 컬럼만)
-├─ pre|bid/YYYY/MM.csv.gz             compact 산출물(재수집 창 밖 완료 월 봉인)
-├─ index.json, sync-state.json        파일 목록·수집 진행 상태
-├─ raw/pre|bid/YYYY/MM/DD.csv.gz      슬림화 전 원본(170여 컬럼) 백업
-├─ backup/raw-full.csv.gz             원본을 한 파일로 합친 백업
-├─ files/bid/<공고번호>/               downloader가 내려받은 원본 첨부
-├─ norm/bid, text/bid                 converter 산출물(HWPX, Markdown .md.gz)
-└─ analysis/bid, analysis-index.json  analyzer 산출물(ECR JSON)
+├─ pre|bid/YYYY/MM/DD.csv.gz   일별 서비스 데이터
+├─ pre|bid/YYYY/MM.csv.gz      봉인된 월 데이터
+├─ raw/pre|bid/...             원본 컬럼 백업
+├─ files|norm|text/bid/...     첨부와 변환 결과
+└─ analysis/bid/...            ECR 분석 결과
 ```
 
-`data/` 전체가 gitignore이며, `data/raw/`·`data/backup/`은 배포용으로 gitignore 범위를 좁히더라도 절대 커밋되지 않도록 별도 규칙으로 한 번 더 제외합니다.
+## 준비
 
-## 수집
-
-루트에서 `.env`와 `collector/sync.config.json`을 준비한 뒤 실행합니다.
+Node.js 20 이상에서 설치하고 `.env.example`을 `.env`로 복사해 필요한 값을 채웁니다.
 
 ```powershell
-npm run collect                                                    # sync.config.json 기준
-node collector/collector.js --begin=2026-07-01 --end=2026-08-02    # 이번 실행만 범위 지정
+npm ci
 ```
 
-`--begin`/`--end`/`--no-resume`은 설정 파일을 건드리지 않고 해당 실행에만 적용됩니다. 진행 상태는 `data/sync-state.json`에 남아 중단 후 재실행하면 끝난 작업을 건너뜁니다. `--migrate-only`는 API 호출 없이 데이터 디렉터리 정리만 합니다.
+주요 환경변수는 다음과 같습니다.
 
-### 장기간 소급 수집
+- `SERVICE_KEY`: 공공데이터포털 일반 인증키(Decoding)
+- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: R2 업로드
+- `ANTHROPIC_API_KEY`: Anthropic 분석을 사용할 때만 필요
+- `GATE_PASSWORD`: Worker 조회 화면 비밀번호
+- `GITHUB_TOKEN`: 배포 화면의 갱신 버튼용 GitHub fine-grained PAT. 이 저장소의 Actions read/write 권한만 부여
 
-몇 년치를 한 번에 받을 때는 `collector.js`를 직접 돌리지 말고 백필 드라이버를 씁니다. 분기 단위로 **순차** 실행해 힙 초과와 `index.json` 덮어쓰기를 피합니다.
-
-```powershell
-node collector/backfill.js --from=2020-01-01 --to=2026-08-02 --heap=4096
-```
-
-수집기는 개별 작업이 실패해도 종료 코드 0으로 끝나므로, 백필이 분기마다 `data/sync-errors.json`을 확인해 실패 건을 `data/backfill-errors.json`에 모아 둡니다. 429·쿼터 초과가 섞여 있으면 한도가 초기화된 뒤 같은 명령을 다시 실행하면 실패분만 다시 받습니다. **여러 기간을 병렬로 실행하면 서로의 인덱스를 지웁니다.**
-
-## 서비스 컬럼과 원본 보존
-
-수집기는 저장 시점에 `shared/service-columns.js`가 정의한 컬럼만 남깁니다(본공고 30개, 사전공고 17개). 원본 170여 컬럼 중 낙찰방법·담당자 연락처·예산 항목 등은 조회 UI와 파이프라인 어디서도 쓰지 않아 파일이 약 70% 작아집니다.
-
-이 규칙이 생기기 전에 받아 둔 파일은 한 번만 정리하면 됩니다. `slim.js`는 원본을 `data/raw/`로 복사한 뒤에 줄이므로 손실이 없습니다.
+## 로컬 실행
 
 ```powershell
-npm run slim -- --dry-run   # 대상 파일 수와 예상 절감량만 확인
-npm run slim
-npm run export-raw          # data/raw를 data/backup/raw-full.csv.gz 한 파일로 합침
-```
-
-나중에 다른 컬럼이 필요해지면 재수집 없이 `data/raw/`나 통합 백업에서 꺼내면 됩니다.
-
-## ECR 규격 추출
-
-본공고 CSV를 수집한 뒤 순서대로 실행합니다. `--dry-run`으로 대상과 예상 비용만 먼저 확인할 수 있습니다.
-
-```powershell
-node downloader/attachments.js
-node converter/convert.js
-node analyzer/analyze.js --provider ollama --model qwen3.5-hermes-64k:latest
-```
-
-각 단계의 옵션은 폴더별 README를 참고하세요.
-
-## 조회
-
-저장소 루트에서 로컬 개발 서버를 실행하고 `http://localhost:8788/public/`을 엽니다.
-
-```powershell
-npm run serve
-```
-
-`devserver/server.js`는 저장소 루트를 정적 서빙하면서 갱신용 `/api/refresh`를 함께 제공합니다. 조회만 할 것이라면 `python -m http.server 8788`로도 되지만, 이 경우 **보유데이터 갱신 버튼은 동작하지 않습니다.**
-
-화면은 사전공고·본공고 토글, 관심 기관 목록(브라우저 `localStorage`에 저장), 검색어·업무구분·게시일 필터를 제공합니다. 사업명을 누르면 첨부 목록과 분석된 ECR 규격을 모달로 보여 주고, 조회 결과는 CSV로 내려받을 수 있습니다(ECR은 항목 단위로 펼쳐서 내보내기).
-
-### 보유데이터 갱신
-
-페이지 상단에 보유 데이터의 날짜 범위와 건수가 표시되고, 옆의 **보유데이터 갱신** 버튼을 누르면 `/api/refresh`가 수집기를 실행합니다. 범위는 **보유 데이터의 마지막 날짜 ~ 오늘**로 자동 결정되며(마지막 날짜는 이후 추가 등록분을 반영하려고 다시 받습니다), 내부적으로 `node collector/collector.js --begin=... --end=... --no-resume`을 실행합니다. 수집이 끝나면 페이지가 `index.json`을 다시 읽어 늘어난 날짜를 자동으로 반영합니다.
-
-전체 기간을 다시 받으려면 버튼이 아니라 `node collector/backfill.js`를 쓰세요. `sync.config.json`의 `begin`이 `2020-01-01`이라 `npm run collect`로 전체 백필을 돌리면 한 프로세스에 6년치가 쌓여 힙이 터집니다.
-
-정적 페이지는 `/data/index.json`과 `/data/{pre,bid}/YYYY/MM/DD.csv.gz`(봉인된 달은 `/data/{pre,bid}/YYYY/MM.csv.gz`)를 읽습니다. 경로는 절대경로 `/data`이며, 로컬에서는 `devserver`가 저장소 루트를 서빙해 그대로 `data/`를 가리키고 배포본에서는 같은 경로를 Worker가 R2에서 중계합니다. 파일은 gzip으로 압축 저장하고 브라우저에서 `DecompressionStream`으로 즉시 해제합니다. `index.html`을 파일 탐색기에서 직접 열면 브라우저 보안 정책 때문에 CSV를 읽을 수 없습니다.
-
-인덱스 항목은 구간입니다(`{mode, begin, end, path, count}`, 일별은 `begin === end`). 조회는 **항목 구간과 조회 구간이 겹치는** 파일을 받고 행 단위로 다시 거르므로, 월 봉인 파일을 통째로 받아도 결과는 정확합니다.
-
-## 배포
-
-Cloudflare 대시보드가 새 프로젝트 생성을 Workers 중심으로 안내하고, Pages 규약인 `functions/`를
-Worker 프로젝트에 잘못 배포하면 게이트가 실행되지 않은 채 정적 자산이 공개될 수 있어 단일
-Workers 구조로 전환했습니다. 배포는 대시보드의 빌드 출력 설정이 아니라 저장소의
-`wrangler.jsonc`가 정적 자산과 R2 바인딩을 함께 선언합니다.
-
-- `docs/워커-배포절차.md`: **배포·검증·사고 대응의 기준 문서.** 현재 배포 상태와 단계별 명령
-- `docs/배포계획-R2.md`: 2026-08-03 실측(배포 대상 288MB·4,754파일·321만건, `data/raw` 651MB)을 근거로 **R2 방식을 채택**한 설계
-- `docs/배포계획.md`: gzip 데이터를 Git에 커밋해 정적 서빙하는 방식(대안으로 남겨 둔 원안)과 선택 기준
-- `docs/앞으로 추가할 기능.md`: 코드에 열어 두었다가 걷어낸 확장 지점과 그 의도
-
-```powershell
-npm run compact              # 월별 봉인 (월 1회, 로컬에서만)
-npm run compact -- --prune   # 결과 확인 후 일별 파일 정리
-npm run upload               # R2로 변경분만 업로드
-```
-
-배포 구성은 다음과 같습니다.
-
-| 조각 | 위치 | 역할 |
-|---|---|---|
-| 게이트·R2 중계 | `src/worker.js` | 공유 암호(`GATE_PASSWORD`) 확인 뒤 정적 자산 또는 R2 바인딩 `DATA`를 전달. 화이트리스트 밖 `raw/`·`state/`는 도달 불가 |
-| 배포 설정 | `wrangler.jsonc` | `public/` Assets, `DATA` R2, `assets.run_worker_first: true`를 선언해 `/`와 `/app.js`도 반드시 게이트를 먼저 거친다 |
-| 업로더 | `uploader/upload.js` | ETag 비교로 변경분만 PUT. 삭제는 버킷 상태로만 판정한다([uploader/README.md](uploader/README.md)) |
-| 크론 | `.github/workflows/collect.yml` | 매일 KST 05:00. **워크플로 파일은 `main`에 두고** 잡에서 `ref: dev`를 체크아웃한다 — `on: schedule`은 기본 브랜치의 워크플로만 트리거한다 |
-
-배포본은 <https://gong-go-dev.tkddls8848.workers.dev>입니다. 명령 순서와 검증은
-[docs/워커-배포절차.md](docs/워커-배포절차.md)를 따릅니다.
-
-`GATE_PASSWORD`는 설정 파일에 넣지 않고 `npx wrangler secret put GATE_PASSWORD`로 등록합니다.
-**값이 비어 있으면 `src/worker.js`가 통과 모드로 떨어져 사이트 전체가 무인증으로 열립니다.**
-등록 성공 메시지는 증거가 아니므로, 시크릿을 바꾼 뒤에는 반드시 미인증 `/`와 `/app.js`가
-401인지 확인합니다(실제로 빈 값이 등록되어 5분간 공개된 사고가 있었습니다 — 절차서 11장).
-
-크론은 저장소에 푸시하지 않으므로 Worker 재배포가 일어나지 않고, 권한도 `contents: read`로 족합니다.
-
-`dev`의 Worker 게이트는 전환 당시 `main`의 `functions/_middleware.js` 동작을 옮긴 것입니다.
-이제 파일을 바이트 동일하게 복사하는 Pages 방식이 아니므로 한쪽 게이트를 수정하면 다른 쪽과
-자동 동기화되지 않습니다. 두 브랜치가 병행되는 동안 인증 변경은 양쪽 구현을 함께 검토해야 합니다.
-
-## 테스트
-
-```powershell
+npm run collect       # collector/sync.config.json 기준 수집
+npm run serve         # http://127.0.0.1:8788/public/
 npm test
 ```
+
+조회 화면의 갱신 버튼은 로컬에서 수집기를 직접 실행합니다. 기간을 일시적으로 바꾸려면 다음처럼 실행합니다.
+
+```powershell
+node collector/collector.js --begin=2026-08-01 --end=2026-08-09 --no-resume
+```
+
+## 첨부·ECR 파이프라인
+
+`downloader/download.config.json`에서 기관과 파일명 조건을 정한 뒤 순서대로 실행합니다. HWP 변환은 Windows에 설치된 한글 COM을 사용합니다.
+
+```powershell
+npm run attachments
+npm run convert
+npm run analyze -- --provider ollama --model qwen3.5-hermes-64k:latest
+```
+
+유료 분석 전에는 `--dry-run`으로 입력 토큰과 예상 비용을 확인합니다.
+
+## R2 업로드와 배포
+
+```powershell
+npm run compact              # 40일보다 오래된 월을 봉인
+npm run compact -- --prune   # 봉인 확인 후 같은 월의 일별 파일 삭제
+npm run upload -- --dry-run
+npm run upload
+npx wrangler secret put GATE_PASSWORD
+npx wrangler secret put GITHUB_TOKEN
+npm run deploy
+```
+
+Cloudflare 시크릿 두 개가 모두 필요합니다. `GITHUB_TOKEN`이 없으면 배포 화면의 갱신 API가 501을 반환합니다. GitHub 저장소에는 Actions용 `SERVICE_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`도 등록해야 합니다.
+
+`.github/workflows/collect.yml`은 매일 KST 05:00에 실행되며, 배포 화면의 갱신 버튼도 같은 워크플로를 실행하고 완료 상태를 표시합니다.
+
+## 현재 데이터 계약
+
+- 인덱스 항목: `{ mode, begin, end, path, count }`
+- 서비스 파일: gzip CSV만 사용
+- 파일 경로: 일별 `{pre,bid}/YYYY/MM/DD.csv.gz`, 월별 `{pre,bid}/YYYY/MM.csv.gz`
+- 배포 데이터: `index.json`, `analysis-index.json`, 서비스 CSV, 분석 JSON만 공개
+
+과거 평문 CSV나 구 인덱스 형식은 런타임에서 변환하지 않습니다.

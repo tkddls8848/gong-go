@@ -52,9 +52,8 @@ const CR = 13;
 
 function fromTextCell(value) {
   if (value === "" || value.charCodeAt(0) !== EQUALS) return value;
-  // 신규 형식: ="값" 수식에서 원래 값을 복원
   if (value.length >= 3 && value.charCodeAt(1) === QUOTE && value.charCodeAt(value.length - 1) === QUOTE) return value.slice(2, -1);
-  return value.slice(1); // 구 형식 파일 하위 호환
+  return value;
 }
 
 // 셀을 한 글자씩 이어붙이지 않고, 구분자 위치를 찾아 slice로 잘라낸다. 인용되지 않은

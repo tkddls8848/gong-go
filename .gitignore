@@ -1,13 +1,4 @@
 .env
 node_modules/
 .wrangler/
-# 앞의 /가 없으면 어느 깊이의 data 디렉터리든 걸린다. 과거 Pages의 functions/data 경로까지
-# 조용히 제외된 사고가 있었으므로 저장소 루트의 실데이터만 명시적으로 제외한다.
 /data/
-# 원본 백업(170컬럼)은 절대 커밋하지 않는다. 배포계획서 5-1에서 위 /data/ 규칙을 상태 파일만
-# 제외하도록 좁힐 때, 이 줄이 없으면 640MB 원본이 저장소로 딸려 들어간다.
-/data/raw/
-/data/backup/
-rfp_sample/
-backfill.log
-backfill.err

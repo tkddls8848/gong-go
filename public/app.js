@@ -1,6 +1,5 @@
-// DATA_BASE는 절대경로다. 배포본(Cloudflare Pages)에서는 functions/data/[[path]].js가 R2를
-// 중계하고, 로컬에서는 devserver가 저장소 루트를 서빙하므로 같은 경로가 data/를 가리킨다.
-const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", POLL_MS = 2000, LOAD_CONCURRENCY = 12, MAX_ROWS = 200000;
+// 배포본은 Worker가 R2를 중계하고, 로컬은 devserver가 저장소의 data/를 제공한다.
+const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", POLL_MS = 5000, LOAD_CONCURRENCY = 12, MAX_ROWS = 200000;
 let pageSize = 50;
 // main 브랜치와 동일한 기본 관심 기관 목록. 코드를 비우면 기관명 정확 일치로 조회한다.
 const DEFAULT_INSTITUTIONS = [
@@ -11,7 +10,7 @@ const DEFAULT_INSTITUTIONS = [
 const norm = (value) => String(value ?? "").replace(/\s+/g, "").trim();
 // 관심 기관은 브라우저 localStorage에 보관한다. 정적 배포라 서버에 사용자별 저장소가 없다.
 const INST_STORAGE_KEY = "gong-go:institutions";
-let institutionList = loadInstitutions(), searchTimer = null;
+let institutionList = loadInstitutions(), searchTimer = null, refreshRunId = null;
 function loadInstitutions() {
   try { const saved = JSON.parse(localStorage.getItem(INST_STORAGE_KEY)); if (Array.isArray(saved)) return saved.map((inst) => ({ name: String(inst?.name || ""), code: String(inst?.code || "") })).filter((inst) => inst.name || inst.code); } catch {}
   return DEFAULT_INSTITUTIONS.map((inst) => ({ ...inst }));
@@ -31,9 +30,7 @@ else { loadIndex(true).then(applyFilters).catch((error) => { $("#status").textCo
 // (배포본은 functions/data/[[path]].js, 로컬은 devserver가 no-store).
 async function loadIndex(initial) {
   const [index, analysis] = await Promise.all([getJson(`${DATA_BASE}/index.json?t=${Date.now()}`), getJson(`${DATA_BASE}/analysis-index.json`).catch(() => ({ entries: [] }))]);
-  // 항목 스키마는 {mode, begin, end, path, count}다. 일별 항목은 begin === end이고 월별
-  // 봉인 항목은 한 달을 덮는다. 구 인덱스({date})가 남아 있어도 읽히도록 여기서 메운다.
-  fileIndex = (index.files || []).map((file) => ({ ...file, begin: file.begin || file.date, end: file.end || file.date }));
+  fileIndex = index.files || [];
   analyses.clear(); (analysis.entries || []).forEach((entry) => analyses.set(entry.notice, entry));
   renderDataStatus(index);
   if (initial) { defaultRange(); $("#status").textContent = `${fileIndex.length}개 CSV를 찾았습니다.`; }
@@ -129,28 +126,34 @@ async function applyFilters() {
 }
 function defaultRange() { const last = dataRange().end; if (!last) return; const end = new Date(`${last}T00:00:00`), begin = new Date(end); begin.setDate(begin.getDate() - 6); $("#begin").value = localDate(begin); $("#end").value = last; }
 
-// 갱신은 로컬 개발 서버(npm run serve)의 /api/refresh가 수집기를 돌리는 방식이다.
-// 정적 배포본에는 이 엔드포인트가 없으므로 버튼은 안내 문구만 남기고 실패한다.
+// 로컬은 수집기를 직접 실행하고, 배포본은 Worker가 GitHub Actions 수집 작업을 시작한다.
 async function startRefresh() {
   setRefresh(true, "갱신을 시작하는 중입니다.");
   try {
     const response = await fetch(REFRESH_API, { method: "POST" }), state = await response.json().catch(() => ({}));
-    if (response.status === 404 || response.status === 501) throw new Error("갱신 API가 없습니다. 저장소 루트에서 npm run serve로 로컬 개발 서버를 실행한 뒤 다시 시도하세요.");
-    if (!response.ok && response.status !== 409) throw new Error(state.message || `갱신 요청이 실패했습니다 (${response.status}).`);
+    // 404는 두 가지다 — Worker에 /api/refresh가 없거나(구 배포본), Worker가 GitHub이 준 404를
+    // 그대로 전달한 것(워크플로 미등록·저장소 접근 실패). 뒤쪽은 message가 실려 오므로 그것을
+    // 먼저 보여준다. 404를 무조건 "API 없음"으로 덮으면 진짜 원인이 가려진다.
+    if (!response.ok && response.status !== 409) {
+      throw new Error(state.message || (response.status === 404 ? "갱신 API가 없습니다." : `갱신 요청이 실패했습니다 (${response.status}).`));
+    }
+    refreshRunId = state.runId || null;
   } catch (error) { setRefresh(false, error.message, "error"); return; }
   pollRefresh();
 }
-function resumeRefresh() { getJson(REFRESH_API).then((state) => { if (state.running) { setRefresh(true, refreshText(state)); pollRefresh(); } }).catch(() => {}); }
+function refreshUrl() { return refreshRunId ? `${REFRESH_API}?runId=${refreshRunId}` : REFRESH_API; }
+function resumeRefresh() { getJson(REFRESH_API).then((state) => { if (state.running) { refreshRunId = state.runId || null; setRefresh(true, refreshText(state)); pollRefresh(); } }).catch(() => {}); }
 async function pollRefresh() {
   for (;;) {
     let state;
-    try { state = await getJson(REFRESH_API); } catch (error) { setRefresh(false, `갱신 상태를 확인하지 못했습니다: ${error.message}`, "error"); return; }
+    try { state = await getJson(refreshUrl()); } catch (error) { setRefresh(false, `갱신 상태를 확인하지 못했습니다: ${error.message}`, "error"); return; }
     if (!state.running) return finishRefresh(state);
     setRefresh(true, refreshText(state));
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
   }
 }
 async function finishRefresh(state) {
+  refreshRunId = null;
   if (state.error) { setRefresh(false, `갱신 실패: ${state.error}`, "error"); return; }
   const beforePaths = new Set(fileIndex.map((file) => file.path)), beforeTotal = totalCount(), beforeLast = dataRange().end;
   try { await loadIndex(false); } catch (error) { setRefresh(false, `갱신은 끝났지만 목록을 다시 읽지 못했습니다: ${error.message}`, "error"); return; }
@@ -174,5 +177,5 @@ async function downloadEcr() { const rows = [["공고번호", "사업명", "ID",
 function downloadRows(rows, prefix) { const csv = rows.map((row) => row.map((value) => { const text = String(value ?? ""); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }).join(",")).join("\n"), blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }), url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `${prefix}_${localDate(new Date()).replaceAll("-", "")}.csv`; document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url); }
 async function downloadAll() { const files = normalizeFiles(currentRow?.files), button = $("#download-all-btn"); if (!files.length) return; button.disabled = true; for (let i = 0; i < files.length; i += 1) { button.textContent = `다운로드 중... (${i + 1}/${files.length})`; window.open(files[i].url, "_blank", "noopener,noreferrer"); if (i < files.length - 1) await new Promise((resolve) => setTimeout(resolve, 700)); } button.textContent = `전체 다운로드 완료 (${files.length}건)`; button.disabled = false; }
 async function getJson(url) { const response = await fetch(url); if (!response.ok) throw new Error(`${url}을 찾지 못했습니다.`); return response.json(); } async function getGzipCsv(url) { const response = await fetch(url); if (!response.ok || !response.body) throw new Error(`${url} 응답 오류 (${response.status})`); return parseCsv(await new Response(response.body.pipeThrough(new DecompressionStream("gzip"))).text()); }
-function parseCsv(text) { const lines = csvLines(text.replace(/^\uFEFF/, "")), header = lines.shift() || []; return lines.map((cells) => displayRow(Object.fromEntries(header.map((key, i) => [key, unformula(cells[i] || "")])))); } function unformula(value) { return value.charCodeAt(0) !== 61 ? value : value[1] === '"' && value.at(-1) === '"' ? value.slice(2, -1) : value.slice(1); } function csvLines(text) { const rows = []; let row = [], i = 0, pending = false; while (i < text.length) { let cell = ""; if (text[i] === '"') { i += 1; while (i < text.length) { if (text[i] === '"' && text[i + 1] === '"') { cell += '"'; i += 2; } else if (text[i] === '"') { i += 1; break; } else cell += text[i++]; } } else { while (i < text.length && !",\r\n".includes(text[i])) cell += text[i++]; } row.push(cell); pending = true; if (text[i] === ",") { i += 1; continue; } if (text[i] === "\r") i += 1; if (text[i] === "\n") i += 1; if (row.some(Boolean)) rows.push(row); row = []; pending = false; } if (pending) rows.push(row); return rows; }
-function displayRow(row) { if (row.mode) return { ...row, files: json(row.files, []) }; const pre = !row.bidNtceNo, prefix = pre ? "specDocFileUrl" : "ntceSpecDocUrl", count = pre ? 5 : 10; return { ...row, mode: pre ? "pre" : "bid", announcementNumber: pre ? row.bfSpecRgstNo || "" : row.bidNtceNo || "", institution: row.rlDminsttNm || row.dminsttNm || "", businessType: pre ? row.bsnsDivNm || "" : row.ntceKindNm || "", title: row.prdctClsfcNoNm || row.bidNtceNm || "", publishedAt: row.rgstDt || row.bidNtceDt || "", closeAt: row.opninRgstClseDt || row.bidClseDt || "", files: Array.from({ length: count }, (_, i) => row[`${prefix}${i + 1}`]).filter(Boolean) }; } function json(value, fallback) { try { return JSON.parse(value); } catch { return fallback; } } function normalizeFiles(files) { return (Array.isArray(files) ? files : []).map((file, i) => typeof file === "string" ? { url: file, name: guess(file, i) } : { url: file.url || "", name: file.name || guess(file.url, i) }).filter((file) => /^https?:/i.test(file.url)); } function guess(url, i) { try { const q = new URL(url).searchParams; return decodeURIComponent(q.get("fileNm") || q.get("orgFileNm") || q.get("fileName") || `첨부파일 ${i + 1}`); } catch { return `첨부파일 ${i + 1}`; } } function numberOf(row) { return row.announcementNumber || ""; } function dateKey(value) { return String(value || "").replace(/\D/g, "").slice(0, 8); } function dateFormat(value) { const v = dateKey(value); return v.length === 8 ? `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}` : "-"; } function format(value) { return new Intl.NumberFormat("ko-KR").format(value); } function localDate(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; } function html(value) { return String(value || "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]); }
+function parseCsv(text) { const lines = csvLines(text.replace(/^\uFEFF/, "")), header = lines.shift() || []; return lines.map((cells) => displayRow(Object.fromEntries(header.map((key, i) => [key, unformula(cells[i] || "")])))); } function unformula(value) { return value[0] === "=" && value[1] === '"' && value.at(-1) === '"' ? value.slice(2, -1) : value; } function csvLines(text) { const rows = []; let row = [], i = 0, pending = false; while (i < text.length) { let cell = ""; if (text[i] === '"') { i += 1; while (i < text.length) { if (text[i] === '"' && text[i + 1] === '"') { cell += '"'; i += 2; } else if (text[i] === '"') { i += 1; break; } else cell += text[i++]; } } else { while (i < text.length && !",\r\n".includes(text[i])) cell += text[i++]; } row.push(cell); pending = true; if (text[i] === ",") { i += 1; continue; } if (text[i] === "\r") i += 1; if (text[i] === "\n") i += 1; if (row.some(Boolean)) rows.push(row); row = []; pending = false; } if (pending) rows.push(row); return rows; }
+function displayRow(row) { const pre = !!row.bfSpecRgstNo, prefix = pre ? "specDocFile" : "ntceSpec", urlKey = `${prefix}${pre ? "Url" : "DocUrl"}`, nameKey = `${prefix}${pre ? "Nm" : "FileNm"}`, count = pre ? 5 : 10; return { mode: pre ? "pre" : "bid", announcementNumber: pre ? row.bfSpecRgstNo || "" : row.bidNtceNo || "", institution: row.rlDminsttNm || row.dminsttNm || "", dminsttCd: row.dminsttCd || "", businessType: pre ? row.bsnsDivNm || "" : row.ntceKindNm || "", title: row.prdctClsfcNoNm || row.bidNtceNm || "", publishedAt: row.rgstDt || row.bidNtceDt || "", closeAt: row.opninRgstClseDt || row.bidClseDt || "", files: Array.from({ length: count }, (_, i) => ({ url: row[`${urlKey}${i + 1}`] || "", name: row[`${nameKey}${i + 1}`] || guess(row[`${urlKey}${i + 1}`], i) })).filter((file) => /^https?:/i.test(file.url)) }; } function normalizeFiles(files) { return Array.isArray(files) ? files : []; } function guess(url, i) { try { const q = new URL(url).searchParams; return decodeURIComponent(q.get("fileNm") || q.get("orgFileNm") || q.get("fileName") || `첨부파일 ${i + 1}`); } catch { return `첨부파일 ${i + 1}`; } } function numberOf(row) { return row.announcementNumber || ""; } function dateKey(value) { return String(value || "").replace(/\D/g, "").slice(0, 8); } function dateFormat(value) { const v = dateKey(value); return v.length === 8 ? `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}` : "-"; } function format(value) { return new Intl.NumberFormat("ko-KR").format(value); } function localDate(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; } function html(value) { return String(value || "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]); }

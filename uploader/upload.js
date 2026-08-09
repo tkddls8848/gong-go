@@ -1,4 +1,4 @@
-// 로컬 data/ 산출물 중 바뀐 것만 R2에 올린다. (docs/배포계획-R2.md R2-7)
+// 로컬 data/ 산출물 중 바뀐 것만 R2에 올린다.
 //
 // 별도의 상태 파일을 두지 않는다 — 버킷의 키+ETag가 곧 상태다. R2의 ETag는 단일 PUT 객체에서
 // MD5와 같으므로, 로컬 MD5와 대조해 다른 것만 보낸다. zlib.gzipSync가 결정적이라(MTIME을 0으로
@@ -7,21 +7,18 @@
 // 크론 러너는 최근 며칠치만 로컬에 갖고 있다. 그래서 "로컬에 없으면 지운다" 같은 규칙은
 // 절대 쓰지 않는다 — 삭제 판정은 버킷 안 정보(또는 SYNC_BEGIN/END로 명시된 구간)로만 한다.
 //
-// 사용: node uploader/upload.js [--dry-run] [--pull-state]
-//   --dry-run     올릴/지울 대상만 출력한다
-//   --pull-state  R2의 state/sync-state.json을 data/로 내려받고 끝낸다(크론 첫 단계)
+// 사용: node uploader/upload.js [--dry-run]
+//   --dry-run  올릴/지울 대상만 출력한다
 //
 // 자격증명(.env 또는 환경변수): R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
-//                              R2_BUCKET(선택, 기본 gong-go-data)
 const crypto = require("node:crypto");
 const { S3Client, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectsCommand } = require("@aws-sdk/client-s3");
 const { ROOT, DATA_DIR, fs, path, loadEnv, mapPool, readJson, buildIndexEntries, SEALED_PATH } = require("../shared/pipeline-utils");
 
 loadEnv(path.join(ROOT, ".env"));
 
-const BUCKET = process.env.R2_BUCKET || "gong-go-data";
+const BUCKET = "gong-go-data";
 const CONCURRENCY = 8;
-const STATE_KEY = "state/sync-state.json";
 const INDEX_KEY = "index.json";
 const ANALYSIS_INDEX_KEY = "analysis-index.json";
 const DAILY_KEY = /^(pre|bid)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/;
@@ -32,8 +29,6 @@ if (require.main === module) main().catch((error) => { console.error(`업로드 
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const client = makeClient();
-  if (process.argv.includes("--pull-state")) return pullState(client);
-
   const remote = await listAll(client);
   const local = await localFiles();
   console.log(`버킷 ${BUCKET}: 원격 ${remote.size}개 · 로컬 ${local.length}개`);
@@ -62,7 +57,6 @@ async function main() {
   await putJson(client, INDEX_KEY, index);
   const deleted = await deleteAll(client, plan.removing);
   const analyses = await putAll(client, [...plan.analysis, ...plan.analysisIndex], remote);
-  await putState(client, remote);
 
   console.log(`완료: ${uploaded.count + analyses.count}건 업로드(${mb(uploaded.bytes + analyses.bytes)}), ${deleted}건 삭제, 인덱스 ${index.files.length}항목`);
 }
@@ -146,23 +140,6 @@ async function deleteAll(client, keys) {
   return keys.length;
 }
 
-// sync-state.json은 뷰어 라우팅(functions/data/[[path]].js)이 막는 state/ 아래로만 왕복한다.
-async function putState(client, remote) {
-  const file = path.join(DATA_DIR, "sync-state.json");
-  if (!await exists(file)) return;
-  const body = await fs.readFile(file);
-  if (remote.get(STATE_KEY) === md5(body)) return;
-  await client.send(new PutObjectCommand({ Bucket: BUCKET, Key: STATE_KEY, Body: body, ContentType: "application/json; charset=utf-8" }));
-}
-
-async function pullState(client) {
-  const body = await getObject(client, STATE_KEY);
-  if (!body) { console.log("R2에 state/sync-state.json이 없습니다. 새로 시작합니다."); return; }
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(path.join(DATA_DIR, "sync-state.json"), body);
-  console.log(`state/sync-state.json 내려받음 (${mb(body.length)})`);
-}
-
 async function report(plan, index, remote) {
   const sized = await mapPool([...plan.csv, ...plan.analysis, ...plan.analysisIndex], CONCURRENCY, async (entry) => {
     const body = await fs.readFile(entry.file);
@@ -177,25 +154,9 @@ async function report(plan, index, remote) {
 function makeClient() {
   return new S3Client({
     region: "auto",
-    endpoint: endpoint(),
+    endpoint: `https://${required("R2_ACCOUNT_ID")}.r2.cloudflarestorage.com`,
     credentials: { accessKeyId: required("R2_ACCESS_KEY_ID"), secretAccessKey: required("R2_SECRET_ACCESS_KEY") },
   });
-}
-
-// R2_ACCOUNT_ID에 대시보드가 보여 주는 엔드포인트 URL을 통째로 붙여 넣는 실수가 잦다.
-// 그대로 두면 endpoint가 https://https://... 가 되어 호스트가 "https"로 파싱되고, SDK가
-// 버킷명을 앞에 붙인 "<버킷>.https"를 찾다가 ENOTFOUND로 죽는다. 원인이 전혀 안 보이는
-// 오류라 여기서 형식을 맞춰 주고, 못 맞추면 무엇을 넣어야 하는지 말해 준다.
-function endpoint() {
-  if (process.env.R2_ENDPOINT) return process.env.R2_ENDPOINT.trim().replace(/\/+$/, "");
-  const raw = required("R2_ACCOUNT_ID").trim();
-  const account = raw.replace(/^https?:\/\//, "").replace(/\.r2\.cloudflarestorage\.com.*$/i, "").replace(/\/.*$/, "");
-  if (!/^[0-9a-f]{32}$/i.test(account)) {
-    throw new Error(`R2_ACCOUNT_ID가 계정 ID 형식이 아닙니다(받은 값: ${raw}).\n`
-      + "대시보드 R2 > 개요의 S3 API 주소에서 https:// 와 .r2.cloudflarestorage.com 사이의 32자리 16진수만 넣으세요.\n"
-      + "주소를 그대로 쓰고 싶으면 R2_ENDPOINT에 전체 URL을 넣으면 됩니다.");
-  }
-  return `https://${account}.r2.cloudflarestorage.com`;
 }
 
 async function listAll(client) {
