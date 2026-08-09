@@ -17,7 +17,7 @@ function loadInstitutions() {
   return DEFAULT_INSTITUTIONS.map((inst) => ({ ...inst }));
 }
 function saveInstitutions() { try { localStorage.setItem(INST_STORAGE_KEY, JSON.stringify(institutionList)); } catch {} }
-let records = [], filtered = [], fileIndex = [], page = 1, searchVersion = 0, currentRow = null, currentAnalysis = null, viewMode = "pre";
+let filtered = [], fileIndex = [], page = 1, searchVersion = 0, currentRow = null, currentAnalysis = null, viewMode = "pre";
 const analyses = new Map(), modal = $("#file-modal");
 const MODE_SUBTITLES = { pre: "로컬 CSV에 저장한 사전공고를 조회합니다.", bid: "로컬 CSV에 저장한 본공고를 조회합니다." };
 
@@ -119,7 +119,6 @@ async function applyFilters() {
   await Promise.all(Array.from({ length: Math.min(LOAD_CONCURRENCY, files.length || 1) }, worker));
   if (version !== searchVersion) return;
 
-  records = collected;
   filtered = collected.sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt)));
   const parts = [`${format(files.length)}개 CSV에서 ${format(scanned)}건을 읽어 ${format(filtered.length)}건이 조건에 맞습니다.`];
   parts.push(institutions.length ? `관심 기관 ${institutions.length}곳으로 좁혔습니다.` : "기관 목록이 비어 있어 전체 기관을 조회했습니다.");

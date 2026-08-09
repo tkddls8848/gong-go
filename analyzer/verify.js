@@ -22,4 +22,4 @@ function verifyExtraction(result, markdown) {
 function ecrIds(items) { return new Set((items || []).map((item) => String(item.ID || item.id || "").trim()).filter((id) => /^ECR[-–]/i.test(id))); }
 function normalize(value) { return String(value || "").replace(/\s+/g, " ").trim(); }
 
-module.exports = { verifyExtraction, ecrIds, normalize };
+module.exports = { verifyExtraction, ecrIds };

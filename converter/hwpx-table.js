@@ -87,4 +87,4 @@ function decodeXml(value) { return value.replace(/&#x([0-9a-f]+);/gi, (_, hex) =
 function escape(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function natural(a, b) { return a.localeCompare(b, undefined, { numeric: true }); }
 
-module.exports = { hwpxToMarkdown, textOf, tableOf };
+module.exports = { hwpxToMarkdown };

@@ -79,4 +79,4 @@ function safeFileName(name, fallback = "attachment") {
 }
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-module.exports = { ROOT, DATA_DIR, fs, path, loadEnv, mapPool, readJson, writeJson, readGzipText, writeGzipText, readCsvGz, SEALED_PATH, lastDayOfMonth, indexEntry, buildIndexEntries, noticeNumber, rowDate, institution, title, normalizeFiles, safeFileName, sleep };
+module.exports = { ROOT, DATA_DIR, fs, path, loadEnv, mapPool, readJson, writeJson, readGzipText, writeGzipText, readCsvGz, SEALED_PATH, lastDayOfMonth, buildIndexEntries, noticeNumber, rowDate, institution, title, normalizeFiles, safeFileName, sleep };

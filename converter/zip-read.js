@@ -50,4 +50,4 @@ function findEocd(buffer) {
 }
 function isSafePath(name) { return !!name && !name.includes("\\") && !name.startsWith("/") && !name.split("/").includes(".."); }
 
-module.exports = { readZip, isSafePath };
+module.exports = { readZip };

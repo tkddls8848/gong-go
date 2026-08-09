@@ -32,4 +32,4 @@ function project(row, mode = modeOf(row)) {
   return result;
 }
 
-module.exports = { SERVICE_COLUMNS, project, modeOf };
+module.exports = { project };

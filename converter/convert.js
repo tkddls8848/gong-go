@@ -1,5 +1,5 @@
 // 다운로드한 첨부를 HWPX/Markdown으로 정규화한다. HWP 변환은 한글 COM을 PowerShell에서만 호출한다.
-const { DATA_DIR, fs, path, mapPool, readJson, writeJson, writeGzipText } = require("../shared/pipeline-utils");
+const { DATA_DIR, fs, path, mapPool, writeJson, writeGzipText } = require("../shared/pipeline-utils");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { readZip } = require("./zip-read");
