@@ -116,7 +116,7 @@ async function requestJson(url) {
         if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
         return JSON.parse(text);
       } catch (error) {
-        lastError = error;
+        lastError = withCause(error);
         if (attempt < RETRIES) await sleep(800 * 2 ** attempt);
       }
     }
@@ -124,6 +124,16 @@ async function requestJson(url) {
   } finally {
     releaseHttp();
   }
+}
+
+// fetch가 네트워크 단계에서 실패하면 message는 "fetch failed" 한 줄뿐이고 실제 사유는
+// cause에 들어간다. 로컬에서는 재현되지 않고 GitHub Actions에서만 터지는 경우가 있어,
+// DNS(ENOTFOUND)·연결 거부(ECONNREFUSED)·타임아웃·인증서 오류를 구분할 수 있어야 한다.
+function withCause(error) {
+  const cause = error?.cause;
+  if (!cause) return error;
+  const detail = [cause.code, cause.message].filter(Boolean).join(": ");
+  return detail ? new Error(`${error.message} (${detail})`, { cause }) : error;
 }
 // 레코드를 (공고구분|일자) 버킷으로 나눠 들고 있어, 저장할 때 전체 배열을 다시
 // 훑지 않고 바뀐 버킷의 파일만 건드린다. counts는 index.json을 매번 다시 만들지
