@@ -108,11 +108,18 @@ gh secret set API_BASE --repo tkddls8848/gong-go --body "https://gong-go-dev.<�
 curl -s -o NUL -w "%{http_code}`n" "https://gong-go-dev.<계정>.workers.dev/api/relay/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch"
 ```
 
-| 응답 | 뜻 |
-|---|---|
-| 401 | 정상. 시크릿이 등록되어 있고 인증이 동작합니다 |
-| **501** | **시크릿이 비었거나 등록되지 않았습니다.** 위 사고가 재현된 경우입니다 |
-| 404 | Worker에 중계 경로가 없습니다. 배포되지 않은 버전입니다 |
+**상태 코드만으로는 부족합니다.** 중계 경로가 없는 구 배포본도 조회 화면의 게이트가 로그인
+화면을 401로 돌려주기 때문에, 정상일 때와 코드가 같습니다. 본문까지 봐야 구분됩니다.
+
+```powershell
+curl -s -i "https://gong-go-dev.<계정>.workers.dev/api/relay/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch" | Select-String "HTTP/|content-type"
+```
+
+| 응답 | 본문 | 뜻 |
+|---|---|---|
+| 401 | JSON `중계 토큰이 올바르지 않습니다` | 정상. 시크릿이 있고 인증이 동작합니다 |
+| 401 | HTML 로그인 화면 | 중계 경로가 없는 **구 배포본**입니다. `npm run deploy` 하세요 |
+| **501** | JSON `RELAY_TOKEN 시크릿이 설정되지 않았습니다` | **시크릿이 비었거나 이름이 다릅니다** |
 
 ## R2 업로드와 배포
 
@@ -123,8 +130,13 @@ npm run upload -- --dry-run
 npm run upload
 npx wrangler secret put GATE_PASSWORD
 npx wrangler secret put GITHUB_TOKEN
+npx wrangler secret put RELAY_TOKEN     # 이름이 정확해야 한다 — 아래 주의 참고
 npm run deploy
 ```
+
+> 시크릿 이름은 코드가 읽는 것과 **정확히** 같아야 합니다. Worker는 `env.RELAY_TOKEN`을
+> 읽으므로 `RELAY` 같은 다른 이름으로 등록하면 값이 들어 있어도 중계가 501을 반환합니다.
+> 세 개 모두 비대화형 셸에서 등록하지 마세요(아래 [토큰 등록](#토큰-등록) 경고 참고).
 
 Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN` 세 개입니다. `GITHUB_TOKEN`이 없으면 배포 화면의 갱신 API가, `RELAY_TOKEN`이 없으면 중계가 501을 반환합니다. GitHub 저장소에는 Actions용 `SERVICE_KEY`, `API_BASE`, `RELAY_TOKEN`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다.
 
