@@ -56,6 +56,11 @@ async function main() {
   await fs.mkdir(DATA_DIR, { recursive: true });
   const state = await readState();
   if (!SERVICE_KEY) throw new Error(".env에 SERVICE_KEY를 설정하세요.");
+  // 스킴이 빠진 API_BASE는 작업마다 ERR_INVALID_URL을 낼 뿐 원인을 드러내지 않는다.
+  // 값은 찍지 않는다 — Actions 로그에서 마스킹을 우회해 시크릿 일부가 노출된다.
+  if (process.env.API_BASE && !/^https?:\/\//i.test(API_BASE)) {
+    throw new Error("API_BASE는 스킴을 포함한 절대 URL이어야 합니다. 예: https://<worker>.workers.dev/api/relay");
+  }
   const config = await readConfig();
   // --begin/--end/--no-resume은 sync.config.json을 건드리지 않고 이번 실행에만 적용된다.
   // 갱신 버튼(devserver)이 최근 구간만 다시 받을 때 사용한다.
