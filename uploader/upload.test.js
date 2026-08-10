@@ -1,6 +1,28 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf } = require("./upload");
+const { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf, endpoint } = require("./upload");
+
+// 이 정규화는 4c2001c에서 넣었다가 5df4ca8 리팩터링에서 사라졌고, 그 뒤 첫 업로드가
+// "ENOTFOUND gong-go-data.https"로 죽었다. 원인이 드러나지 않는 오류라 다시 잃지 않게 고정한다.
+test("endpoint는 R2_ACCOUNT_ID에 주소를 통째로 넣어도 계정 ID만 뽑는다", () => {
+  const saved = { id: process.env.R2_ACCOUNT_ID, ep: process.env.R2_ENDPOINT };
+  const id = "0123456789abcdef0123456789abcdef";
+  try {
+    delete process.env.R2_ENDPOINT;
+    for (const value of [id, `https://${id}.r2.cloudflarestorage.com`, `https://${id}.r2.cloudflarestorage.com/gong-go-data`, `  ${id}  `]) {
+      process.env.R2_ACCOUNT_ID = value;
+      assert.equal(endpoint(), `https://${id}.r2.cloudflarestorage.com`);
+    }
+    process.env.R2_ACCOUNT_ID = "https://not-an-id.example.com";
+    assert.throws(() => endpoint(), /R2_ACCOUNT_ID가 계정 ID 형식이 아닙니다/);
+
+    process.env.R2_ENDPOINT = "https://custom.example.com/";
+    assert.equal(endpoint(), "https://custom.example.com");
+  } finally {
+    if (saved.id === undefined) delete process.env.R2_ACCOUNT_ID; else process.env.R2_ACCOUNT_ID = saved.id;
+    if (saved.ep === undefined) delete process.env.R2_ENDPOINT; else process.env.R2_ENDPOINT = saved.ep;
+  }
+});
 
 test("monthOf는 일별 키와 월별 키를 같은 월로 모은다", () => {
   assert.equal(monthOf("bid/2023/12/11.csv.gz"), "bid/2023/12");

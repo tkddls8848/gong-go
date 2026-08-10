@@ -159,9 +159,25 @@ async function report(plan, index, remote) {
 function makeClient() {
   return new S3Client({
     region: "auto",
-    endpoint: `https://${required("R2_ACCOUNT_ID")}.r2.cloudflarestorage.com`,
+    endpoint: endpoint(),
     credentials: { accessKeyId: required("R2_ACCESS_KEY_ID"), secretAccessKey: required("R2_SECRET_ACCESS_KEY") },
   });
+}
+
+// R2_ACCOUNT_ID에 대시보드가 보여 주는 엔드포인트 URL을 통째로 붙여 넣는 실수가 잦다.
+// 그대로 두면 endpoint가 https://https://... 가 되어 호스트가 "https"로 파싱되고, SDK가
+// 버킷명을 앞에 붙인 "<버킷>.https"를 찾다가 ENOTFOUND로 죽는다. 원인이 전혀 안 보이는
+// 오류라 여기서 형식을 맞춰 주고, 못 맞추면 무엇을 넣어야 하는지 말해 준다.
+function endpoint() {
+  if (process.env.R2_ENDPOINT) return process.env.R2_ENDPOINT.trim().replace(/\/+$/, "");
+  const raw = required("R2_ACCOUNT_ID").trim();
+  const account = raw.replace(/^https?:\/\//, "").replace(/\.r2\.cloudflarestorage\.com.*$/i, "").replace(/\/.*$/, "");
+  if (!/^[0-9a-f]{32}$/i.test(account)) {
+    throw new Error("R2_ACCOUNT_ID가 계정 ID 형식이 아닙니다.\n"
+      + "대시보드 R2 > 개요의 S3 API 주소에서 https:// 와 .r2.cloudflarestorage.com 사이의 32자리 16진수만 넣으세요.\n"
+      + "주소를 그대로 쓰고 싶으면 R2_ENDPOINT에 전체 URL을 넣으면 됩니다.");
+  }
+  return `https://${account}.r2.cloudflarestorage.com`;
 }
 
 async function listAll(client) {
@@ -196,4 +212,4 @@ async function exists(file) { try { await fs.access(file); return true; } catch 
 async function readdir(dir) { try { return await fs.readdir(dir, { withFileTypes: true }); } catch (error) { if (error.code === "ENOENT") return []; throw error; } }
 
 // 삭제·인덱스 판정은 잘못되면 되돌릴 수 없다. 순수 함수로 떼어 두고 upload.test.js가 검증한다.
-module.exports = { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf };
+module.exports = { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf, endpoint };
