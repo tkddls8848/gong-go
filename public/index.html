@@ -14,6 +14,7 @@
         <div class="mode-toggle" id="mode-toggle" role="group" aria-label="공고 유형 선택">
           <button type="button" class="mode-toggle-btn active" data-mode="pre" aria-pressed="true">사전공고</button>
           <button type="button" class="mode-toggle-btn" data-mode="bid" aria-pressed="false">본공고</button>
+          <button type="button" class="mode-toggle-btn" data-mode="plan" aria-pressed="false">발주계획</button>
         </div>
       </div>
       <p class="subtitle" id="app-subtitle">로컬 CSV에 저장한 사전공고를 조회합니다.</p>
@@ -49,7 +50,7 @@
 
     <section class="panel">
       <div class="results-header"><h2>조회 결과 <span id="result-summary"></span></h2><div class="download-actions"><button id="download-btn" class="secondary-btn" type="button" disabled>CSV로 다운로드</button><button id="download-ecr-btn" class="secondary-btn" type="button" disabled>ECR 펼쳐서 내보내기</button></div></div>
-      <div class="table-scroll"><table><thead><tr><th>유형</th><th>공고번호</th><th>업무</th><th>수요기관</th><th>사업명(공고명)</th><th>게시일</th><th>마감일</th></tr></thead><tbody id="results"></tbody></table></div>
+      <div class="table-scroll"><table><thead><tr><th>유형</th><th>공고번호</th><th>업무</th><th>수요기관</th><th>사업명(공고명)</th><th>게시일</th><th id="close-col">마감일</th></tr></thead><tbody id="results"></tbody></table></div>
       <div class="pagination"><button id="previous" class="secondary-btn" type="button">이전</button><span id="page-label">-</span><button id="next" class="secondary-btn" type="button">다음</button><label class="page-size">페이지당 <select id="page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option><option>500</option></select> 건</label></div>
     </section>
 

@@ -21,8 +21,12 @@ const BUCKET = "gong-go-data";
 const CONCURRENCY = 8;
 const INDEX_KEY = "index.json";
 const ANALYSIS_INDEX_KEY = "analysis-index.json";
-const DAILY_KEY = /^(pre|bid)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/;
-const MODES = ["pre", "bid"];
+const DAILY_KEY = /^(pre|bid|plan)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/;
+// 구간을 지정해 다시 받을 수 있는 모드. vanishedDaily의 "구간 안에서는 로컬이 완전하다"는
+// 전제가 이 모드에서만 성립한다 — plan은 API가 최근 며칠치만 주므로(collector.js의 snapshot)
+// 로컬에 없다는 것이 "그날 0건이 됐다"는 뜻이 아니라 "애초에 받을 수 없다"는 뜻이다.
+const RANGED_DAILY_KEY = /^(pre|bid)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/;
+const MODES = ["pre", "bid", "plan"];
 
 if (require.main === module) main().catch((error) => { console.error(`업로드 실패: ${error.message}`); process.exitCode = 1; });
 
@@ -71,10 +75,11 @@ function supersededDaily(present) {
 
 // 수집 구간이 명시됐다면 그 구간은 로컬이 완전하다. 구간 안에서 사라진 일별 키(그날 공고가
 // 0건이 되어 collector가 지운 파일)만 함께 지운다. 구간 밖은 손대지 않는다.
+// plan은 제외한다 — 지우면 그때까지 쌓아 둔 발주계획이 매 크론마다 통째로 날아간다.
 function vanishedDaily(present, local, begin = process.env.SYNC_BEGIN, end = process.env.SYNC_END || today()) {
   if (!begin) return [];
   const kept = new Set(local.map((entry) => entry.key));
-  return [...present].filter((key) => DAILY_KEY.test(key) && !kept.has(key) && dateOf(key) >= begin && dateOf(key) <= end);
+  return [...present].filter((key) => RANGED_DAILY_KEY.test(key) && !kept.has(key) && dateOf(key) >= begin && dateOf(key) <= end);
 }
 
 // 인덱스는 "이번 실행 뒤 버킷에 남는 키"의 투영이다. 건수는 로컬 인덱스를 우선하고,

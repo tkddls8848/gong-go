@@ -26,6 +26,10 @@ jobs:
     timeout-minutes: 60
     env:
       SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+      # 러너는 apis.data.go.kr에 TCP 연결이 되지 않는다. Worker 중계를 거친다.
+      # (docs/이슈-Actions-수집-차단.md) 비워 두면 직접 호출로 되돌아가 다시 타임아웃난다.
+      API_BASE: ${{ secrets.API_BASE }}
+      RELAY_TOKEN: ${{ secrets.RELAY_TOKEN }}
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

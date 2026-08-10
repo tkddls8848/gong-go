@@ -14,19 +14,39 @@ const RANGE_DAYS = 28;
 const RETRIES = 3;
 const FILE_CONCURRENCY = 16;
 const TYPES = ["물품", "외자", "용역", "공사"];
-const MODE_ALIASES = { 사전공고: "pre", 본공고: "bid" };
-const MODE_LABELS = { pre: "사전공고", bid: "본공고" };
+const MODE_ALIASES = { 사전공고: "pre", 본공고: "bid", 발주계획: "plan" };
+const MODE_LABELS = { pre: "사전공고", bid: "본공고", plan: "발주계획" };
 
 loadEnv(path.join(ROOT, ".env"));
 const SERVICE_KEY = process.env.SERVICE_KEY || "";
+// 요청이 나가는 곳. 기본은 공공데이터포털 직접 호출이다.
+// GitHub Actions 러너에서는 apis.data.go.kr로 TCP 연결이 성립하지 않으므로(차단이 국가가 아니라
+// IP 대역 기준이다) API_BASE에 Worker의 중계 주소를 넣어 우회한다. 예:
+//   API_BASE=https://gong-go-dev.<계정>.workers.dev/api/relay
+//   RELAY_TOKEN=<Worker에 등록한 것과 같은 값>
+// 경로와 쿼리는 그대로 유지되므로 아래 정의는 어느 쪽이든 바뀌지 않는다.
+// (docs/이슈-Actions-수집-차단.md)
+const API_BASE = (process.env.API_BASE || "https://apis.data.go.kr").replace(/\/+$/, "");
+const RELAY_TOKEN = process.env.RELAY_TOKEN || "";
 const MODES = {
   pre: {
-    base: "https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService",
+    base: "/1230000/ao/HrcspSsstndrdInfoService",
     ops: { 물품: "getPublicPrcureThngInfoThngPPSSrch", 외자: "getPublicPrcureThngInfoFrgcptPPSSrch", 용역: "getPublicPrcureThngInfoServcPPSSrch", 공사: "getPublicPrcureThngInfoCnstwkPPSSrch" },
   },
   bid: {
-    base: "https://apis.data.go.kr/1230000/ad/BidPublicInfoService",
+    base: "/1230000/ad/BidPublicInfoService",
     ops: { 물품: "getBidPblancListInfoThngPPSSrch", 외자: "getBidPblancListInfoFrgcptPPSSrch", 용역: "getBidPblancListInfoServcPPSSrch", 공사: "getBidPblancListInfoCnstwkPPSSrch" },
+  },
+  // 발주계획현황(15129462). 앞의 둘과 달리 조회 범위를 지정할 수 없다 — orderBgnYm/orderEndYm과
+  // inqryBgnDt/inqryEndDt를 모두 받아 형식까지 검증하면서도(잘못된 포맷은 "DATE Format 에러")
+  // 어떤 값을 넣든 결과가 바뀌지 않는다. 실제로 돌아오는 것은 최근 며칠 안에 게시된 계획뿐이다.
+  //
+  // 그래서 이 모드는 snapshot으로 둔다. 과거를 소급해 받을 수 없고, 매 실행이 "지금 열려 있는
+  // 창"을 한 번 떠 오는 것이다. 보유 데이터는 그 스냅샷이 nticeDt(게시일시) 기준으로 쌓여 만들어진다.
+  plan: {
+    base: "/1230000/ao/OrderPlanSttusService",
+    ops: { 물품: "getOrderPlanSttusListThngPPSSrch", 외자: "getOrderPlanSttusListFrgcptPPSSrch", 용역: "getOrderPlanSttusListServcPPSSrch", 공사: "getOrderPlanSttusListCnstwkPPSSrch" },
+    snapshot: true,
   },
 };
 
@@ -48,7 +68,11 @@ async function main() {
   const modes = config.modes.map((mode) => MODE_ALIASES[mode]).filter((mode) => MODES[mode]);
   const types = config.businessTypes.filter((type) => TYPES.includes(type));
   const jobs = [];
-  for (const range of chunks(begin, end)) for (const mode of modes) for (const type of types) jobs.push({ range, mode, type });
+  // 스냅샷 모드(plan)는 범위를 나눠 봐야 매번 같은 응답이 온다. 업무구분당 한 번만 부른다.
+  for (const mode of modes) {
+    const ranges = MODES[mode].snapshot ? [{ begin: iso(begin), end: iso(end) }] : chunks(begin, end);
+    for (const range of ranges) for (const type of types) jobs.push({ range, mode, type });
+  }
   httpLimit = Math.max(1, Number(config.concurrency));
   const store = await readStore(begin, end);
   const errors = [];
@@ -67,7 +91,9 @@ async function main() {
     for (const { entry, items, error } of results) {
       const label = `[${entry.index + 1}/${jobs.length}] ${MODE_LABELS[entry.job.mode]}/${entry.job.type}/${entry.job.range.begin}`;
       if (error) { errors.push({ job: entry.job, error: error.message }); console.error(`${label} 실패: ${error.message}`); continue; }
-      if (resume === false) clearJobRange(store, entry.job, changed);
+      // 스냅샷 모드는 절대 비우지 않는다. 응답이 최근 며칠치뿐인데 --no-resume이 수집 구간
+      // (크론은 35일)을 비워 버리면, 그 앞에 쌓아 둔 발주계획이 매 실행마다 사라진다.
+      if (resume === false && !MODES[entry.job.mode].snapshot) clearJobRange(store, entry.job, changed);
       applyItems(store, items, changed);
       if (resume !== false) state.completedJobs.push(entry.id);
       console.log(`${label}~${entry.job.range.end}: ${items.length}건`);
@@ -89,12 +115,20 @@ async function fetchJob(job) {
 
 async function fetchPage(job, pageNo) {
   const definition = MODES[job.mode];
-  const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(PAGE_SIZE), inqryDiv: "1", inqryBgnDt: `${ymd(job.range.begin)}0000`, inqryEndDt: `${ymd(job.range.end)}2359`, ServiceKey: SERVICE_KEY });
-  const data = await requestJson(`${definition.base}/${definition.ops[job.type]}?${params}`);
+  const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(PAGE_SIZE), inqryDiv: "1", ...rangeParams(job), ServiceKey: SERVICE_KEY });
+  const data = await requestJson(`${API_BASE}${definition.base}/${definition.ops[job.type]}?${params}`);
   const body = data?.response?.body;
   if (!body) throw new Error(data?.response?.header?.resultMsg || JSON.stringify(data));
   const items = Array.isArray(body.items) ? body.items : body.items?.item ? (Array.isArray(body.items.item) ? body.items.item : [body.items.item]) : [];
   return { items, totalPages: Math.max(1, Math.ceil(Number(body.totalCount || 0) / Number(body.numOfRows || PAGE_SIZE))) };
+}
+
+// 조회 범위 파라미터는 서비스마다 이름이 다르다. 발주계획은 일시(inqryBgnDt)가 아니라
+// 발주년월(orderBgnYm)을 받는다 — 지금은 어느 쪽도 결과를 거르지 않지만, 포털이 필터를
+// 고치면 그때는 요청한 구간만 오는 것이 맞으므로 명세대로 실어 보낸다.
+function rangeParams(job) {
+  if (MODES[job.mode].snapshot) return { orderBgnYm: ym(job.range.begin), orderEndYm: ym(job.range.end) };
+  return { inqryBgnDt: `${ymd(job.range.begin)}0000`, inqryEndDt: `${ymd(job.range.end)}2359` };
 }
 
 // 전역 HTTP 동시 실행 제한. 작업·페이지 병렬을 모두 이 세마포어 하나로 묶어
@@ -111,7 +145,7 @@ async function requestJson(url) {
     let lastError;
     for (let attempt = 0; attempt <= RETRIES; attempt += 1) {
       try {
-        const response = await fetch(url, { headers: { Accept: "application/json" } });
+        const response = await fetch(url, { headers: { Accept: "application/json", ...(RELAY_TOKEN ? { Authorization: `Bearer ${RELAY_TOKEN}` } : {}) } });
         const text = await response.text();
         if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
         return JSON.parse(text);
@@ -268,9 +302,12 @@ async function sealedFiles() {
   }
   return result.sort((a, b) => a.month.localeCompare(b.month) || a.mode.localeCompare(b.mode));
 }
-function recordKey(row) { const number = String(row.bfSpecRgstNo || row.bidNtceNo || "").trim(); return number ? `${recordMode(row)}:${number}` : ""; }
-function recordMode(row) { return row.bidNtceNo ? "bid" : row.bfSpecRgstNo ? "pre" : ""; }
-function recordDate(row) { const match = String(row.rgstDt || row.bidNtceDt || "").match(/^(\d{4})[-.]?(\d{2})[-.]?(\d{2})/); return match ? `${match[1]}-${match[2]}-${match[3]}` : "undated"; }
+function recordKey(row) { const number = String(row.bfSpecRgstNo || row.bidNtceNo || row.orderPlanUntyNo || "").trim(); return number ? `${recordMode(row)}:${number}` : ""; }
+function recordMode(row) { return row.bidNtceNo ? "bid" : row.bfSpecRgstNo ? "pre" : row.orderPlanUntyNo ? "plan" : ""; }
+// 발주계획에는 등록일자가 없다. 대신 게시일시(nticeDt)가 레코드마다 고정된 값으로 들어오므로
+// 그것을 일자로 쓴다. 발주년월(orderYear/orderMnth)은 "언제 발주할 예정인가"라서 일자가 없고,
+// 그대로 쓰면 미래 날짜 파일이 생겨 조회 구간과 어긋난다.
+function recordDate(row) { const match = String(row.rgstDt || row.bidNtceDt || row.nticeDt || "").match(/^(\d{4})[-.]?(\d{2})[-.]?(\d{2})/); return match ? `${match[1]}-${match[2]}-${match[3]}` : "undated"; }
 function isInRange(value, range) { return value >= range.begin && value <= range.end; }
 async function readState() {
   try {
@@ -303,4 +340,5 @@ function parseDate(value) { const result = new Date(`${value}T00:00:00`); return
 function addDays(value, days) { const result = new Date(value); result.setDate(result.getDate() + days); return result; }
 function iso(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
 function ymd(value) { return String(value).replaceAll("-", ""); }
+function ym(value) { return ymd(value).slice(0, 6); }
 function today() { return iso(new Date()); }

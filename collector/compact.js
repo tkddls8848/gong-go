@@ -17,7 +17,7 @@ const { DATA_DIR, fs, path, mapPool, readJson, buildIndexEntries, lastDayOfMonth
 const { serializeCsv, parseCsv } = require("../shared/csv-record");
 
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
-const MODES = ["pre", "bid"];
+const MODES = ["pre", "bid", "plan"];
 // 크론 재수집 창(35일)보다 넉넉히. functions/data/[[path]].js의 RECENT_DAYS와 같은 값이다.
 const SEAL_LAG = 40;
 const READ_CONCURRENCY = 16;

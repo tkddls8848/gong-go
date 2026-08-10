@@ -5,7 +5,12 @@ const LOGIN_PATH = "/__gate/login";
 const LOGOUT_PATH = "/__gate/logout";
 const DATA_PREFIX = "/data/";
 const REFRESH_PATH = "/api/refresh";
-const KEY = /^(index\.json|analysis-index\.json|(pre|bid)\/\d{4}\/\d{2}(\/\d{2})?\.csv\.gz|analysis\/bid\/[^/]{1,160}\.json)$/;
+const RELAY_PREFIX = "/api/relay/";
+// 중계가 열어 주는 경로. 이 목록에 없으면 통과시키지 않는다 — 임의 URL을 받아 주면
+// 이 Worker가 그대로 공개 프록시가 된다. 수집기가 쓰는 세 서비스만 적는다.
+const RELAY_ALLOW = /^\/1230000\/(ao\/HrcspSsstndrdInfoService|ad\/BidPublicInfoService|ao\/OrderPlanSttusService)\/[A-Za-z]{1,60}$/;
+const RELAY_ORIGIN = "https://apis.data.go.kr";
+const KEY = /^(index\.json|analysis-index\.json|(pre|bid|plan)\/\d{4}\/\d{2}(\/\d{2})?\.csv\.gz|analysis\/bid\/[^/]{1,160}\.json)$/;
 const RECENT_DAYS = 40;
 const GITHUB_API = "https://api.github.com/repos/tkddls8848/gong-go";
 const WORKFLOW = "collect.yml";
@@ -13,11 +18,16 @@ const WORKFLOW_REF = "dev";
 
 export default {
   async fetch(request, env) {
+    const url = new URL(request.url);
+
+    // 중계는 사람용 비밀번호 게이트와 별개다. 수집기(GitHub Actions)가 쓰는 기계 경로라
+    // 자체 토큰으로만 인증하고, 로그인 화면을 돌려주지 않는다.
+    if (url.pathname.startsWith(RELAY_PREFIX)) return handleRelay(request, env, url);
+
     const password = env.GATE_PASSWORD;
 
     if (!password) return new Response("GATE_PASSWORD is not configured", { status: 500 });
 
-    const url = new URL(request.url);
     const secure = url.protocol === "https:";
 
     if (url.pathname === LOGOUT_PATH) {
@@ -82,6 +92,37 @@ async function handleRefresh(request, env, url) {
     finishedAt: running ? null : run.updated_at,
     error: !running && run.conclusion !== "success" ? `GitHub Actions가 ${run.conclusion || "실패"} 상태로 끝났습니다.` : null,
     lastLine: running ? `GitHub Actions ${run.status}` : `GitHub Actions ${run.conclusion}`,
+  });
+}
+
+// GitHub 러너(Azure 대역)에서는 apis.data.go.kr로 TCP 연결이 성립하지 않는다. 차단은 국가가
+// 아니라 IP 대역 기준이라 Cloudflare 엣지에서는 통과한다 — 미국 LAX colo에서도 155~515ms로
+// 응답이 온다. 그래서 수집기의 요청만 이 Worker가 대신 내보낸다.
+// (docs/이슈-Actions-수집-차단.md)
+async function handleRelay(request, env, url) {
+  if (!env.RELAY_TOKEN) return jsonResponse({ message: "RELAY_TOKEN 시크릿이 설정되지 않았습니다." }, 501);
+
+  const header = request.headers.get("Authorization") || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+  // 토큰이 비어 있으면 timingSafeEqual을 태우지 않는다 — 빈 문자열끼리 맞아 떨어지면 안 된다.
+  if (!token || !timingSafeEqual(token, env.RELAY_TOKEN)) return jsonResponse({ message: "중계 토큰이 올바르지 않습니다." }, 401);
+  if (request.method !== "GET") return jsonResponse({ message: "GET만 지원합니다." }, 405, { Allow: "GET" });
+
+  const target = url.pathname.slice(RELAY_PREFIX.length - 1);
+  if (!RELAY_ALLOW.test(target)) return jsonResponse({ message: "허용되지 않은 중계 경로입니다." }, 403);
+
+  let upstream;
+  try {
+    upstream = await fetch(`${RELAY_ORIGIN}${target}${url.search}`, { headers: { Accept: request.headers.get("Accept") || "application/json" } });
+  } catch (error) {
+    // 여기서 실패하면 Cloudflare 쪽에서도 못 나간 것이다. 수집기가 원인을 볼 수 있게 사유를 실어 준다.
+    return jsonResponse({ message: `중계 요청이 실패했습니다: ${error.message}${error.cause ? ` (${error.cause.code || error.cause.message})` : ""}` }, 502);
+  }
+  // 응답 본문은 그대로 흘려보내고 헤더는 새로 만든다. 상류의 쿠키·캐시 지시를 옮기면
+  // 서비스키가 실린 URL이 어딘가에 캐시될 수 있다.
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: { "Content-Type": upstream.headers.get("Content-Type") || "application/json; charset=utf-8", "Cache-Control": "no-store" },
   });
 }
 

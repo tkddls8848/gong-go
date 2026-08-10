@@ -47,6 +47,14 @@ test("수집 구간 안에서 로컬에 없어진 일별 키만 지운다", () =
   assert.deepEqual(vanishedDaily(present, local, "2026-07-01", "2026-07-31"), ["bid/2026/07/01.csv.gz"]);
 });
 
+test("발주계획은 구간 안에서 로컬에 없어도 지우지 않는다", () => {
+  // API가 최근 며칠치만 주므로 러너의 로컬에는 스냅샷 구간만 생긴다. 이걸 "사라졌다"로 보면
+  // 크론이 돌 때마다 그 앞에 쌓아 둔 발주계획이 전부 삭제된다.
+  const present = new Set(["plan/2026/07/15.csv.gz", "plan/2026/08/10.csv.gz", "bid/2026/07/01.csv.gz"]);
+  const local = [{ key: "plan/2026/08/10.csv.gz" }];
+  assert.deepEqual(vanishedDaily(present, local, "2026-07-01", "2026-08-10"), ["bid/2026/07/01.csv.gz"]);
+});
+
 test("인덱스는 로컬에 없는 과거 키의 건수를 버킷 인덱스에서 승계한다", () => {
   const present = new Set(["bid/2020/01.csv.gz", "bid/2026/08/01.csv.gz"]);
   const local = [{ path: "bid/2026/08/01.csv.gz", count: 7 }];          // 러너가 오늘 받은 것뿐

@@ -20,9 +20,18 @@ const SERVICE_COLUMNS = {
     "orderInsttNm", "rlDminsttNm",
     ...SERIES("specDocFileUrl", 5), ...SERIES("specDocFileNm", 5),
   ],
+  // 발주계획 원본은 59컬럼이다. 첨부파일 URL 계열이 아예 없고(상세 링크 orderPlanDtlUrl 하나뿐)
+  // 규격항목(specItemNm1~5)·담당자 연락처·예산 코드는 조회 화면이 쓰지 않아 뺐다.
+  // orderPlanUntyNo는 recordKey가, nticeDt는 recordDate가 쓰므로 반드시 유지한다.
+  plan: [
+    "orderPlanUntyNo", "nticeDt", "chgDt", "bsnsDivNm", "bizNm",
+    "orderYear", "orderMnth", "orderInsttNm", "orderInsttCd", "totlmngInsttNm", "jrsdctnDivNm",
+    "sumOrderAmt", "cntrctMthdNm", "prcrmntMethd", "prdctClsfcNoNm",
+    "bidNtceNoList", "orderPlanDtlUrl", "atchFileExistnceYn",
+  ],
 };
 
-function modeOf(row) { return row.bidNtceNo ? "bid" : row.bfSpecRgstNo ? "pre" : ""; }
+function modeOf(row) { return row.bidNtceNo ? "bid" : row.bfSpecRgstNo ? "pre" : row.orderPlanUntyNo ? "plan" : ""; }
 
 // 원본에 없는 컬럼은 만들지 않는다. 모드를 판별할 수 없으면 원본을 그대로 둔다.
 function project(row, mode = modeOf(row)) {

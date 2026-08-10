@@ -39,7 +39,7 @@ async function readCsvGz(file) { try { return parseCsv(await readGzipText(file))
 // begin === end이고, collector/compact.js가 만든 월별 봉인 파일은 그 달 전체를 덮는다.
 // 프런트(public/app.js)는 이 구간이 조회 구간과 겹치는 항목만 받으므로, 일별과 월별을
 // 같은 모양으로 두면 양쪽을 구분하지 않고 고를 수 있다.
-const SEALED_PATH = /^(pre|bid)\/(\d{4})\/(\d{2})\.csv\.gz$/;
+const SEALED_PATH = /^(pre|bid|plan)\/(\d{4})\/(\d{2})\.csv\.gz$/;
 function lastDayOfMonth(year, month) { return String(new Date(Number(year), Number(month), 0).getDate()).padStart(2, "0"); }
 function indexEntry(relative, count) {
   const sealed = relative.match(SEALED_PATH);
@@ -58,10 +58,10 @@ function buildIndexEntries(counts) {
     .sort((a, b) => a.begin.localeCompare(b.begin) || a.mode.localeCompare(b.mode));
 }
 
-function noticeNumber(row) { return String(row.bidNtceNo || row.bfSpecRgstNo || "").trim(); }
-function rowDate(row) { return String(row.rgstDt || row.bidNtceDt || "").replace(/\D/g, "").slice(0, 8); }
-function institution(row) { return String(row.rlDminsttNm || row.dminsttNm || ""); }
-function title(row) { return String(row.prdctClsfcNoNm || row.bidNtceNm || ""); }
+function noticeNumber(row) { return String(row.bidNtceNo || row.bfSpecRgstNo || row.orderPlanUntyNo || "").trim(); }
+function rowDate(row) { return String(row.rgstDt || row.bidNtceDt || row.nticeDt || "").replace(/\D/g, "").slice(0, 8); }
+function institution(row) { return String(row.rlDminsttNm || row.dminsttNm || row.orderInsttNm || ""); }
+function title(row) { return String(row.bizNm || row.prdctClsfcNoNm || row.bidNtceNm || ""); }
 function normalizeFiles(row) {
   const pre = row.bfSpecRgstNo && !row.bidNtceNo;
   const prefix = pre ? "specDocFileUrl" : "ntceSpecDocUrl";

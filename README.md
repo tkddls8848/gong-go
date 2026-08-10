@@ -1,6 +1,6 @@
 # 나라장터 공고·ECR 조회
 
-나라장터 사전공고와 본공고를 수집해 검색하고, 본공고 첨부 문서에서 ECR 규격을 추출하는 개인용 서비스입니다. 운영 경로는 Cloudflare Worker + R2이며, 매일 GitHub Actions가 최근 35일을 다시 수집합니다.
+나라장터 사전공고·본공고·발주계획을 수집해 검색하고, 본공고 첨부 문서에서 ECR 규격을 추출하는 개인용 서비스입니다. 운영 경로는 Cloudflare Worker + R2이며, 매일 GitHub Actions가 최근 35일을 다시 수집합니다.
 
 ## 구성
 
@@ -8,16 +8,16 @@
 - `downloader/` → `converter/` → `analyzer/`: 첨부 다운로드, HWPX/Markdown 변환, ECR 분석
 - `uploader/`: 변경된 데이터만 R2 업로드
 - `public/`: 조회 화면
-- `src/worker.js`: 비밀번호 인증, 정적 자산/R2 제공, 원격 갱신 실행
+- `src/worker.js`: 비밀번호 인증, 정적 자산/R2 제공, 원격 갱신 실행, 공공데이터 API 중계
 - `shared/`: CSV와 파이프라인 공용 함수
 
 산출물은 모두 gitignore된 `data/`에 저장합니다.
 
 ```text
 data/
-├─ pre|bid/YYYY/MM/DD.csv.gz   일별 서비스 데이터
-├─ pre|bid/YYYY/MM.csv.gz      봉인된 월 데이터
-├─ raw/pre|bid/...             원본 컬럼 백업
+├─ pre|bid|plan/YYYY/MM/DD.csv.gz   일별 서비스 데이터
+├─ pre|bid|plan/YYYY/MM.csv.gz      봉인된 월 데이터
+├─ raw/pre|bid|plan/...             원본 컬럼 백업
 ├─ files|norm|text/bid/...     첨부와 변환 결과
 └─ analysis/bid/...            ECR 분석 결과
 ```
@@ -37,6 +37,7 @@ npm ci
 - `ANTHROPIC_API_KEY`: Anthropic 분석을 사용할 때만 필요
 - `GATE_PASSWORD`: Worker 조회 화면 비밀번호
 - `GITHUB_TOKEN`: 배포 화면의 갱신 버튼용 GitHub fine-grained PAT. 이 저장소의 Actions read/write 권한만 부여
+- `API_BASE`, `RELAY_TOKEN`: 공공데이터 API 중계 경유 설정. 로컬에서는 비워 둡니다([공공데이터 API 중계](#공공데이터-api-중계) 참고)
 
 ## 로컬 실행
 
@@ -64,6 +65,55 @@ npm run analyze -- --provider ollama --model qwen3.5-hermes-64k:latest
 
 유료 분석 전에는 `--dry-run`으로 입력 토큰과 예상 비용을 확인합니다.
 
+## 공공데이터 API 중계
+
+GitHub Actions 러너에서는 `apis.data.go.kr:443`으로 TCP 연결이 성립하지 않습니다. 거부가 아니라 타임아웃이고, 같은 코드가 국내에서는 33ms 만에 붙습니다. 차단 기준은 국가가 아니라 **IP 대역**입니다 — Cloudflare 엣지에서는 미국 LAX colo에서도 155~515ms로 응답이 옵니다. 그래서 러너의 수집 요청만 Worker가 대신 내보냅니다.
+
+```text
+수집기(러너) --Bearer RELAY_TOKEN--> Worker /api/relay --> apis.data.go.kr
+```
+
+`API_BASE`가 비어 있으면 수집기는 `apis.data.go.kr`을 직접 부릅니다. 국내 로컬은 설정할 필요가 없고, 러너에서만 중계를 탑니다.
+
+중계는 두 가지로 제한됩니다.
+
+- **경로 화이트리스트**: `src/worker.js`의 `RELAY_ALLOW`에 적힌 세 서비스만 통과합니다. 임의 URL을 받아 주면 이 Worker가 공개 프록시가 됩니다.
+- **기계용 토큰**: 조회 화면의 비밀번호 게이트와 분리해 `Authorization: Bearer`로만 인증합니다. 게이트보다 먼저 처리하므로 러너에 로그인 화면이 돌아가지 않습니다.
+
+### 토큰 등록
+
+토큰을 만들고 **Cloudflare와 GitHub 양쪽에 같은 값**을 넣습니다.
+
+```powershell
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+> **`wrangler secret put`을 비대화형 셸에서 실행하지 마세요.** 숨김 입력 프롬프트가 EOF를 읽어 **빈 값이 등록**됩니다. 프롬프트 없이 곧바로 성공 메시지가 찍혀 사고를 알아채기 어렵습니다(과거 `GATE_PASSWORD`가 이렇게 두 번 비었습니다). 직접 연 터미널이나 Cloudflare 대시보드에서만 등록합니다.
+
+```powershell
+npx wrangler secret put RELAY_TOKEN      # 직접 연 터미널에서
+npm run deploy
+
+gh secret set RELAY_TOKEN --repo tkddls8848/gong-go
+gh secret set API_BASE --repo tkddls8848/gong-go --body "https://gong-go-dev.<계정>.workers.dev/api/relay"
+```
+
+`API_BASE`를 비워 두면 러너가 직접 호출로 되돌아가 다시 타임아웃납니다.
+
+### 확인
+
+배포 후 토큰이 비지 않았는지 응답 코드로 확인합니다. 토큰 없이 부르면 **401이 나와야 정상**입니다.
+
+```powershell
+curl -s -o NUL -w "%{http_code}`n" "https://gong-go-dev.<계정>.workers.dev/api/relay/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch"
+```
+
+| 응답 | 뜻 |
+|---|---|
+| 401 | 정상. 시크릿이 등록되어 있고 인증이 동작합니다 |
+| **501** | **시크릿이 비었거나 등록되지 않았습니다.** 위 사고가 재현된 경우입니다 |
+| 404 | Worker에 중계 경로가 없습니다. 배포되지 않은 버전입니다 |
+
 ## R2 업로드와 배포
 
 ```powershell
@@ -76,7 +126,7 @@ npx wrangler secret put GITHUB_TOKEN
 npm run deploy
 ```
 
-Cloudflare 시크릿 두 개가 모두 필요합니다. `GITHUB_TOKEN`이 없으면 배포 화면의 갱신 API가 501을 반환합니다. GitHub 저장소에는 Actions용 `SERVICE_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`도 등록해야 합니다.
+Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN` 세 개입니다. `GITHUB_TOKEN`이 없으면 배포 화면의 갱신 API가, `RELAY_TOKEN`이 없으면 중계가 501을 반환합니다. GitHub 저장소에는 Actions용 `SERVICE_KEY`, `API_BASE`, `RELAY_TOKEN`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다.
 
 `.github/workflows/collect.yml`은 매일 KST 05:00에 실행되며, 배포 화면의 갱신 버튼도 같은 워크플로를 실행하고 완료 상태를 표시합니다.
 
@@ -84,7 +134,20 @@ Cloudflare 시크릿 두 개가 모두 필요합니다. `GITHUB_TOKEN`이 없으
 
 - 인덱스 항목: `{ mode, begin, end, path, count }`
 - 서비스 파일: gzip CSV만 사용
-- 파일 경로: 일별 `{pre,bid}/YYYY/MM/DD.csv.gz`, 월별 `{pre,bid}/YYYY/MM.csv.gz`
+- 파일 경로: 일별 `{pre,bid,plan}/YYYY/MM/DD.csv.gz`, 월별 `{pre,bid,plan}/YYYY/MM.csv.gz`
 - 배포 데이터: `index.json`, `analysis-index.json`, 서비스 CSV, 분석 JSON만 공개
 
 과거 평문 CSV나 구 인덱스 형식은 런타임에서 변환하지 않습니다.
+
+## 발주계획의 제약
+
+발주계획(`plan`)은 사전공고·본공고와 같은 화면에서 같은 방식으로 조회되지만, **보유 범위가 소급되지 않습니다.**
+
+발주계획현황 API는 조회 범위 파라미터를 받아 형식까지 검증하면서도(`YYYYMMDD`를 주면 `DATE Format 에러`) 결과를 거르지 않습니다. `orderBgnYm`/`orderEndYm`, `inqryBgnDt`/`inqryEndDt`, `PPSSrch` 변형, `inqryDiv` 1~4를 모두 시험했지만 어떤 범위를 넣어도 같은 응답이 옵니다. 실제로 돌아오는 것은 최근 며칠 안에 게시된 계획뿐입니다.
+
+그래서 수집기는 이 모드를 스냅샷으로 다룹니다. 매 실행이 "지금 열려 있는 창"을 한 번 떠 오고, 게시일시(`nticeDt`)로 일자를 갈라 누적합니다. **과거는 받을 수 없고 수집을 시작한 시점부터 쌓입니다.**
+
+이 성질 때문에 두 곳에 예외가 있습니다. 둘 다 없으면 크론이 돌 때마다 누적분이 사라집니다.
+
+- `collector/collector.js`: `--no-resume`이 수집 구간을 비우는 `clearJobRange`를 스냅샷 모드에서는 건너뜁니다
+- `uploader/upload.js`: `vanishedDaily`가 `RANGED_DAILY_KEY`(= `pre`·`bid`만)를 보므로, 로컬에 없는 원격 `plan` 키를 지우지 않습니다
