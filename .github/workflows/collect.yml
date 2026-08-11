@@ -43,7 +43,9 @@ jobs:
           node-version: "20"
           cache: npm
 
-      - run: npm ci
+      # 이 잡이 쓰는 것은 collector와 uploader뿐이다. wrangler(devDependencies)는 배포용이라
+      # 여기서는 받지 않는다 — 설치가 갱신 대기 시간에 그대로 얹히던 몫이다.
+      - run: npm ci --omit=dev --prefer-offline --no-audit --fund=false
 
       # 수집 범위를 먼저 정한다. 기본은 최근 35일 — 나라장터는 지난 공고를 소급 수정하므로
       # 어제 하루만 받으면 그 사이 바뀐 건을 놓친다.

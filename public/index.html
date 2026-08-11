@@ -67,6 +67,8 @@
     </div>
   </div>
   <template id="empty-row"><tr><td colspan="7" class="empty">표시할 공고가 없습니다.</td></tr></template>
+  <!-- rows.js는 app.js와 search-worker.js가 함께 쓰는 CSV 파서·행 모델이라 먼저 읽는다. -->
+  <script src="rows.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

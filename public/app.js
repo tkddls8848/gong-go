@@ -1,5 +1,12 @@
 // 배포본은 Worker가 R2를 중계하고, 로컬은 devserver가 저장소의 data/를 제공한다.
-const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", POLL_MS = 5000, LOAD_CONCURRENCY = 12, MAX_ROWS = 200000;
+const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", POLL_MS = 5000, MAX_ROWS = 200000;
+// CSV 스캔은 search-worker.js가 맡는다. 여기서는 워커를 몇 개 띄우고 각자 몇 개씩
+// 동시에 받게 할지만 정한다(둘을 곱한 값이 예전 LOAD_CONCURRENCY 자리다).
+const POOL_SIZE = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)), FETCH_CONCURRENCY = 12;
+// 결과가 쌓이는 동안에도 첫 페이지를 미리 그린다. 다만 건수가 커지면 미리보기마다
+// 정렬 비용이 붙으므로 이 한도를 넘으면 진행률만 갱신한다.
+const PREVIEW_LIMIT = 30000, PREVIEW_MS = 700;
+const Rows = self.GongRows;
 let pageSize = 50;
 // main 브랜치와 동일한 기본 관심 기관 목록. 코드를 비우면 기관명 정확 일치로 조회한다.
 const DEFAULT_INSTITUTIONS = [
@@ -7,7 +14,7 @@ const DEFAULT_INSTITUTIONS = [
   { name: "보건복지부", code: "" }, { name: "한국사회보장정보원", code: "" }, { name: "국민연금공단", code: "" },
   { name: "한국고용정보원", code: "" }, { name: "재단법인자동차손해배상진흥원", code: "" }, { name: "공영홈쇼핑", code: "" },
 ];
-const norm = (value) => String(value ?? "").replace(/\s+/g, "").trim();
+const norm = Rows.norm;
 // 관심 기관은 브라우저 localStorage에 보관한다. 정적 배포라 서버에 사용자별 저장소가 없다.
 const INST_STORAGE_KEY = "gong-go:institutions";
 let institutionList = loadInstitutions(), searchTimer = null, refreshRunId = null;
@@ -84,55 +91,123 @@ function addInstitution() {
 }
 // 칩을 여러 개 연속으로 넣을 때 매번 전체 재조회가 돌지 않도록 묶는다.
 function scheduleSearch() { clearTimeout(searchTimer); searchTimer = setTimeout(() => { page = 1; applyFilters(); }, 400); }
-function collectInstitutions() { return institutionList.filter((inst) => inst.name || inst.code); }
-// 발주계획은 업무구분을 세분해서 준다("용역"이 아니라 "기술용역"·"일반용역"). 드롭다운의
-// 네 갈래로 고를 수 있어야 하므로 접미사 일치를 허용한다.
-function typeMatches(selected, value) { if (!selected) return true; const text = String(value || ""); return text === selected || text.endsWith(selected); }
 // 사전공고 CSV에는 기관 코드 컬럼이 없다. 코드만 지정된 행은 본공고에서만 매칭된다.
-function matchesInstitutions(row, list) {
-  if (!list.length) return true;
-  const name = norm(row.institution), code = String(row.dminsttCd || "").trim();
-  return list.some((inst) => (inst.code && code) ? code === inst.code : inst.name ? norm(inst.name) === name : false);
-}
+// 실제 판정은 rows.js의 makeCriteria/accepts가 한다.
+function collectInstitutions() { return institutionList.filter((inst) => inst.name || inst.code); }
 $("#modal-close").onclick = closeModal; modal.onclick = (event) => { if (event.target === modal) closeModal(); }; document.onkeydown = (event) => { if (event.key === "Escape") closeModal(); }; $("#download-all-btn").onclick = downloadAll;
 document.querySelectorAll(".modal-tab").forEach((button) => button.onclick = () => selectTab(button.dataset.tab));
 
 // 보유 데이터가 수천 개 파일로 늘어난 뒤로는 전체를 한꺼번에 fetch할 수 없다.
-// (1) 동시 요청을 LOAD_CONCURRENCY로 묶고 (2) 파일을 읽는 즉시 필터링해 일치 행만 남긴다.
+// (1) 동시 요청을 묶고 (2) 파일을 읽는 즉시 필터링해 일치 행만 남긴다.
 // 전부 메모리에 올린 뒤 거르면 수백만 행에서 브라우저가 죽는다.
-async function applyFilters() {
-  const version = ++searchVersion, q = $("#q").value.trim().toLowerCase(), mode = viewMode, type = $("#business-type").value;
-  const begin = $("#begin").value || "0000-01-01", end = $("#end").value || "9999-12-31";
-  // 항목의 구간과 조회 구간이 겹치면 받는다. 월별 봉인 항목은 한 달을 통째로 끌어오지만,
-  // 아래 match()가 행 단위로 다시 거르므로 결과는 정확하다 — 오버페치는 전송량 문제일 뿐이다.
-  const files = fileIndex.filter((file) => file.end >= begin && file.begin <= end);
-  const from = begin.replaceAll("-", ""), to = end.replaceAll("-", ""), institutions = collectInstitutions();
-  const match = (row) => { const date = dateKey(row.publishedAt); return (!mode || mode === row.mode) && typeMatches(type, row.businessType) && matchesInstitutions(row, institutions) && (!q || `${numberOf(row)} ${row.institution} ${row.title}`.toLowerCase().includes(q)) && date >= from && date <= to; };
+//
+// 그 일을 메인 스레드에서 하면 1년 조회 동안 화면이 통째로 멈춘다. 그래서 내려받기부터
+// 조건 검사까지는 search-worker.js가 맡고, 여기서는 조건을 만들어 넘기고 결과만 그린다.
+function modeOf(file) { return file.mode || String(file.path || "").split("/")[0]; }
+function byPublishedDesc(a, b) { return String(b.publishedAt).localeCompare(String(a.publishedAt)); }
 
-  const collected = []; let cursor = 0, done = 0, scanned = 0, failures = 0, capped = false;
-  const progress = () => { $("#status").textContent = `${format(files.length)}개 일자별 CSV 중 ${format(done)}개 처리 · ${format(collected.length)}건 일치`; };
-  progress();
-  const worker = async () => {
-    while (cursor < files.length && !capped) {
-      if (version !== searchVersion) return;
-      const file = files[cursor++];
-      try { const rows = await getGzipCsv(`${DATA_BASE}/${file.path}`); scanned += rows.length; for (const row of rows) if (match(row)) collected.push(row); }
-      catch { failures += 1; }
-      done += 1;
-      if (collected.length >= MAX_ROWS) capped = true;
-      if (done % 40 === 0) { progress(); await new Promise((resolve) => setTimeout(resolve, 0)); }
-    }
+async function applyFilters() {
+  const version = ++searchVersion;
+  abortScan();
+  const mode = viewMode;
+  const begin = $("#begin").value || "0000-01-01", end = $("#end").value || "9999-12-31";
+  // 지금 보고 있는 모드의 파일만 받는다. 예전에는 날짜만 보고 골라 사전공고·본공고·발주계획을
+  // 모두 내려받아 gzip을 풀고 파싱한 뒤 버렸다 — 한 모드를 보는데 세 모드를 읽은 셈이다.
+  // 항목의 구간과 조회 구간이 겹치면 받는다. 월별 봉인 항목은 한 달을 통째로 끌어오지만,
+  // 워커가 행 단위로 다시 거르므로 결과는 정확하다 — 오버페치는 전송량 문제일 뿐이다.
+  const files = fileIndex.filter((file) => modeOf(file) === mode && file.end >= begin && file.begin <= end);
+  const institutions = collectInstitutions();
+  const criteria = { q: $("#q").value.trim().toLowerCase(), type: $("#business-type").value, institutions, from: begin.replaceAll("-", ""), to: end.replaceAll("-", "") };
+
+  const progress = (state) => { $("#status").textContent = `${format(files.length)}개 CSV 중 ${format(state.done)}개 처리 · ${format(state.rows.length)}건 일치`; };
+  let painted = 0;
+  const onProgress = (state) => {
+    progress(state);
+    if (state.rows.length > PREVIEW_LIMIT || Date.now() - painted < PREVIEW_MS) return;
+    painted = Date.now();
+    filtered = state.rows.slice().sort(byPublishedDesc);
+    renderRows(filtered);
   };
-  await Promise.all(Array.from({ length: Math.min(LOAD_CONCURRENCY, files.length || 1) }, worker));
+
+  progress({ done: 0, rows: [] });
+  const state = await scanFiles(files, criteria, { begin, end }, version, onProgress);
   if (version !== searchVersion) return;
 
-  filtered = collected.sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt)));
-  const parts = [`${format(files.length)}개 CSV에서 ${format(scanned)}건을 읽어 ${format(filtered.length)}건이 조건에 맞습니다.`];
+  filtered = state.rows.sort(byPublishedDesc);
+  const parts = [`${format(files.length)}개 CSV에서 ${format(state.scanned)}건을 읽어 ${format(filtered.length)}건이 조건에 맞습니다.`];
   parts.push(institutions.length ? `관심 기관 ${institutions.length}곳으로 좁혔습니다.` : "기관 목록이 비어 있어 전체 기관을 조회했습니다.");
-  if (capped) parts.push(`표시 한도 ${format(MAX_ROWS)}건에 도달해 나머지 파일은 읽지 않았습니다. 기간을 좁히거나 관심 기관을 지정하세요.`);
-  if (failures) parts.push(`${format(failures)}개 파일을 읽지 못했습니다.`);
+  if (state.capped) parts.push(`표시 한도 ${format(MAX_ROWS)}건에 도달해 나머지 파일은 읽지 않았습니다. 기간을 좁히거나 관심 기관을 지정하세요.`);
+  if (state.failures) parts.push(`${format(state.failures)}개 파일을 읽지 못했습니다.`);
   $("#status").textContent = parts.join(" ");
   renderRows(filtered);
+}
+
+// 워커는 처음 검색할 때 만들어 두고 계속 쓴다. 만들지 못하는 환경에서는 빈 배열이 되고
+// scanFiles가 메인 스레드 경로로 되돌아간다 — 느리지만 결과는 같다.
+let workerPool = null, abortScan = () => {};
+function pool() {
+  if (workerPool) return workerPool;
+  try { const url = new URL("search-worker.js", location.href); workerPool = Array.from({ length: POOL_SIZE }, () => new Worker(url)); }
+  catch { workerPool = []; }
+  return workerPool;
+}
+
+function scanFiles(files, criteria, span, version, onProgress) {
+  const workers = pool();
+  if (!workers.length) return scanInline(files, criteria, span, version, onProgress);
+  const state = { rows: [], done: 0, scanned: 0, failures: 0, capped: false };
+  const share = Math.max(1, Math.ceil(FETCH_CONCURRENCY / workers.length));
+  return new Promise((resolve) => {
+    let pending = 0;
+    const detach = () => { for (const worker of workers) { worker.onmessage = null; worker.onerror = null; } abortScan = () => {}; };
+    const finish = () => { detach(); resolve(state); };
+    abortScan = () => { for (const worker of workers) worker.postMessage({ type: "cancel", version }); finish(); };
+    // 워커 스크립트를 못 읽으면(구 배포본에 search-worker.js가 없는 경우 등) 아무 메시지도
+    // 오지 않아 화면이 "0개 처리"에서 멈춘다. 그때는 풀을 버리고 메인 스레드로 되돌아간다.
+    const fallback = () => { detach(); for (const worker of workers) worker.terminate(); workerPool = []; resolve(scanInline(files, criteria, span, version, onProgress)); };
+    workers.forEach((worker, slot) => {
+      // 날짜순 목록을 그대로 잘라 주면 한쪽 워커에만 큰 파일이 몰린다. 번갈아 나눠 준다.
+      const mine = files.filter((_, index) => index % workers.length === slot);
+      if (!mine.length) return;
+      pending += 1;
+      worker.onerror = fallback;
+      worker.onmessage = (event) => {
+        const message = event.data;
+        if (message.version !== version) return;
+        if (message.type === "done") { pending -= 1; if (!pending) finish(); return; }
+        state.done += message.done; state.scanned += message.scanned; state.failures += message.failures;
+        for (const row of message.rows) state.rows.push(row);
+        if (state.rows.length >= MAX_ROWS) { state.capped = true; onProgress(state); abortScan(); return; }
+        onProgress(state);
+      };
+      worker.postMessage({ type: "search", version, base: DATA_BASE, files: mine, criteria, span, concurrency: share });
+    });
+    if (!pending) finish();
+  });
+}
+
+// 워커를 못 쓰는 환경의 폴백. 예전 경로와 같지만 파싱·조건 검사는 rows.js를 쓴다.
+async function scanInline(files, criteria, span, version, onProgress) {
+  const parsed = Rows.makeCriteria(criteria);
+  const state = { rows: [], done: 0, scanned: 0, failures: 0, capped: false };
+  let cursor = 0;
+  const scan = async () => {
+    while (cursor < files.length && !state.capped) {
+      if (version !== searchVersion) return;
+      const file = files[cursor++];
+      try {
+        const text = await Rows.fetchCsvText(`${DATA_BASE}/${file.path}`);
+        const result = Rows.scanText(text, modeOf(file), parsed, !(file.begin >= span.begin && file.end <= span.end));
+        state.scanned += result.scanned;
+        for (const row of result.matched) state.rows.push(row);
+      } catch { state.failures += 1; }
+      state.done += 1;
+      if (state.rows.length >= MAX_ROWS) state.capped = true;
+      if (state.done % 16 === 0) { onProgress(state); await new Promise((resolve) => setTimeout(resolve, 0)); }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, files.length || 1) }, scan));
+  return state;
 }
 function defaultRange() { const last = dataRange().end; if (!last) return; const end = new Date(`${last}T00:00:00`), begin = new Date(end); begin.setDate(begin.getDate() - 6); $("#begin").value = localDate(begin); $("#end").value = last; }
 
@@ -211,10 +286,6 @@ function downloadCsv() { downloadRows([["유형", "공고번호", "업무", "수
 async function downloadEcr() { const rows = [["공고번호", "사업명", "ID", "분류", "명칭", "수량", "산출물", "세부내용 원문", "검증"]]; for (const row of filtered) { const entry = analyses.get(numberOf(row)); if (!entry) continue; try { const data = await getJson(`${DATA_BASE}/${entry.path}`); (data.ecr || []).forEach((item) => rows.push([numberOf(row), row.title, item.id, item.분류, item.명칭, (item.기본규격 || []).map((spec) => spec.수량).filter(Boolean).join(", "), (item.산출물 || []).join(", "), item.세부내용_원문, data.verified ? "통과" : "원문 확인 필요"])); } catch {} } downloadRows(rows, "gong-go-ecr"); }
 function downloadRows(rows, prefix) { const csv = rows.map((row) => row.map((value) => { const text = String(value ?? ""); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }).join(",")).join("\n"), blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }), url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `${prefix}_${localDate(new Date()).replaceAll("-", "")}.csv`; document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url); }
 async function downloadAll() { const files = normalizeFiles(currentRow?.files), button = $("#download-all-btn"); if (!files.length) return; button.disabled = true; for (let i = 0; i < files.length; i += 1) { button.textContent = `다운로드 중... (${i + 1}/${files.length})`; window.open(files[i].url, "_blank", "noopener,noreferrer"); if (i < files.length - 1) await new Promise((resolve) => setTimeout(resolve, 700)); } button.textContent = `전체 다운로드 완료 (${files.length}건)`; button.disabled = false; }
-async function getJson(url) { const response = await fetch(url); if (!response.ok) throw new Error(`${url}을 찾지 못했습니다.`); return response.json(); } async function getGzipCsv(url) { const response = await fetch(url); if (!response.ok || !response.body) throw new Error(`${url} 응답 오류 (${response.status})`); return parseCsv(await new Response(response.body.pipeThrough(new DecompressionStream("gzip"))).text()); }
-function parseCsv(text) { const lines = csvLines(text.replace(/^\uFEFF/, "")), header = lines.shift() || []; return lines.map((cells) => displayRow(Object.fromEntries(header.map((key, i) => [key, unformula(cells[i] || "")])))); } function unformula(value) { return value[0] === "=" && value[1] === '"' && value.at(-1) === '"' ? value.slice(2, -1) : value; } function csvLines(text) { const rows = []; let row = [], i = 0, pending = false; while (i < text.length) { let cell = ""; if (text[i] === '"') { i += 1; while (i < text.length) { if (text[i] === '"' && text[i + 1] === '"') { cell += '"'; i += 2; } else if (text[i] === '"') { i += 1; break; } else cell += text[i++]; } } else { while (i < text.length && !",\r\n".includes(text[i])) cell += text[i++]; } row.push(cell); pending = true; if (text[i] === ",") { i += 1; continue; } if (text[i] === "\r") i += 1; if (text[i] === "\n") i += 1; if (row.some(Boolean)) rows.push(row); row = []; pending = false; } if (pending) rows.push(row); return rows; }
-function displayRow(row) { if (row.orderPlanUntyNo) return planRow(row); const pre = !!row.bfSpecRgstNo, prefix = pre ? "specDocFile" : "ntceSpec", urlKey = `${prefix}${pre ? "Url" : "DocUrl"}`, nameKey = `${prefix}${pre ? "Nm" : "FileNm"}`, count = pre ? 5 : 10; return { mode: pre ? "pre" : "bid", announcementNumber: pre ? row.bfSpecRgstNo || "" : row.bidNtceNo || "", institution: row.rlDminsttNm || row.dminsttNm || "", dminsttCd: row.dminsttCd || "", businessType: pre ? row.bsnsDivNm || "" : row.ntceKindNm || "", title: row.prdctClsfcNoNm || row.bidNtceNm || "", publishedAt: row.rgstDt || row.bidNtceDt || "", closeAt: row.opninRgstClseDt || row.bidClseDt || "", files: Array.from({ length: count }, (_, i) => ({ url: row[`${urlKey}${i + 1}`] || "", name: row[`${nameKey}${i + 1}`] || guess(row[`${urlKey}${i + 1}`], i) })).filter((file) => /^https?:/i.test(file.url)) }; }
-// 발주계획에는 마감일도, 첨부파일 URL도 없다. 대신 발주예정월과 상세 링크가 있어
-// closeAt 자리에 발주예정월을 넣고(표의 마지막 열 머리글이 모드에 따라 바뀐다),
-// 첨부 목록 대신 나라장터 상세 페이지를 연다.
-function planRow(row) { return { mode: "plan", announcementNumber: row.orderPlanUntyNo || "", institution: row.orderInsttNm || row.totlmngInsttNm || "", dminsttCd: row.orderInsttCd || "", businessType: row.bsnsDivNm || "", title: row.bizNm || row.prdctClsfcNoNm || "", publishedAt: row.nticeDt || "", closeAt: "", orderMonth: row.orderYear && row.orderMnth ? `${row.orderYear}-${String(row.orderMnth).padStart(2, "0")}` : "", amount: row.sumOrderAmt || "", contractMethod: row.cntrctMthdNm || "", procureMethod: row.prcrmntMethd || "", detailUrl: row.orderPlanDtlUrl || "", hasAttachment: row.atchFileExistnceYn === "Y", linkedNotices: row.bidNtceNoList || "", files: [] }; } function normalizeFiles(files) { return Array.isArray(files) ? files : []; } function guess(url, i) { try { const q = new URL(url).searchParams; return decodeURIComponent(q.get("fileNm") || q.get("orgFileNm") || q.get("fileName") || `첨부파일 ${i + 1}`); } catch { return `첨부파일 ${i + 1}`; } } function numberOf(row) { return row.announcementNumber || ""; } function dateKey(value) { return String(value || "").replace(/\D/g, "").slice(0, 8); } function dateFormat(value) { const v = dateKey(value); return v.length === 8 ? `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}` : "-"; } function format(value) { return new Intl.NumberFormat("ko-KR").format(value); } function localDate(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; } function html(value) { return String(value || "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]); }
+async function getJson(url) { const response = await fetch(url); if (!response.ok) throw new Error(`${url}을 찾지 못했습니다.`); return response.json(); }
+// CSV 파싱과 행 모델(예전 parseCsv/displayRow/planRow/guess)은 rows.js로 옮겼다. 워커도 같은 것을 쓴다.
+function normalizeFiles(files) { return Array.isArray(files) ? files : []; } function numberOf(row) { return row.announcementNumber || ""; } function dateKey(value) { return Rows.dateKey(value); } function dateFormat(value) { const v = dateKey(value); return v.length === 8 ? `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}` : "-"; } function format(value) { return new Intl.NumberFormat("ko-KR").format(value); } function localDate(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; } function html(value) { return String(value || "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]); }

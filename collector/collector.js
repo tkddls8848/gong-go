@@ -2,6 +2,8 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const zlib = require("node:zlib");
+const { promisify } = require("node:util");
+const gzip = promisify(zlib.gzip);
 const { serializeCsv, parseCsv } = require("../shared/csv-record");
 const { ROOT, DATA_DIR, loadEnv, mapPool, sleep, buildIndexEntries } = require("../shared/pipeline-utils");
 const { project } = require("../shared/service-columns");
@@ -13,6 +15,9 @@ const PAGE_SIZE = 999;
 const RANGE_DAYS = 28;
 const RETRIES = 3;
 const FILE_CONCURRENCY = 16;
+const WRITE_CONCURRENCY = 8;
+// 재개용 중간 저장 주기(완료 작업 수). 저장 자체는 수집을 멈추지 않으므로 자주 해도 싸다.
+const FLUSH_EVERY = 8;
 const TYPES = ["물품", "외자", "용역", "공사"];
 const MODE_ALIASES = { 사전공고: "pre", 본공고: "bid", 발주계획: "plan" };
 const MODE_LABELS = { pre: "사전공고", bid: "본공고", plan: "발주계획" };
@@ -86,26 +91,48 @@ async function main() {
   const pending = resume === false ? entries : entries.filter((entry) => !completed.has(entry.id));
   console.log(`전체 공고 수집 시작: ${jobs.length}개 작업(대상 ${pending.length}개), 기존 ${store.location.size}건, 동시 요청 ${httpLimit}`);
 
-  // 배치 단위로 API를 동시에 호출하고, 병합·저장은 배치마다 한 번씩만 수행한다.
-  for (let offset = 0; offset < pending.length; offset += httpLimit) {
-    const batch = pending.slice(offset, offset + httpLimit);
-    const results = await mapPool(batch, batch.length, async (entry) => {
-      try { return { entry, items: await fetchJob(entry.job) }; } catch (error) { return { entry, error }; }
+  // 작업을 배치로 끊지 않고 한 풀에서 흘려보낸다. 예전에는 httpLimit개씩 묶어 배치가 통째로
+  // 끝나야 다음이 시작됐고, 페이지가 수십 장인 작업 하나가 나머지 슬롯을 그동안 놀렸다.
+  // 나라장터에 동시에 나가는 요청 수는 어차피 아래 세마포어가 통제하므로 배치 경계는
+  // 대기 시간만 만들었다. 저장도 배치 경계마다 멈춰 서서 기다릴 이유가 없다.
+  let changed = new Set();
+  let flushing = Promise.resolve();
+  let finished = 0;
+  // flush는 바뀐 버킷 집합을 통째로 넘겨받고 새 집합을 연다. 저장이 도는 동안 다른 작업이
+  // 같은 버킷을 또 건드리면 그 버킷은 새 집합에 들어가 다음 flush가 다시 쓴다.
+  // 저장끼리는 순서대로 이어 붙여 같은 파일을 두 번 겹쳐 쓰지 않는다.
+  const flush = (saveResume) => {
+    const batch = changed;
+    changed = new Set();
+    flushing = flushing.then(async () => {
+      if (batch.size) await writeRecords(store, batch);
+      await writeIndexFromStore(store);
+      if (saveResume) await saveState(state);
     });
-    const changed = new Set();
-    for (const { entry, items, error } of results) {
-      const label = `[${entry.index + 1}/${jobs.length}] ${MODE_LABELS[entry.job.mode]}/${entry.job.type}/${entry.job.range.begin}`;
-      if (error) { errors.push({ job: entry.job, error: error.message }); console.error(`${label} 실패: ${error.message}`); continue; }
-      // 스냅샷 모드는 절대 비우지 않는다. 응답이 최근 며칠치뿐인데 --no-resume이 수집 구간
-      // (크론은 35일)을 비워 버리면, 그 앞에 쌓아 둔 발주계획이 매 실행마다 사라진다.
-      if (resume === false && !MODES[entry.job.mode].snapshot) clearJobRange(store, entry.job, changed);
-      applyItems(store, items, changed);
-      if (resume !== false) state.completedJobs.push(entry.id);
-      console.log(`${label}~${entry.job.range.end}: ${items.length}건`);
-    }
-    await writeRecords(store, changed);
-    if (resume !== false) await saveState(state);
-  }
+    return flushing;
+  };
+
+  await mapPool(pending, httpLimit, async (entry) => {
+    const label = `[${entry.index + 1}/${jobs.length}] ${MODE_LABELS[entry.job.mode]}/${entry.job.type}/${entry.job.range.begin}`;
+    let items;
+    try { items = await fetchJob(entry.job); }
+    catch (error) { errors.push({ job: entry.job, error: error.message }); console.error(`${label} 실패: ${error.message}`); return; }
+    // 아래 병합은 await 없이 한 번에 끝난다. 중간에 다른 작업이 끼어들지 않는다는 것이
+    // clearJobRange와 applyItems가 같은 store를 안전하게 고칠 수 있는 근거다.
+    //
+    // 스냅샷 모드는 절대 비우지 않는다. 응답이 최근 며칠치뿐인데 --no-resume이 수집 구간
+    // (크론은 35일)을 비워 버리면, 그 앞에 쌓아 둔 발주계획이 매 실행마다 사라진다.
+    if (resume === false && !MODES[entry.job.mode].snapshot) clearJobRange(store, entry.job, changed);
+    applyItems(store, items, changed);
+    if (resume !== false) state.completedJobs.push(entry.id);
+    console.log(`${label}~${entry.job.range.end}: ${items.length}건`);
+    finished += 1;
+    // 중간 저장은 재개(resume)를 위한 것이다. 저장을 기다리지 않고 다음 작업으로 넘어가
+    // gzip·디스크 쓰기가 다음 요청의 대기 시간에 겹쳐 돌게 둔다.
+    if (resume !== false && finished % FLUSH_EVERY === 0) flush(true);
+  });
+
+  await flush(resume !== false);
   await fs.writeFile(path.join(DATA_DIR, "sync-errors.json"), JSON.stringify(errors, null, 2), "utf8");
   console.log(`완료: ${store.location.size}건 저장, 실패 ${errors.length}건`);
 }
@@ -234,18 +261,26 @@ function applyItems(store, items, changed) {
   }
 }
 
+// 버킷마다 gzip 두 번(서비스용·원본)이라 파일 수가 늘면 여기가 그대로 대기 시간이 된다.
+// 순서대로 하나씩 돌리지 않고 풀로 묶어, 압축은 libuv 스레드에서 겹쳐 돌게 한다.
 async function writeRecords(store, changed) {
-  for (const key of changed) {
+  await mapPool([...changed], WRITE_CONCURRENCY, async (key) => {
     const [mode, day] = key.split("|");
-    if (!mode || day === "undated") continue;
+    if (!mode || day === "undated") return;
     const file = dataFile(day, mode);
     const rows = [...(store.buckets.get(key)?.values() ?? [])];
-    if (!rows.length) { await fs.rm(file, { force: true }); await fs.rm(path.join(DATA_DIR, "raw", path.relative(DATA_DIR, file)), { force: true }); store.buckets.delete(key); store.counts.delete(relativePath(mode, day)); continue; }
+    if (!rows.length) {
+      await fs.rm(file, { force: true });
+      await fs.rm(path.join(DATA_DIR, "raw", path.relative(DATA_DIR, file)), { force: true });
+      // 지우는 사이에 다른 작업이 같은 버킷을 채웠으면 삭제로 덮지 않는다. 그 버킷은 이미
+      // 새 changed 집합에 들어가 있어 다음 flush가 파일을 다시 쓴다.
+      if (!store.buckets.get(key)?.size) { store.buckets.delete(key); store.counts.delete(relativePath(mode, day)); }
+      return;
+    }
     await fs.mkdir(path.dirname(file), { recursive: true });
     await writeCsv(file, rows);
     store.counts.set(relativePath(mode, day), rows.length);
-  }
-  await writeIndexFromStore(store);
+  });
 }
 
 // 디렉터리를 다시 훑거나 CSV를 다시 파싱하지 않고 메모리 건수로 index.json을 쓴다.
@@ -259,11 +294,17 @@ async function readSourceCsv(relative) { return readCsv(path.join(DATA_DIR, "raw
 // append만 하면 배치마다 컬럼 집합이 달라져 열이 어긋나고, 갱신분이 중복으로 쌓인다.
 // 원본을 하나로 묶어 주던 collector/export-raw.js는 삭제됐다. data/raw가 서비스 파일과
 // 1:1로 대응하는 일자별 미러이므로 그 자체가 백업이고, 별도로 묶는 단계는 없다.
+// gzipSync는 이벤트 루프를 잡고 있어 동시에 쓸 수가 없다. 비동기 gzip은 libuv 스레드풀에서
+// 돌아 여러 파일이 실제로 겹쳐 압축된다. 결정적이라 같은 입력이면 바이트도 같으므로,
+// 업로더가 ETag(=MD5)로 "안 바뀐 파일"을 걸러 내는 판정은 그대로 성립한다.
 async function writeCsv(file, rows) {
-  await fs.writeFile(file, zlib.gzipSync(Buffer.from(`\uFEFF${serializeCsv(rows.map((row) => project(row)))}\n`, "utf8")));
   const rawFile = path.join(DATA_DIR, "raw", path.relative(DATA_DIR, file));
   await fs.mkdir(path.dirname(rawFile), { recursive: true });
-  await fs.writeFile(rawFile, zlib.gzipSync(Buffer.from(`\uFEFF${serializeCsv(rows)}\n`, "utf8")));
+  const [service, raw] = await Promise.all([
+    gzip(Buffer.from(`\uFEFF${serializeCsv(rows.map((row) => project(row)))}\n`, "utf8")),
+    gzip(Buffer.from(`\uFEFF${serializeCsv(rows)}\n`, "utf8")),
+  ]);
+  await Promise.all([fs.writeFile(file, service), fs.writeFile(rawFile, raw)]);
 }
 function dataFile(day, mode) { const [year, month, date] = day.split("-"); return path.join(DATA_DIR, mode, year, month, `${date}.csv.gz`); }
 async function dailyFiles() {
