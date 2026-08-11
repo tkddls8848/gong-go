@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       begin:
-        description: "수집 시작일(YYYY-MM-DD). 비우면 최근 35일."
+        description: "수집 시작일(YYYY-MM-DD). 비우면 오늘과 이전 35일."
         default: ""
       end:
         description: "수집 종료일(YYYY-MM-DD). 비우면 오늘."
@@ -40,15 +40,11 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
-          cache: npm
+          # ubuntu-latest tool cache에 있는 버전을 써 매 실행의 Node 20 다운로드를 피한다.
+          node-version: "22"
 
-      # 이 잡이 쓰는 것은 collector와 uploader뿐이다. wrangler(devDependencies)는 배포용이라
-      # 여기서는 받지 않는다 — 설치가 갱신 대기 시간에 그대로 얹히던 몫이다.
-      - run: npm ci --omit=dev --prefer-offline --no-audit --fund=false
-
-      # 수집 범위를 먼저 정한다. 기본은 최근 35일 — 나라장터는 지난 공고를 소급 수정하므로
-      # 어제 하루만 받으면 그 사이 바뀐 건을 놓친다.
+      # 수집 범위를 먼저 정한다. 기본은 오늘과 이전 35일(양끝 포함 36일) — 나라장터는 지난
+      # 공고를 소급 수정하므로 어제 하루만 받으면 그 사이 바뀐 건을 놓친다.
       - name: 수집 범위 결정
         id: range
         run: |
@@ -72,11 +68,16 @@ jobs:
           echo "실패 작업 $COUNT건"
           [ "$COUNT" = "0" ] || { node -p "JSON.stringify(require('./data/sync-errors.json').slice(0,10),null,2)"; exit 1; }
 
+      # collector는 Node 내장 모듈만 쓴다. 외부 패키지가 필요한 uploader 직전에 production
+      # 의존성만 받고, dev tarball이 든 예전 setup-node 캐시는 복원하지 않는다.
+      - name: 업로더 의존성 설치
+        run: npm ci --omit=dev --no-audit --fund=false
+
       - name: 업로드
         env:
           SYNC_BEGIN: ${{ steps.range.outputs.begin }}
           SYNC_END: ${{ steps.range.outputs.end }}
-        run: node uploader/upload.js
+        run: node uploader/upload.js --commit
 
       - name: 오류 로그 보관
         if: always()

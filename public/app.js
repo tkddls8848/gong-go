@@ -1,5 +1,5 @@
 // 배포본은 Worker가 R2를 중계하고, 로컬은 devserver가 저장소의 data/를 제공한다.
-const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", POLL_MS = 5000, MAX_ROWS = 200000;
+const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", POLL_SLOW_MS = 5000, POLL_FAST_MS = 2000, MAX_ROWS = 200000;
 // CSV 스캔은 search-worker.js가 맡는다. 여기서는 워커를 몇 개 띄우고 각자 몇 개씩
 // 동시에 받게 할지만 정한다(둘을 곱한 값이 예전 LOAD_CONCURRENCY 자리다).
 const POOL_SIZE = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)), FETCH_CONCURRENCY = 12;
@@ -17,6 +17,7 @@ const DEFAULT_INSTITUTIONS = [
 const norm = Rows.norm;
 // 관심 기관은 브라우저 localStorage에 보관한다. 정적 배포라 서버에 사용자별 저장소가 없다.
 const INST_STORAGE_KEY = "gong-go:institutions";
+const INDEX_STORAGE_KEY = "gong-go:index-updated-at";
 let institutionList = loadInstitutions(), searchTimer = null, refreshRunId = null;
 function loadInstitutions() {
   try { const saved = JSON.parse(localStorage.getItem(INST_STORAGE_KEY)); if (Array.isArray(saved)) return saved.map((inst) => ({ name: String(inst?.name || ""), code: String(inst?.code || "") })).filter((inst) => inst.name || inst.code); } catch {}
@@ -35,20 +36,22 @@ const MODE_SUBTITLES = {
 const MODE_NAMES = { pre: "사전공고", bid: "본공고", plan: "발주계획" };
 
 if (location.protocol === "file:") { $("#status").textContent = "CSV 조회는 웹 서버에서만 가능합니다. 저장소 루트에서 npm run serve 실행 후 http://localhost:8788/public/ 를 여세요."; renderRows([]); }
-else { loadIndex(true).then(applyFilters).catch((error) => { $("#status").textContent = error.message; renderRows([]); }); resumeRefresh(); }
+else { loadIndex(true).then(({ changed }) => applyFilters({ revalidateRecent: changed })).catch((error) => { $("#status").textContent = error.message; renderRows([]); }); resumeRefresh(); }
 
 // index.json은 갱신 직후에도 최신이어야 하므로 매번 캐시를 우회한다. 파일 1개라 호출량에
 // 영향이 없다. 반대로 .csv.gz에는 캐시 무효화 토큰을 붙이지 않는다 — 쿼리스트링은 브라우저
 // 캐시 키의 일부라, 수집이 끝날 때마다 모든 파일 URL이 새 URL이 되어 캐시가 통째로 날아간다.
 // 과거 파일이 굳지 않게 하는 일은 서버가 ETag와 날짜별 Cache-Control로 이미 하고 있다
-// (배포본은 functions/data/[[path]].js, 로컬은 devserver가 no-store).
+// (배포본은 src/worker.js, 로컬은 devserver가 no-store).
 async function loadIndex(initial) {
   const [index, analysis] = await Promise.all([getJson(`${DATA_BASE}/index.json?t=${Date.now()}`), getJson(`${DATA_BASE}/analysis-index.json`).catch(() => ({ entries: [] }))]);
+  let previous = "";
+  try { previous = localStorage.getItem(INDEX_STORAGE_KEY) || ""; localStorage.setItem(INDEX_STORAGE_KEY, index.updatedAt || ""); } catch {}
   fileIndex = index.files || [];
   analyses.clear(); (analysis.entries || []).forEach((entry) => analyses.set(entry.notice, entry));
   renderDataStatus(index);
   if (initial) { defaultRange(); $("#status").textContent = `${fileIndex.length}개 CSV를 찾았습니다.`; }
-  return index;
+  return { index, changed: Boolean(previous && index.updatedAt && previous !== index.updatedAt) };
 }
 function renderDataStatus(index) { const { begin, end } = dataRange(), total = totalCount(); $("#data-range").textContent = end ? `${begin} ~ ${end}` : "없음"; $("#data-count").textContent = end ? `· ${format(fileIndex.length)}개 파일 · ${format(total)}건` : ""; $("#last-crawl").textContent = `마지막 크롤링 ${stamp(index?.updatedAt)}`; $("#updated-at").textContent = `updated ${stamp(index?.updatedAt)}`; }
 // 항목이 구간이 된 뒤로 "며칠치"는 인덱스만으로 셀 수 없다(월별 봉인 항목 하나가 한 달을
@@ -106,7 +109,7 @@ document.querySelectorAll(".modal-tab").forEach((button) => button.onclick = () 
 function modeOf(file) { return file.mode || String(file.path || "").split("/")[0]; }
 function byPublishedDesc(a, b) { return String(b.publishedAt).localeCompare(String(a.publishedAt)); }
 
-async function applyFilters() {
+async function applyFilters({ revalidateRecent = false } = {}) {
   const version = ++searchVersion;
   abortScan();
   const mode = viewMode;
@@ -115,7 +118,11 @@ async function applyFilters() {
   // 모두 내려받아 gzip을 풀고 파싱한 뒤 버렸다 — 한 모드를 보는데 세 모드를 읽은 셈이다.
   // 항목의 구간과 조회 구간이 겹치면 받는다. 월별 봉인 항목은 한 달을 통째로 끌어오지만,
   // 워커가 행 단위로 다시 거르므로 결과는 정확하다 — 오버페치는 전송량 문제일 뿐이다.
-  const files = fileIndex.filter((file) => modeOf(file) === mode && file.end >= begin && file.begin <= end);
+  const files = fileIndex
+    .filter((file) => modeOf(file) === mode && file.end >= begin && file.begin <= end)
+    // 갱신 직후에는 지금 조회할 최근 일별 파일만 같은 URL로 조건부 재검증한다. 쿼리 토큰을
+    // 붙이면 과거 파일까지 전부 새 캐시 키가 되지만 cache:no-cache는 기존 ETag를 써 304를 받을 수 있다.
+    .map((file) => revalidateRecent && isRecentDaily(file) ? { ...file, revalidate: true } : file);
   const institutions = collectInstitutions();
   const criteria = { q: $("#q").value.trim().toLowerCase(), type: $("#business-type").value, institutions, from: begin.replaceAll("-", ""), to: end.replaceAll("-", "") };
 
@@ -196,7 +203,7 @@ async function scanInline(files, criteria, span, version, onProgress) {
       if (version !== searchVersion) return;
       const file = files[cursor++];
       try {
-        const text = await Rows.fetchCsvText(`${DATA_BASE}/${file.path}`);
+        const text = await Rows.fetchCsvText(`${DATA_BASE}/${file.path}`, file.revalidate ? { cache: "no-cache" } : undefined);
         const result = Rows.scanText(text, modeOf(file), parsed, !(file.begin >= span.begin && file.end <= span.end));
         state.scanned += result.scanned;
         for (const row of result.matched) state.rows.push(row);
@@ -234,7 +241,7 @@ async function pollRefresh() {
     try { state = await getJson(refreshUrl()); } catch (error) { setRefresh(false, `갱신 상태를 확인하지 못했습니다: ${error.message}`, "error"); return; }
     if (!state.running) return finishRefresh(state);
     setRefresh(true, refreshText(state));
-    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    await new Promise((resolve) => setTimeout(resolve, pollDelay(state)));
   }
 }
 async function finishRefresh(state) {
@@ -246,8 +253,10 @@ async function finishRefresh(state) {
   // 새로 들어온 날짜가 현재 조회 종료일보다 뒤라면, 갱신 결과가 바로 보이도록 종료일을 늘린다.
   if (last && last > ($("#end").value || "")) $("#end").value = last;
   setRefresh(false, `갱신 완료 · ${state.range ? `${state.range.begin} ~ ${state.range.end}` : "-"} · 새 파일 ${format(added)}개 · 총 ${format(totalCount())}건 (${diff >= 0 ? "+" : ""}${format(diff)})${last > beforeLast ? ` · 최신 ${last}` : ""}`, "done");
-  page = 1; applyFilters();
+  page = 1; applyFilters({ revalidateRecent: true });
 }
+function pollDelay(state) { const started = Date.parse(state.startedAt || ""); return !Number.isNaN(started) && Date.now() - started >= 60000 ? POLL_FAST_MS : POLL_SLOW_MS; }
+function isRecentDaily(file) { const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 40); return /^(pre|bid|plan)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/.test(file.path || "") && file.end >= localDate(cutoff); }
 function refreshText(state) { return `수집 중입니다 · ${state.range ? `${state.range.begin} ~ ${state.range.end}` : "-"}${state.lastLine ? ` · ${state.lastLine}` : ""}`; }
 function setRefresh(busy, text, kind = "") { const button = $("#refresh-btn"), box = $("#refresh-status"); button.disabled = busy; button.setAttribute("aria-busy", String(busy)); button.textContent = busy ? "갱신 중…" : "보유데이터 갱신"; box.hidden = !text; box.className = `refresh-status ${kind}`.trim(); box.textContent = text || ""; }
 function renderRows(rows) { const pages = Math.max(1, Math.ceil(rows.length / pageSize)); page = Math.min(page, pages); const visible = rows.slice((page - 1) * pageSize, page * pageSize); $("#result-summary").textContent = `${format(rows.length)}건`; $("#page-label").textContent = `${page} / ${pages}`; $("#previous").disabled = page === 1; $("#next").disabled = page === pages; $("#download-btn").disabled = !rows.length; $("#download-ecr-btn").disabled = !analyses.size; $("#results").innerHTML = visible.length ? visible.map((row, i) => { const files = normalizeFiles(row.files), analysis = analyses.get(numberOf(row)); return `<tr><td><span class="badge ${row.mode}">${MODE_NAMES[row.mode] || row.mode}</span></td><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(사업명 없음)")}</button>${fileBadge(row, files)}${analysis ? `<span class="ecr-badge ${analysis.verified ? "" : "warning"}">ECR ${analysis.ecrCount}${analysis.verified ? "" : " · 확인 필요"}</span>` : ""}</td><td>${dateFormat(row.publishedAt)}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`; }).join("") : $("#empty-row").innerHTML; document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)])); }

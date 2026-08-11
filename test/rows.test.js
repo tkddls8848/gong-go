@@ -5,6 +5,7 @@
 // 그 안에 있는 파일은 전부 사이트로 배포된다.
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const zlib = require("node:zlib");
 const { serializeCsv } = require("../shared/csv-record");
 
 require("../public/rows.js");
@@ -162,4 +163,19 @@ test("헤더만 있는 파일은 빈 결과가 된다", () => {
   const result = Rows.scanText(`﻿${serializeCsv([BID]).split("\n")[0]}\n`, "bid", Rows.makeCriteria({}), true);
   assert.deepEqual(result.matched, []);
   assert.equal(result.scanned, 0);
+});
+
+test("CSV fetch는 갱신 직후 조건부 재검증 옵션을 전달한다", async () => {
+  const originalFetch = globalThis.fetch;
+  let received;
+  try {
+    globalThis.fetch = async (url, init) => {
+      received = { url, init };
+      return new Response(zlib.gzipSync(Buffer.from("hello", "utf8")), { status: 200 });
+    };
+    assert.equal(await Rows.fetchCsvText("/data/bid/2026/08/11.csv.gz", { cache: "no-cache" }), "hello");
+    assert.deepEqual(received, { url: "/data/bid/2026/08/11.csv.gz", init: { cache: "no-cache" } });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

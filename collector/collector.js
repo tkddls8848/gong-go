@@ -14,11 +14,13 @@ const STATE_FILE = path.join(DATA_DIR, "sync-state.json");
 const PAGE_SIZE = 999;
 const RANGE_DAYS = 28;
 const RETRIES = 3;
+const REQUEST_TIMEOUT_MS = 30_000;
 const FILE_CONCURRENCY = 16;
 const WRITE_CONCURRENCY = 8;
 // 재개용 중간 저장 주기(완료 작업 수). 저장 자체는 수집을 멈추지 않으므로 자주 해도 싸다.
 const FLUSH_EVERY = 8;
 const TYPES = ["물품", "외자", "용역", "공사"];
+const SOURCE_ENDPOINT = "__sourceEndpoint";
 const MODE_ALIASES = { 사전공고: "pre", 본공고: "bid", 발주계획: "plan" };
 const MODE_LABELS = { pre: "사전공고", bid: "본공고", plan: "발주계획" };
 
@@ -30,7 +32,7 @@ const SERVICE_KEY = process.env.SERVICE_KEY || "";
 //   API_BASE=https://gong-go-dev.<계정>.workers.dev/api/relay
 //   RELAY_TOKEN=<Worker에 등록한 것과 같은 값>
 // 경로와 쿼리는 그대로 유지되므로 아래 정의는 어느 쪽이든 바뀌지 않는다.
-// (docs/이슈-Actions-수집-차단.md)
+// (docs/프로젝트-통합-문서.md 2부)
 const API_BASE = (process.env.API_BASE || "https://apis.data.go.kr").replace(/\/+$/, "");
 const RELAY_TOKEN = process.env.RELAY_TOKEN || "";
 const MODES = {
@@ -55,7 +57,7 @@ const MODES = {
   },
 };
 
-main().catch((error) => { console.error(`수집 실패: ${error.message}`); process.exitCode = 1; });
+if (require.main === module) main().catch((error) => { console.error(`수집 실패: ${error.message}`); process.exitCode = 1; });
 
 async function main() {
   await fs.mkdir(DATA_DIR, { recursive: true });
@@ -89,6 +91,7 @@ async function main() {
   const completed = new Set(state.completedJobs);
   const entries = jobs.map((job, index) => ({ job, index, id: JSON.stringify(job) }));
   const pending = resume === false ? entries : entries.filter((entry) => !completed.has(entry.id));
+  const succeeded = new Set();
   console.log(`전체 공고 수집 시작: ${jobs.length}개 작업(대상 ${pending.length}개), 기존 ${store.location.size}건, 동시 요청 ${httpLimit}`);
 
   // 작업을 배치로 끊지 않고 한 풀에서 흘려보낸다. 예전에는 httpLimit개씩 묶어 배치가 통째로
@@ -117,21 +120,29 @@ async function main() {
     let items;
     try { items = await fetchJob(entry.job); }
     catch (error) { errors.push({ job: entry.job, error: error.message }); console.error(`${label} 실패: ${error.message}`); return; }
+    succeeded.add(entry.id);
     // 아래 병합은 await 없이 한 번에 끝난다. 중간에 다른 작업이 끼어들지 않는다는 것이
     // clearJobRange와 applyItems가 같은 store를 안전하게 고칠 수 있는 근거다.
     //
     // 스냅샷 모드는 절대 비우지 않는다. 응답이 최근 며칠치뿐인데 --no-resume이 수집 구간
     // (크론은 35일)을 비워 버리면, 그 앞에 쌓아 둔 발주계획이 매 실행마다 사라진다.
     if (resume === false && !MODES[entry.job.mode].snapshot) clearJobRange(store, entry.job, changed);
-    applyItems(store, items, changed);
+    applyItems(store, items, changed, entry.job);
     if (resume !== false) state.completedJobs.push(entry.id);
     console.log(`${label}~${entry.job.range.end}: ${items.length}건`);
     finished += 1;
     // 중간 저장은 재개(resume)를 위한 것이다. 저장을 기다리지 않고 다음 작업으로 넘어가
     // gzip·디스크 쓰기가 다음 요청의 대기 시간에 겹쳐 돌게 둔다.
-    if (resume !== false && finished % FLUSH_EVERY === 0) flush(true);
+    if (finished % FLUSH_EVERY === 0) flush(resume !== false);
   });
 
+  // 이 필드를 도입하기 전에 저장된 본공고에는 업무구분이 없어 어느 endpoint의 행인지
+  // 안전하게 가려낼 수 없다. 같은 모드·범위의 네 endpoint가 모두 성공한 경우에만, 이번
+  // 응답으로 교체되지 않은 무표식 행을 지워 한 번의 정상 실행으로 원천 정보를 이관한다.
+  if (resume === false) {
+    const migrated = clearLegacySources(store, entries, succeeded, types, changed);
+    if (migrated) console.log(`원천 endpoint가 없던 기존 레코드 ${migrated}건 정리`);
+  }
   await flush(resume !== false);
   await fs.writeFile(path.join(DATA_DIR, "sync-errors.json"), JSON.stringify(errors, null, 2), "utf8");
   console.log(`완료: ${store.location.size}건 저장, 실패 ${errors.length}건`);
@@ -148,7 +159,12 @@ async function fetchJob(job) {
 async function fetchPage(job, pageNo) {
   const definition = MODES[job.mode];
   const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(PAGE_SIZE), inqryDiv: "1", ...rangeParams(job), ServiceKey: SERVICE_KEY });
-  const data = await requestJson(`${API_BASE}${definition.base}/${definition.ops[job.type]}?${params}`);
+  const data = await requestJson(`${API_BASE}${definition.base}/${definition.ops[job.type]}?${params}`, {
+    mode: job.mode,
+    type: job.type,
+    range: `${job.range.begin}~${job.range.end}`,
+    page: pageNo,
+  });
   const body = data?.response?.body;
   if (!body) throw new Error(data?.response?.header?.resultMsg || JSON.stringify(data));
   const items = Array.isArray(body.items) ? body.items : body.items?.item ? (Array.isArray(body.items.item) ? body.items.item : [body.items.item]) : [];
@@ -171,26 +187,82 @@ const httpQueue = [];
 function acquireHttp() { if (httpActive < httpLimit) { httpActive += 1; return Promise.resolve(); } return new Promise((resolve) => httpQueue.push(resolve)); }
 function releaseHttp() { const next = httpQueue.shift(); if (next) next(); else httpActive -= 1; }
 
-async function requestJson(url) {
-  await acquireHttp();
-  try {
-    let lastError;
-    for (let attempt = 0; attempt <= RETRIES; attempt += 1) {
-      try {
-        const response = await fetch(url, { headers: { Accept: "application/json", ...(RELAY_TOKEN ? { Authorization: `Bearer ${RELAY_TOKEN}` } : {}) } });
-        const text = await response.text();
-        if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
-        return JSON.parse(text);
-      } catch (error) {
-        lastError = withCause(error);
-        if (attempt < RETRIES) await sleep(800 * 2 ** attempt);
+async function requestJson(url, meta) {
+  let lastError;
+  for (let retry = 0; retry <= RETRIES; retry += 1) {
+    const queuedAt = performance.now();
+    await acquireHttp();
+    const startedAt = performance.now();
+    let status = 0;
+    let bytes = 0;
+    let upstreamMs = null;
+    let error = null;
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: "application/json", ...(RELAY_TOKEN ? { Authorization: `Bearer ${RELAY_TOKEN}` } : {}) },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      status = response.status;
+      upstreamMs = serverTimingDuration(response.headers.get("Server-Timing"), "upstream");
+      const body = await response.text();
+      bytes = Buffer.byteLength(body);
+      if (!response.ok) {
+        error = new Error(`HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`);
+        error.httpStatus = response.status;
+        error.retryAfterMs = retryAfterMs(response.headers.get("Retry-After"));
+        throw error;
       }
+      const data = JSON.parse(body);
+      logRequest(meta, { queueWaitMs: startedAt - queuedAt, fetchMs: performance.now() - startedAt, status, bytes, retry, upstreamMs });
+      return data;
+    } catch (caught) {
+      error = withCause(caught);
+      lastError = error;
+      logRequest(meta, {
+        queueWaitMs: startedAt - queuedAt,
+        fetchMs: performance.now() - startedAt,
+        status,
+        bytes,
+        retry,
+        upstreamMs,
+        error: errorClass(error),
+      }, true);
+    } finally {
+      // 재시도 backoff 중에는 HTTP permit을 잡고 있지 않는다. 느린 한 페이지가 다른 페이지의
+      // 첫 시도까지 줄 세우지 않게 attempt 하나만 세마포어로 센다.
+      releaseHttp();
     }
-    throw lastError;
-  } finally {
-    releaseHttp();
+    if (retry >= RETRIES || !isRetryable(error, status)) throw lastError;
+    await sleep(Math.max(error?.retryAfterMs || 0, retryDelay(retry)));
   }
+  throw lastError;
 }
+
+function logRequest(meta, timing, failed = false) {
+  const value = { ...meta, ...roundTiming(timing) };
+  // URL에는 ServiceKey가 있으므로 어떤 경우에도 URL 자체는 로그에 넣지 않는다.
+  (failed ? console.warn : console.log)(`HTTP ${JSON.stringify(value)}`);
+}
+function roundTiming(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== null && item !== undefined).map(([key, item]) => [key, typeof item === "number" && !Number.isInteger(item) ? Number(item.toFixed(1)) : item]));
+}
+function serverTimingDuration(header, name) {
+  const match = String(header || "").match(new RegExp(`(?:^|,)\\s*${name}\\s*;\\s*dur=([0-9.]+)`, "i"));
+  return match ? Number(match[1]) : null;
+}
+function retryAfterMs(value) {
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? 0 : Math.max(0, date - Date.now());
+}
+function retryDelay(retry) { return 800 * 2 ** retry * (0.75 + Math.random() * 0.5); }
+function isRetryable(error, status) {
+  if (error?.name === "SyntaxError") return true;
+  return status ? status === 408 || status === 429 || status >= 500 : true;
+}
+function errorClass(error) { return error?.cause?.code || error?.code || error?.name || "Error"; }
 
 // fetch가 네트워크 단계에서 실패하면 message는 "fetch failed" 한 줄뿐이고 실제 사유는
 // cause에 들어간다. 로컬에서는 재현되지 않고 GitHub Actions에서만 터지는 경우가 있어,
@@ -247,15 +319,16 @@ async function readStore(begin, end) {
 
 function bucketFor(store, key) { let bucket = store.buckets.get(key); if (!bucket) { bucket = new Map(); store.buckets.set(key, bucket); } return bucket; }
 
-function applyItems(store, items, changed) {
+function applyItems(store, items, changed, job) {
   for (const item of items) {
-    const key = recordKey(item);
+    const record = job ? { ...item, [SOURCE_ENDPOINT]: sourceEndpoint(job) } : item;
+    const key = recordKey(record);
     if (!key) continue;
-    const target = bucketKeyOf(item);
+    const target = bucketKeyOf(record);
     const source = store.location.get(key);
     // 등록일이 바뀐 공고는 이전 일자 파일에서 빼야 중복이 남지 않는다.
     if (source && source !== target) { store.buckets.get(source)?.delete(key); changed.add(source); }
-    bucketFor(store, target).set(key, item);
+    bucketFor(store, target).set(key, record);
     store.location.set(key, target);
     changed.add(target);
   }
@@ -268,7 +341,7 @@ async function writeRecords(store, changed) {
     const [mode, day] = key.split("|");
     if (!mode || day === "undated") return;
     const file = dataFile(day, mode);
-    const rows = [...(store.buckets.get(key)?.values() ?? [])];
+    const rows = recordsForWrite(store.buckets.get(key));
     if (!rows.length) {
       await fs.rm(file, { force: true });
       await fs.rm(path.join(DATA_DIR, "raw", path.relative(DATA_DIR, file)), { force: true });
@@ -368,16 +441,53 @@ async function saveState(state) { await fs.writeFile(STATE_FILE, JSON.stringify(
 
 // resume:false일 때 해당 작업 구간의 기존 레코드를 비운다. 버킷 단위라 구간 밖은 건드리지 않는다.
 function clearJobRange(store, job, changed) {
+  const endpoint = sourceEndpoint(job);
   for (const [key, bucket] of store.buckets) {
     const [mode, day] = key.split("|");
     if (mode !== job.mode || !isInRange(day, job.range)) continue;
     for (const [recordId, record] of bucket) {
-      if (record.bsnsDivNm !== job.type) continue;
+      const source = record[SOURCE_ENDPOINT];
+      if (source ? source !== endpoint : legacyBusinessType(record) !== job.type) continue;
       bucket.delete(recordId);
       store.location.delete(recordId);
       changed.add(key);
     }
   }
+}
+function clearLegacySources(store, entries, succeeded, types, changed) {
+  if (!TYPES.every((type) => types.includes(type))) return 0;
+  const groups = new Map();
+  for (const entry of entries) {
+    if (MODES[entry.job.mode].snapshot) continue;
+    const key = `${entry.job.mode}|${entry.job.range.begin}|${entry.job.range.end}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+  let removed = 0;
+  for (const group of groups.values()) {
+    if (group.length !== TYPES.length || !group.every((entry) => succeeded.has(entry.id))) continue;
+    const { mode, range } = group[0].job;
+    for (const [key, bucket] of store.buckets) {
+      const [bucketMode, day] = key.split("|");
+      if (bucketMode !== mode || !isInRange(day, range)) continue;
+      for (const [recordId, record] of bucket) {
+        if (record[SOURCE_ENDPOINT]) continue;
+        bucket.delete(recordId);
+        store.location.delete(recordId);
+        changed.add(key);
+        removed += 1;
+      }
+    }
+  }
+  return removed;
+}
+function sourceEndpoint(job) { return `${MODES[job.mode].base}/${MODES[job.mode].ops[job.type]}`; }
+function legacyBusinessType(record) { return TYPES.find((type) => String(record.bsnsDivNm || "").includes(type)) || ""; }
+function recordsForWrite(bucket) {
+  return [...(bucket?.values() ?? [])].sort((left, right) => {
+    const a = recordKey(left), b = recordKey(right);
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
 }
 async function readConfig() { try { return JSON.parse(await fs.readFile(CONFIG_FILE, "utf8")); } catch (error) { if (error.code === "ENOENT") throw new Error("collector/sync.config.json을 찾지 못했습니다."); throw error; } }
 function chunks(begin, end) { const result = []; for (let cursor = new Date(begin); cursor <= end;) { const finish = new Date(Math.min(addDays(cursor, RANGE_DAYS - 1), end)); result.push({ begin: iso(cursor), end: iso(finish) }); cursor = addDays(finish, 1); } return result; }
@@ -388,3 +498,5 @@ function iso(value) { return `${value.getFullYear()}-${String(value.getMonth() +
 function ymd(value) { return String(value).replaceAll("-", ""); }
 function ym(value) { return ymd(value).slice(0, 6); }
 function today() { return iso(new Date()); }
+
+module.exports = { applyItems, clearJobRange, clearLegacySources, recordsForWrite, sourceEndpoint, serverTimingDuration, isRetryable };

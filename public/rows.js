@@ -189,8 +189,8 @@
     return { matched, scanned: table.rows.length };
   }
 
-  async function fetchCsvText(url) {
-    const response = await fetch(url);
+  async function fetchCsvText(url, init) {
+    const response = await fetch(url, init);
     if (!response.ok || !response.body) throw new Error(`${url} 응답 오류 (${response.status})`);
     return new Response(response.body.pipeThrough(new DecompressionStream("gzip"))).text();
   }

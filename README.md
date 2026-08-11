@@ -127,8 +127,8 @@ curl -s -i "https://gong-go-dev.<계정>.workers.dev/api/relay/1230000/ad/BidPub
 ```powershell
 npm run compact              # 40일보다 오래된 월을 봉인
 npm run compact -- --prune   # 봉인 확인 후 같은 월의 일별 파일 삭제
-npm run upload -- --dry-run
-npm run upload
+npm run upload               # 기본값: 변경·삭제 예정 내역만 확인(dry-run)
+node uploader/upload.js --commit  # 확인한 내용을 실제 R2에 반영
 npx wrangler secret put GATE_PASSWORD
 npx wrangler secret put GITHUB_TOKEN
 npx wrangler secret put RELAY_TOKEN     # 이름이 정확해야 한다 — 아래 주의 참고
@@ -145,13 +145,14 @@ Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN` 세 개�
 
 ### 갱신에 걸리는 시간
 
-갱신 버튼을 누르면 러너를 띄우고 의존성을 받은 뒤 최근 35일을 다시 수집하므로, 눌러서 끝날 때까지는 수 분이 걸립니다. 줄일 수 있는 곳은 세 군데입니다.
+2026-08-11의 수동 실행 한 건(run `31491773531`)에서는 버튼부터 완료까지 111초가 걸렸습니다. 러너 준비 18.1초, 수집 80.6초, 업로드 7.9초, 마무리 4.4초였습니다. 현재 구성의 성공 표본이 한 건뿐이므로 111초를 장기 중앙값으로 보지는 마세요.
 
-- **의존성 설치**: 이 잡은 collector와 uploader만 쓰므로 `npm ci --omit=dev`로 받습니다. `wrangler`는 배포용이고 lock 항목 116개 중 90개가 그쪽 계열이라, 함께 받으면 그만큼이 대기 시간에 얹힙니다.
-- **수집 루프**: 작업을 배치로 끊지 않고 한 풀에서 흘려보냅니다. 예전에는 동시 요청 수만큼 묶어 배치가 통째로 끝나야 다음이 시작됐고, 페이지가 수십 장인 물품 본공고 하나가 나머지 슬롯을 그동안 놀렸습니다. 저장도 배치 경계에서 기다리지 않고 다음 요청의 대기 시간에 겹쳐 돌립니다.
-- **동시 요청 수**: `collector/sync.config.json`의 `concurrency`(기본 8)가 나라장터에 동시에 나가는 요청 수입니다. **여기가 남은 가장 큰 손잡이지만 상대 서버에 주는 부하도 같이 올라갑니다.** 올릴 생각이면 한 단계씩 올리고 `data/sync-errors.json`이 비어 있는지 확인하세요 — 실패가 생기면 워크플로가 그 자리에서 끝납니다.
+- **러너 준비**: `npm ci --omit=dev` 자체는 위 실행에서 1.45초였습니다. 더 큰 비용이던 Node 20 다운로드와 72MB의 오래된 npm 캐시 복원을 피하도록, 워크플로는 러너 tool cache에 있는 Node 22를 쓰고 의존성은 수집 뒤 uploader 직전에 설치합니다.
+- **수집 루프**: 정상 실행의 전체 요청은 약 45~47회뿐이고, 위 실행에서는 동시 요청 8개로도 수집에 80.6초가 걸렸습니다. 요청 수보다 요청별 지연을 먼저 봐야 합니다. 로그의 `HTTP` JSON에는 ServiceKey가 든 URL 대신 `mode/type/range/page`, `queueWaitMs`, `fetchMs`, `status`, `bytes`, `retry`, Worker가 돌려준 `upstreamMs`만 남습니다.
+- **동시 요청 수와 페이지 크기**: 요청별 계측 없이 `concurrency`나 `numOfRows`부터 올리지 마세요. 상대 서버 부하와 429 위험이 함께 커집니다. 한 번 실행한 뒤 `queueWaitMs`와 `fetchMs` 분포를 보고 결정하고, 변경할 때는 한 단계씩 적용한 뒤 `data/sync-errors.json`을 확인하세요.
+- **브라우저 반영**: 최근 일별 CSV는 최대 300초 캐시되지만, 갱신 완료 직후 현재 선택된 최근 파일은 `cache: "no-cache"`로 한 번 조건부 재검증합니다. URL을 바꾸지 않으므로 바뀌지 않은 파일은 ETag로 304 응답을 받고 기존 캐시를 계속 씁니다.
 
-수집 범위는 35일 고정입니다. 나라장터가 지난 공고를 소급 수정하므로 어제 하루만 받으면 그 사이 바뀐 건을 놓칩니다.
+기본 수집 범위는 **오늘과 이전 35일**, 즉 양끝을 포함해 36개 날짜입니다. 나라장터가 지난 공고를 소급 수정하므로 어제 하루만 받으면 그 사이 바뀐 건을 놓칩니다.
 
 ## 조회 화면이 긴 구간을 다루는 방법
 

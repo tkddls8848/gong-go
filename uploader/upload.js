@@ -7,8 +7,9 @@
 // 크론 러너는 최근 며칠치만 로컬에 갖고 있다. 그래서 "로컬에 없으면 지운다" 같은 규칙은
 // 절대 쓰지 않는다 — 삭제 판정은 버킷 안 정보(또는 SYNC_BEGIN/END로 명시된 구간)로만 한다.
 //
-// 사용: node uploader/upload.js [--dry-run]
-//   --dry-run  올릴/지울 대상만 출력한다
+// 사용: node uploader/upload.js [--commit]
+//   기본값     올릴/지울 대상만 출력한다(dry-run)
+//   --commit   실제 업로드·삭제를 수행한다
 //
 // 자격증명(.env 또는 환경변수): R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
 const crypto = require("node:crypto");
@@ -31,7 +32,7 @@ const MODES = ["pre", "bid", "plan"];
 if (require.main === module) main().catch((error) => { console.error(`업로드 실패: ${error.message}`); process.exitCode = 1; });
 
 async function main() {
-  const dryRun = process.argv.includes("--dry-run");
+  const { dryRun } = parseUploadArgs(process.argv.slice(2));
   const client = makeClient();
   const remote = await listAll(client);
   const local = await localFiles();
@@ -208,8 +209,14 @@ function dateOf(key) { const [, year, month, name] = key.split("/"); return `${y
 function required(name) { const value = process.env[name]; if (!value) throw new Error(`${name}을 .env 또는 환경변수로 설정하세요.`); return value; }
 function mb(bytes) { return `${(bytes / 1024 / 1024).toFixed(1)}MB`; }
 function today() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; }
+function parseUploadArgs(args) {
+  const unknown = args.filter((arg) => arg !== "--dry-run" && arg !== "--commit");
+  if (unknown.length) throw new Error(`알 수 없는 인자: ${unknown.join(", ")}`);
+  if (args.includes("--dry-run") && args.includes("--commit")) throw new Error("--dry-run과 --commit을 함께 쓸 수 없습니다.");
+  return { dryRun: !args.includes("--commit") };
+}
 async function exists(file) { try { await fs.access(file); return true; } catch { return false; } }
 async function readdir(dir) { try { return await fs.readdir(dir, { withFileTypes: true }); } catch (error) { if (error.code === "ENOENT") return []; throw error; } }
 
 // 삭제·인덱스 판정은 잘못되면 되돌릴 수 없다. 순수 함수로 떼어 두고 upload.test.js가 검증한다.
-module.exports = { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf, endpoint };
+module.exports = { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf, endpoint, parseUploadArgs };

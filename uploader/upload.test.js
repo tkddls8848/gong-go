@@ -1,6 +1,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf, endpoint } = require("./upload");
+const { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf, endpoint, parseUploadArgs } = require("./upload");
+
+test("업로더는 기본 dry-run이고 --commit이 있을 때만 실제 실행한다", () => {
+  assert.deepEqual(parseUploadArgs([]), { dryRun: true });
+  assert.deepEqual(parseUploadArgs(["--dry-run"]), { dryRun: true });
+  assert.deepEqual(parseUploadArgs(["--commit"]), { dryRun: false });
+  assert.throws(() => parseUploadArgs(["--commit", "--dry-run"]), /함께 쓸 수 없습니다/);
+  assert.throws(() => parseUploadArgs(["--comit"]), /알 수 없는 인자/);
+});
 
 // 이 정규화는 4c2001c에서 넣었다가 5df4ca8 리팩터링에서 사라졌고, 그 뒤 첫 업로드가
 // "ENOTFOUND gong-go-data.https"로 죽었다. 원인이 드러나지 않는 오류라 다시 잃지 않게 고정한다.
