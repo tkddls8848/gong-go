@@ -1,10 +1,13 @@
 // rows.js는 브라우저 스크립트지만 self가 없으면 globalThis에 붙으므로 그대로 실행해 검사한다.
 // 입력은 collector가 실제로 쓰는 직렬화기로 만든다 — 파일 형식이 어긋나면 여기서 걸린다.
+//
+// 다른 테스트와 달리 대상 옆에 두지 않는다. public/은 wrangler의 자산 디렉터리라
+// 그 안에 있는 파일은 전부 사이트로 배포된다.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { serializeCsv } = require("../shared/csv-record");
 
-require("./rows.js");
+require("../public/rows.js");
 const Rows = globalThis.GongRows;
 
 // collector/collector.js의 writeCsv와 같은 모양(BOM + 헤더 + 본문 + 끝 개행).

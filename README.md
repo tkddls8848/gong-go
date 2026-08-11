@@ -10,6 +10,7 @@
 - `public/`: 조회 화면. `app.js`가 화면을, `search-worker.js`가 CSV 스캔을, `rows.js`가 둘이 공유하는 파서와 행 모델을 맡는다
 - `src/worker.js`: 비밀번호 인증, 정적 자산/R2 제공, 원격 갱신 실행, 공공데이터 API 중계
 - `shared/`: CSV와 파이프라인 공용 함수
+- `test/`: 조회 화면용 테스트. 나머지 테스트는 대상 옆에 두지만 이것만 떼어 놓는다 — `public/`은 wrangler의 자산 디렉터리라 그 안의 파일은 전부 사이트로 배포된다
 
 산출물은 모두 gitignore된 `data/`에 저장합니다.
 
