@@ -14,7 +14,9 @@ const STATE_FILE = path.join(DATA_DIR, "sync-state.json");
 const PAGE_SIZE = 999;
 const RANGE_DAYS = 28;
 const RETRIES = 3;
-const REQUEST_TIMEOUT_MS = 30_000;
+// 요청 하나의 전체 시한. 본문을 다 받는 시간까지 포함한다. 본공고 한 페이지가 5~6MB라
+// 동시 8요청에서는 정상 응답도 15~30초가 걸려, 30초로는 멀쩡한 페이지가 시한에 잘렸다.
+const REQUEST_TIMEOUT_MS = 90_000;
 const FILE_CONCURRENCY = 16;
 const WRITE_CONCURRENCY = 8;
 // 재개용 중간 저장 주기(완료 작업 수). 저장 자체는 수집을 멈추지 않으므로 자주 해도 싸다.
@@ -232,7 +234,7 @@ async function requestJson(url, meta) {
       // 첫 시도까지 줄 세우지 않게 attempt 하나만 세마포어로 센다.
       releaseHttp();
     }
-    if (retry >= RETRIES || !isRetryable(error, status)) throw lastError;
+    if (retry >= RETRIES || !isRetryable(error)) throw lastError;
     await sleep(Math.max(error?.retryAfterMs || 0, retryDelay(retry)));
   }
   throw lastError;
@@ -258,8 +260,14 @@ function retryAfterMs(value) {
   return Number.isNaN(date) ? 0 : Math.max(0, date - Date.now());
 }
 function retryDelay(retry) { return 800 * 2 ** retry * (0.75 + Math.random() * 0.5); }
-function isRetryable(error, status) {
-  if (error?.name === "SyntaxError") return true;
+// 재시도 여부는 응답 상태가 아니라 오류 자체로 가린다. 상태로 가리면 본문을 받는 도중
+// 끊긴 요청이 재시도에서 빠진다 — 그때는 헤더에서 읽은 200이 이미 기록돼 있어 "성공한
+// 응답"으로 보이기 때문이다. 6MB짜리 본공고 페이지 세 장이 이렇게 한 번의 timeout으로
+// 재시도 없이 실패해 수집 전체가 멈췄다. 상태가 실제 실패 사유인 것은 !response.ok로
+// 던진 오류뿐이고, 그것만 httpStatus를 달고 온다. 나머지(timeout, 연결 끊김, 잘린 JSON)는
+// 모두 전송·해석 단계의 일시적 실패이므로 재시도한다.
+function isRetryable(error) {
+  const status = error?.httpStatus;
   return status ? status === 408 || status === 429 || status >= 500 : true;
 }
 function errorClass(error) { return error?.cause?.code || error?.code || error?.name || "Error"; }

@@ -58,12 +58,22 @@ test("네 endpoint가 모두 성공한 범위에서만 무표식 본공고를 �
   assert.equal(complete.location.size, 0);
 });
 
+// requestJson이 상태로 실패를 던질 때 붙이는 표식. 이것이 없는 오류는 응답 단계까지 가지
+// 못했거나 본문에서 끊긴 것이므로 상태를 보고 판단하면 안 된다.
+function httpError(status) { const error = new Error(`HTTP ${status}`); error.httpStatus = status; return error; }
+
 test("Server-Timing과 재시도 가능 상태를 분류한다", () => {
   assert.equal(serverTimingDuration("cache;desc=miss, upstream;dur=412.7", "upstream"), 412.7);
   assert.equal(serverTimingDuration("", "upstream"), null);
-  assert.equal(isRetryable(new Error("server"), 503), true);
-  assert.equal(isRetryable(new Error("rate"), 429), true);
-  assert.equal(isRetryable(new Error("auth"), 401), false);
-  assert.equal(isRetryable(new TypeError("fetch failed"), 0), true);
-  assert.equal(isRetryable(new SyntaxError("truncated JSON"), 200), true);
+  assert.equal(isRetryable(httpError(503)), true);
+  assert.equal(isRetryable(httpError(429)), true);
+  assert.equal(isRetryable(httpError(401)), false);
+  assert.equal(isRetryable(new TypeError("fetch failed")), true);
+  assert.equal(isRetryable(new SyntaxError("truncated JSON")), true);
+});
+
+// 200 헤더를 받은 뒤 본문에서 끊긴 요청. 상태로 가리던 때는 이 오류가 재시도 없이
+// 작업을 실패시켜 워크플로 전체를 멈췄다.
+test("본문을 받다 걸린 timeout은 헤더가 200이어도 재시도한다", () => {
+  assert.equal(isRetryable(new DOMException("The operation was aborted due to timeout", "TimeoutError")), true);
 });
