@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "serve": "node devserver/server.js",
-    "worker:dev": "wrangler dev --local",
+    "worker:dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "collect": "node collector/collector.js",
     "compact": "node collector/compact.js",

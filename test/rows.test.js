@@ -146,6 +146,36 @@ test("코드 없는 항목은 행에 코드가 있어도 이름으로 맞는다"
   assert.equal(scan([BID], "bid", { institutions: [{ name: "국민건강보험공단 일산병원", code: "" }] }).matched.length, 1);
 });
 
+test("검색어는 공백으로 갈라 모두 포함해야 통과한다", () => {
+  // 예전에는 통째로 한 번 includes 해서 떨어져 있는 두 낱말이 걸리지 않았다.
+  assert.equal(scan([BID], "bid", { q: "일산병원 서버" }).matched.length, 1);
+  assert.equal(scan([BID], "bid", { q: "서버 일산병원" }).matched.length, 1);
+  assert.equal(scan([BID], "bid", { q: "일산병원 없는말" }).matched.length, 0);
+});
+
+test("부분일치를 꺼 두면 상위 기관명으로는 지사를 못 찾는다", () => {
+  // 지금까지의 동작을 고정한다. 행은 "국민건강보험공단 일산병원"이다.
+  assert.equal(scan([BID], "bid", { institutions: [{ name: "국민건강보험공단", code: "" }] }).matched.length, 0);
+});
+
+test("부분일치를 켜면 상위 기관명으로 지사까지 찾는다", () => {
+  assert.equal(scan([BID], "bid", { institutions: [{ name: "국민건강보험공단", code: "" }], loose: true }).matched.length, 1);
+  // 품고 있지 않으면 켜도 안 맞는다.
+  assert.equal(scan([BID], "bid", { institutions: [{ name: "국민연금공단", code: "" }], loose: true }).matched.length, 0);
+});
+
+test("두 글자짜리 조건이 섞이면 부분일치를 켜지 않는다", () => {
+  // "공단"으로 부분일치를 걸면 사실상 전체 조회가 된다. 그때는 정확일치로 되돌린다.
+  assert.equal(scan([BID], "bid", { institutions: [{ name: "공단", code: "" }], loose: true }).matched.length, 0);
+  assert.equal(scan([BID], "bid", { institutions: [{ name: "공단", code: "" }, { name: "국민건강보험공단", code: "" }], loose: true }).matched.length, 0);
+});
+
+test("부분일치를 켜도 코드 우선 규칙은 그대로다", () => {
+  // 항목에 코드가 있으면 행의 코드로만 맞춘다. 이름이 품고 있어도 코드가 다르면 떨어진다.
+  assert.equal(scan([BID], "bid", { institutions: [{ name: "국민건강보험공단", code: "B999999" }], loose: true }).matched.length, 0);
+  assert.equal(scan([BID], "bid", { institutions: [{ name: "국민건강보험공단", code: "B550001" }], loose: true }).matched.length, 1);
+});
+
 test("쉼표·따옴표·개행이 든 값을 왕복해도 깨지지 않는다", () => {
   const messy = { ...BID, bidNtceNm: '서버 "이중화", 1식\n(추가 협의)' };
   assert.equal(onlyRow([messy], "bid").title, '서버 "이중화", 1식\n(추가 협의)');

@@ -107,19 +107,34 @@
   //
   // 기관 판정 규칙은 예전 matchesInstitutions와 같다 — 행에 코드가 있으면 코드를 가진
   // 항목과는 코드로만 맞추고, 코드가 없는 항목과는 기관명으로 맞춘다.
-  function makeCriteria({ q = "", type = "", institutions = [], from = "00000000", to = "99999999" } = {}) {
+  function makeCriteria({ q = "", type = "", institutions = [], from = "00000000", to = "99999999", loose = false } = {}) {
     const list = institutions.filter((inst) => inst.name || inst.code);
+    const names = list.filter((inst) => inst.name).map((inst) => norm(inst.name));
+    const without = list.filter((inst) => inst.name && !inst.code).map((inst) => norm(inst.name));
+    // 부분일치는 두 글자 이하가 하나라도 섞이면 켜지 않는다. "한국"이 들어오면 사실상 전체
+    // 조회가 되어, 조건을 넣었는데 안 넣은 것보다 더 나쁜 결과(느리고 부정확)가 된다.
+    const loosely = loose && names.length > 0 && names.every((name) => name.length >= 3);
     return {
-      q: q.trim().toLowerCase(),
+      // 검색어는 공백으로 갈라 모두 포함해야 통과한다. 예전에는 통째로 한 번 includes 해서
+      // "국민연금 클라우드"처럼 서로 떨어진 낱말은 붙어 있을 때만 걸렸다.
+      terms: q.trim().toLowerCase().split(/\s+/).filter(Boolean),
       type,
       from,
       to,
       everyInstitution: list.length === 0,
       codes: new Set(list.filter((inst) => inst.code).map((inst) => String(inst.code).trim())),
-      names: new Set(list.filter((inst) => inst.name).map((inst) => norm(inst.name))),
-      namesWithoutCode: new Set(list.filter((inst) => inst.name && !inst.code).map((inst) => norm(inst.name))),
+      names: new Set(names),
+      namesWithoutCode: new Set(without),
+      // Set은 정확일치용, 배열은 부분일치용이다. 부분일치가 꺼져 있으면 빈 배열이라 루프가 0회다.
+      nameList: loosely ? names : [],
+      namesWithoutCodeList: loosely ? without : [],
     };
   }
+
+  // 부분일치는 "행 기관명이 조건을 품고 있는가"만 본다("국민연금공단" ⊂ "국민연금공단 서울지역본부").
+  // 반대 방향(조건이 행 이름을 품음)은 보지 않는다 — 짧은 원본 이름이 긴 조건을 끌어와 과매칭이 된다.
+  // Set 조회가 먼저라 정확히 맞는 행의 비용은 예전과 같다.
+  function nameHit(set, list, name) { if (set.has(name)) return true; for (let i = 0; i < list.length; i += 1) if (name.includes(list[i])) return true; return false; }
 
   // 값이 싼 조건부터 본다. checkDate가 false면 파일 구간이 조회 구간 안에 통째로 들어와
   // 그 파일의 모든 행이 날짜 조건을 이미 만족한다는 뜻이다(호출자가 판단한다).
@@ -129,9 +144,12 @@
     if (!criteria.everyInstitution) {
       const code = first(cells, columns.code).trim();
       const name = norm(first(cells, columns.institution));
-      if (!(code ? criteria.codes.has(code) || criteria.namesWithoutCode.has(name) : criteria.names.has(name))) return false;
+      if (!(code ? criteria.codes.has(code) || nameHit(criteria.namesWithoutCode, criteria.namesWithoutCodeList, name) : nameHit(criteria.names, criteria.nameList, name))) return false;
     }
-    if (criteria.q && !`${first(cells, columns.number)} ${first(cells, columns.institution)} ${first(cells, columns.title)}`.toLowerCase().includes(criteria.q)) return false;
+    if (criteria.terms.length) {
+      const haystack = `${first(cells, columns.number)} ${first(cells, columns.institution)} ${first(cells, columns.title)}`.toLowerCase();
+      for (let i = 0; i < criteria.terms.length; i += 1) if (!haystack.includes(criteria.terms[i])) return false;
+    }
     return true;
   }
 

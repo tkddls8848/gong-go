@@ -3,6 +3,7 @@
 const http = require("node:http");
 const { spawn } = require("node:child_process");
 const { ROOT, DATA_DIR, fs, path, readJson } = require("../shared/pipeline-utils");
+const { kstToday, normalizeAsk, ruleParse } = require("../shared/nl-filter");
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.PORT) || 8788;
@@ -20,6 +21,7 @@ http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
   try {
     if (url.pathname === "/api/refresh") return await handleRefresh(request, response);
+    if (url.pathname === "/api/ask") return await handleAsk(request, response);
     await serveStatic(url.pathname, response);
   } catch (error) {
     send(response, 500, { message: error.message });
@@ -37,6 +39,32 @@ async function handleRefresh(request, response) {
   if (!range) return send(response, 400, { message: "data/index.json이 없어 갱신 범위를 정할 수 없습니다. 먼저 npm run collect를 실행하세요." });
   start(range);
   return send(response, 202, status());
+}
+
+// 로컬에는 Workers AI 바인딩이 없다. 배포본이 모델 실패 시 쓰는 것과 같은 규칙 파서로만 답한다.
+// 화면 통합을 로컬에서 개발할 수 있게 하는 것이 목적이고, 해석 정확도는 배포본이 책임진다.
+// 여기에 AI 호출을 붙이지 않는 이유는 로컬 서버에 인증이 없어서다(아무나 계정 요금을 태울 수 있다).
+async function handleAsk(request, response) {
+  if (request.method !== "POST") return send(response, 405, { message: "POST만 지원합니다." });
+  let body;
+  try { body = await readJsonBody(request); } catch (error) { return send(response, 400, { message: `요청 본문을 읽을 수 없습니다: ${error.message}` }); }
+  const query = String(body?.q ?? "").replace(/\s+/g, " ").trim();
+  if (query.length < 2 || query.length > 200) return send(response, 400, { message: "질의 길이가 올바르지 않습니다." });
+  const today = kstToday(Date.now());
+  const parsed = ruleParse(query, today);
+  if (!parsed) return send(response, 501, { message: "로컬 서버는 규칙 기반 해석만 합니다. 이 질의는 배포본에서 시도하세요." });
+  const result = normalizeAsk(parsed, { today, mode: body?.mode });
+  return send(response, 200, { ...result, notes: [...result.notes, "로컬 서버라 규칙 기반으로 읽었습니다."], source: "rule" });
+}
+
+// devserver는 지금까지 요청 본문을 읽은 적이 없다. 4KB를 넘기면 끊는다.
+function readJsonBody(request) {
+  return new Promise((resolve, reject) => {
+    let text = "";
+    request.on("data", (chunk) => { text += chunk; if (text.length > 4096) reject(new Error("본문이 너무 큽니다.")); });
+    request.on("end", () => { try { resolve(JSON.parse(text)); } catch (error) { reject(error); } });
+    request.on("error", reject);
+  });
 }
 
 // 보유 데이터의 마지막 날짜부터 오늘까지만 다시 받는다. 마지막 날짜를 포함시키는 이유는

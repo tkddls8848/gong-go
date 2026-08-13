@@ -10,6 +10,13 @@
     "binding": "ASSETS",
     "run_worker_first": true
   },
+  // Workers AI는 로컬 시뮬레이션이 없다. wrangler dev도 실제 계정으로 프록시하고 사용량이
+  // 과금된다. remote를 적지 않으면 경고가 뜨고, --local로 켜면 remote:false와 같아져 오류가 난다
+  // (그래서 package.json의 worker:dev에서 --local을 뺐다).
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
   "r2_buckets": [
     {
       "binding": "DATA",

@@ -1,5 +1,5 @@
 // 배포본은 Worker가 R2를 중계하고, 로컬은 devserver가 저장소의 data/를 제공한다.
-const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", POLL_SLOW_MS = 5000, POLL_FAST_MS = 2000, MAX_ROWS = 200000;
+const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", ASK_API = "/api/ask", POLL_SLOW_MS = 5000, POLL_FAST_MS = 2000, MAX_ROWS = 200000;
 // CSV 스캔은 search-worker.js가 맡는다. 여기서는 워커를 몇 개 띄우고 각자 몇 개씩
 // 동시에 받게 할지만 정한다(둘을 곱한 값이 예전 LOAD_CONCURRENCY 자리다).
 const POOL_SIZE = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)), FETCH_CONCURRENCY = 12;
@@ -15,15 +15,46 @@ const DEFAULT_INSTITUTIONS = [
   { name: "한국고용정보원", code: "" }, { name: "재단법인자동차손해배상진흥원", code: "" }, { name: "공영홈쇼핑", code: "" },
 ];
 const norm = Rows.norm;
-// 관심 기관은 브라우저 localStorage에 보관한다. 정적 배포라 서버에 사용자별 저장소가 없다.
-const INST_STORAGE_KEY = "gong-go:institutions";
+// 관심 기관은 이름 붙인 프리셋 여러 벌로 브라우저 localStorage에 보관한다. 정적 배포라 서버에
+// 사용자별 저장소가 없고, 인증도 공유 비밀번호 하나뿐이라 서버에 둬도 "누구 것"인지 가릴 수 없다.
+const INST_STORAGE_KEY = "gong-go:institutions"; // 구 형식. 마이그레이션에서만 읽는다.
+const PRESET_STORAGE_KEY = "gong-go:institution-presets";
 const INDEX_STORAGE_KEY = "gong-go:index-updated-at";
-let institutionList = loadInstitutions(), searchTimer = null, refreshRunId = null;
-function loadInstitutions() {
-  try { const saved = JSON.parse(localStorage.getItem(INST_STORAGE_KEY)); if (Array.isArray(saved)) return saved.map((inst) => ({ name: String(inst?.name || ""), code: String(inst?.code || "") })).filter((inst) => inst.name || inst.code); } catch {}
+const DEFAULT_PRESET = "기본";
+// activePreset이 null이면 고급검색이 만든 임시 목록이다. 이때는 저장하지 않는다 — 자연어 질의가
+// 사용자가 공들여 만든 프리셋을 조용히 덮어쓰면 되돌릴 방법이 없다.
+let presets = [], activePreset = DEFAULT_PRESET, institutionList = [], searchTimer = null, refreshRunId = null;
+function cleanInstitutions(list) { return Array.isArray(list) ? list.map((inst) => ({ name: String(inst?.name || ""), code: String(inst?.code || "") })).filter((inst) => inst.name || inst.code) : []; }
+function normalizePresets(list) { return Array.isArray(list) ? list.map((preset) => ({ name: String(preset?.name || "").trim(), institutions: cleanInstitutions(preset?.institutions) })).filter((preset) => preset.name) : []; }
+// 구 형식(단일 목록)이 남아 있으면 "기본" 프리셋으로 옮긴다. 기존 사용자의 칩이 그대로 살아난다.
+function legacyInstitutions() {
+  try { const saved = JSON.parse(localStorage.getItem(INST_STORAGE_KEY)); if (Array.isArray(saved)) return cleanInstitutions(saved); } catch {}
   return DEFAULT_INSTITUTIONS.map((inst) => ({ ...inst }));
 }
-function saveInstitutions() { try { localStorage.setItem(INST_STORAGE_KEY, JSON.stringify(institutionList)); } catch {} }
+function loadPresets() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(PRESET_STORAGE_KEY)); } catch {}
+  presets = normalizePresets(saved?.presets);
+  if (!presets.length) presets = [{ name: DEFAULT_PRESET, institutions: legacyInstitutions() }];
+  activePreset = presets.some((preset) => preset.name === saved?.active) ? saved.active : presets[0].name;
+  institutionList = currentPreset().institutions.map((inst) => ({ ...inst }));
+}
+function currentPreset() { return presets.find((preset) => preset.name === activePreset) || presets[0]; }
+function savePresets() { try { localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify({ version: 1, active: activePreset, presets })); } catch {} }
+// renderInstitutions()가 렌더할 때마다 부른다 = 칩 편집이 곧 활성 프리셋 저장이다.
+function saveInstitutions() {
+  if (activePreset === null) return;
+  const preset = currentPreset();
+  if (preset) preset.institutions = institutionList.map((inst) => ({ ...inst }));
+  savePresets();
+}
+// 프리셋을 갈아탈 때마다 쓴다. 임시 상태에서 빠져나오는 경로이기도 하다.
+function usePreset(name) { activePreset = name; institutionList = currentPreset().institutions.map((inst) => ({ ...inst })); savePresets(); renderPresets(); renderInstitutions(); }
+function renderPresets() {
+  const select = $("#inst-preset"), transient = activePreset === null;
+  select.innerHTML = `${transient ? '<option value="" selected>(고급검색)</option>' : ""}${presets.map((preset) => `<option value="${html(preset.name)}"${!transient && preset.name === activePreset ? " selected" : ""}>${html(preset.name)}</option>`).join("")}`;
+  $("#preset-delete").disabled = transient || presets.length <= 1;
+}
 let filtered = [], fileIndex = [], page = 1, searchVersion = 0, currentRow = null, currentAnalysis = null, viewMode = "pre";
 const analyses = new Map(), modal = $("#file-modal");
 const MODE_SUBTITLES = {
@@ -53,17 +84,42 @@ async function loadIndex(initial) {
   if (initial) { defaultRange(); $("#status").textContent = `${fileIndex.length}개 CSV를 찾았습니다.`; }
   return { index, changed: Boolean(previous && index.updatedAt && previous !== index.updatedAt) };
 }
-function renderDataStatus(index) { const { begin, end } = dataRange(), total = totalCount(); $("#data-range").textContent = end ? `${begin} ~ ${end}` : "없음"; $("#data-count").textContent = end ? `· ${format(fileIndex.length)}개 파일 · ${format(total)}건` : ""; $("#last-crawl").textContent = `마지막 크롤링 ${stamp(index?.updatedAt)}`; $("#updated-at").textContent = `updated ${stamp(index?.updatedAt)}`; }
+function renderDataStatus(index) { const { begin, end } = dataRange(), total = totalCount(); $("#data-range").textContent = end ? `${begin} ~ ${end}` : "없음"; $("#data-count").textContent = end ? `· ${format(fileIndex.length)}개 파일 · ${format(total)}건` : ""; $("#last-crawl").textContent = `마지막 크롤링 ${stamp(index?.updatedAt)}`; $("#updated-at").textContent = `updated ${stamp(index?.updatedAt)}`; renderTodaySummary(); }
+
+// "오늘"은 브라우저 로컬 날짜다. 데이터의 날짜는 KST 벽시계 문자열이라 KST 밖에서 열면 하루 어긋난다.
+function today() { return localDate(new Date()); }
+function todayKey() { return today().replaceAll("-", ""); }
+function isToday(value) { return dateKey(value) === todayKey(); }
+// 일별 인덱스 항목은 begin === end === 그 날짜다(shared/pipeline-utils.js의 indexEntry).
+// 그래서 파일을 하나도 내려받지 않고 오늘 건수를 세 모드 모두 셀 수 있다.
+function todayFile(mode) { const date = today(); return fileIndex.find((file) => modeOf(file) === mode && file.begin === date && file.end === date); }
+function renderTodaySummary() {
+  const box = $("#today-summary");
+  box.hidden = !fileIndex.length;
+  if (!fileIndex.length) return;
+  const buttons = ["pre", "bid", "plan"].map((mode) => { const file = todayFile(mode); return `<button class="today-jump" type="button" data-mode="${mode}">${MODE_NAMES[mode]} ${file ? `${format(Number(file.count) || 0)}건` : "-"}</button>`; });
+  box.innerHTML = `<span class="today-label">오늘 ${today()}</span>${buttons.join("")}`;
+  box.querySelectorAll(".today-jump").forEach((button) => button.onclick = () => jumpToToday(button.dataset.mode));
+}
+// 게시일을 오늘 하루로 좁힌다. 모드를 함께 주면 그 모드로 갈아탄 뒤 한 번만 조회한다.
+function jumpToToday(mode) {
+  $("#begin").value = today(); $("#end").value = today();
+  if (mode && mode !== viewMode) { setMode(mode); closeModal(); }
+  page = 1; applyFilters();
+}
 // 항목이 구간이 된 뒤로 "며칠치"는 인덱스만으로 셀 수 없다(월별 봉인 항목 하나가 한 달을
 // 덮는다). 보유 범위는 begin의 최소·end의 최대로 낸다.
 function dataRange() { const begins = fileIndex.map((file) => file.begin).filter(Boolean).sort(), ends = fileIndex.map((file) => file.end).filter(Boolean).sort(); return { begin: begins[0] || "", end: ends.at(-1) || "" }; }
 function totalCount() { return fileIndex.reduce((sum, file) => sum + (Number(file.count) || 0), 0); }
 function stamp(value) { const date = new Date(value), pad = (part) => String(part).padStart(2, "0"); return value && !Number.isNaN(date.valueOf()) ? `${localDate(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` : "-"; }
 
-$("#search").onclick = () => { page = 1; applyFilters(); }; $("#reset").onclick = () => { ["#q", "#business-type"].forEach((s) => { $(s).value = ""; }); defaultRange(); page = 1; applyFilters(); }; $("#q").onkeydown = (event) => { if (event.key === "Enter") { page = 1; applyFilters(); } };
+$("#search").onclick = () => { page = 1; applyFilters(); }; $("#reset").onclick = () => { ["#q", "#business-type", "#nl-query"].forEach((s) => { $(s).value = ""; }); $("#inst-loose").checked = false; setNl(false, ""); defaultRange(); page = 1; applyFilters(); }; $("#q").onkeydown = (event) => { if (event.key === "Enter") { page = 1; applyFilters(); } };
 // 사전공고/본공고는 조회 조건이 아니라 상단 토글로 전환한다(main 브랜치와 동일). 초기화 버튼은 건드리지 않는다.
 $("#mode-toggle").onclick = (event) => { const button = event.target.closest(".mode-toggle-btn"); if (button && button.dataset.mode !== viewMode) applyMode(button.dataset.mode); };
-function applyMode(key) { viewMode = key; document.querySelectorAll(".mode-toggle-btn").forEach((button) => { const active = button.dataset.mode === key; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); }); $("#app-subtitle").textContent = MODE_SUBTITLES[key]; $("#close-col").textContent = key === "plan" ? "발주예정" : "마감일"; closeModal(); page = 1; applyFilters(); }
+// 상태와 DOM만 바꾸는 부분을 떼어 둔다. 고급검색은 모드·기간·검색어를 다 채운 뒤 한 번만
+// 조회해야 하므로 모드 전환이 그 자리에서 조회를 걸면 안 된다.
+function setMode(key) { viewMode = key; document.querySelectorAll(".mode-toggle-btn").forEach((button) => { const active = button.dataset.mode === key; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); }); $("#app-subtitle").textContent = MODE_SUBTITLES[key]; $("#close-col").textContent = key === "plan" ? "발주예정" : "마감일"; }
+function applyMode(key) { setMode(key); closeModal(); page = 1; applyFilters(); }
 $("#previous").onclick = () => { if (page > 1) { page -= 1; renderRows(filtered); } }; $("#next").onclick = () => { if (page * pageSize < filtered.length) { page += 1; renderRows(filtered); } }; $("#download-btn").onclick = downloadCsv; $("#download-ecr-btn").onclick = downloadEcr;
 $("#refresh-btn").onclick = startRefresh;
 $("#page-size").onchange = () => { pageSize = Number($("#page-size").value) || 50; page = 1; renderRows(filtered); };
@@ -72,6 +128,44 @@ $("#clear-inst-btn").onclick = () => { institutionList = []; renderInstitutions(
 // 등록된 관심 기관들을 현재 게시일 조건으로 즉시 조회한다(디바운스 없이 바로).
 $("#inst-search-btn").onclick = () => { addInstitution(); clearTimeout(searchTimer); page = 1; applyFilters(); };
 ["#inst-name", "#inst-code"].forEach((selector) => $(selector).onkeydown = (event) => { if (event.key === "Enter") addInstitution(); });
+$("#inst-loose").onchange = () => { page = 1; applyFilters(); };
+$("#today-btn").onclick = () => jumpToToday();
+$("#inst-preset").onchange = () => { const name = $("#inst-preset").value; if (name) { usePreset(name); scheduleSearch(); } };
+$("#preset-new").onclick = () => {
+  const name = (prompt("새 프리셋 이름을 입력하세요. 지금 칩 목록이 그대로 복사됩니다.", nextPresetName()) || "").trim();
+  if (!name) return;
+  if (presets.some((preset) => preset.name === name)) { $("#status").textContent = `이미 "${name}" 프리셋이 있습니다.`; return; }
+  presets.push({ name, institutions: institutionList.map((inst) => ({ ...inst })) });
+  usePreset(name);
+};
+$("#preset-delete").onclick = () => {
+  if (activePreset === null || presets.length <= 1 || !confirm(`"${activePreset}" 프리셋을 지울까요?`)) return;
+  presets = presets.filter((preset) => preset.name !== activePreset);
+  usePreset(presets[0].name);
+  scheduleSearch();
+};
+$("#preset-export").onclick = () => downloadBlob(new Blob([JSON.stringify({ version: 1, presets }, null, 2)], { type: "application/json" }), `gong-go-presets_${localDate(new Date()).replaceAll("-", "")}.json`);
+$("#preset-import-btn").onclick = () => $("#preset-import").click();
+// 같은 이름은 덮어쓰고 새 이름은 더한다. 형식이 어긋나면 아무것도 바꾸지 않고 사유만 알린다.
+$("#preset-import").onchange = async (event) => {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  let incoming;
+  try { incoming = normalizePresets(JSON.parse(await file.text())?.presets); }
+  catch { $("#status").textContent = "프리셋 파일을 읽지 못했습니다. JSON 형식이 아닙니다."; return; }
+  if (!incoming.length) { $("#status").textContent = "파일에서 쓸 수 있는 프리셋을 찾지 못했습니다."; return; }
+  for (const preset of incoming) {
+    const found = presets.find((existing) => existing.name === preset.name);
+    if (found) found.institutions = preset.institutions; else presets.push(preset);
+  }
+  usePreset(incoming[0].name);
+  $("#status").textContent = `프리셋 ${incoming.length}개를 불러왔습니다.`;
+  scheduleSearch();
+};
+function nextPresetName() { for (let i = presets.length + 1; ; i += 1) if (!presets.some((preset) => preset.name === `프리셋 ${i}`)) return `프리셋 ${i}`; }
+loadPresets();
+renderPresets();
 renderInstitutions();
 
 // 관심 기관은 칩으로 관리한다. 행 테이블은 세로로만 길어져 가로 공간이 남았다.
@@ -124,7 +218,7 @@ async function applyFilters({ revalidateRecent = false } = {}) {
     // 붙이면 과거 파일까지 전부 새 캐시 키가 되지만 cache:no-cache는 기존 ETag를 써 304를 받을 수 있다.
     .map((file) => revalidateRecent && isRecentDaily(file) ? { ...file, revalidate: true } : file);
   const institutions = collectInstitutions();
-  const criteria = { q: $("#q").value.trim().toLowerCase(), type: $("#business-type").value, institutions, from: begin.replaceAll("-", ""), to: end.replaceAll("-", "") };
+  const criteria = { q: $("#q").value.trim().toLowerCase(), type: $("#business-type").value, institutions, from: begin.replaceAll("-", ""), to: end.replaceAll("-", ""), loose: $("#inst-loose").checked };
 
   const progress = (state) => { $("#status").textContent = `${format(files.length)}개 CSV 중 ${format(state.done)}개 처리 · ${format(state.rows.length)}건 일치`; };
   let painted = 0;
@@ -142,7 +236,10 @@ async function applyFilters({ revalidateRecent = false } = {}) {
 
   filtered = state.rows.sort(byPublishedDesc);
   const parts = [`${format(files.length)}개 CSV에서 ${format(state.scanned)}건을 읽어 ${format(filtered.length)}건이 조건에 맞습니다.`];
-  parts.push(institutions.length ? `관심 기관 ${institutions.length}곳으로 좁혔습니다.` : "기관 목록이 비어 있어 전체 기관을 조회했습니다.");
+  parts.push(institutions.length ? `관심 기관 ${institutions.length}곳으로 좁혔습니다${criteria.loose ? "(부분일치)" : ""}.` : "기관 목록이 비어 있어 전체 기관을 조회했습니다.");
+  // 오늘 하루만 보는데 그 모드의 오늘 파일이 아직 없으면 0건이 나온다. 조건을 잘못 준 것으로
+  // 오해하지 않도록 사유를 밝힌다.
+  if (criteria.from === criteria.to && criteria.from === todayKey() && !todayFile(mode)) parts.push(`오늘(${today()}) ${MODE_NAMES[mode]} 데이터가 아직 없습니다. 수집은 매일 05:00(KST)에 돕니다.`);
   if (state.capped) parts.push(`표시 한도 ${format(MAX_ROWS)}건에 도달해 나머지 파일은 읽지 않았습니다. 기간을 좁히거나 관심 기관을 지정하세요.`);
   if (state.failures) parts.push(`${format(state.failures)}개 파일을 읽지 못했습니다.`);
   $("#status").textContent = parts.join(" ");
@@ -259,7 +356,49 @@ function pollDelay(state) { const started = Date.parse(state.startedAt || ""); r
 function isRecentDaily(file) { const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 40); return /^(pre|bid|plan)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/.test(file.path || "") && file.end >= localDate(cutoff); }
 function refreshText(state) { return `수집 중입니다 · ${state.range ? `${state.range.begin} ~ ${state.range.end}` : "-"}${state.lastLine ? ` · ${state.lastLine}` : ""}`; }
 function setRefresh(busy, text, kind = "") { const button = $("#refresh-btn"), box = $("#refresh-status"); button.disabled = busy; button.setAttribute("aria-busy", String(busy)); button.textContent = busy ? "갱신 중…" : "보유데이터 갱신"; box.hidden = !text; box.className = `refresh-status ${kind}`.trim(); box.textContent = text || ""; }
-function renderRows(rows) { const pages = Math.max(1, Math.ceil(rows.length / pageSize)); page = Math.min(page, pages); const visible = rows.slice((page - 1) * pageSize, page * pageSize); $("#result-summary").textContent = `${format(rows.length)}건`; $("#page-label").textContent = `${page} / ${pages}`; $("#previous").disabled = page === 1; $("#next").disabled = page === pages; $("#download-btn").disabled = !rows.length; $("#download-ecr-btn").disabled = !analyses.size; $("#results").innerHTML = visible.length ? visible.map((row, i) => { const files = normalizeFiles(row.files), analysis = analyses.get(numberOf(row)); return `<tr><td><span class="badge ${row.mode}">${MODE_NAMES[row.mode] || row.mode}</span></td><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(사업명 없음)")}</button>${fileBadge(row, files)}${analysis ? `<span class="ecr-badge ${analysis.verified ? "" : "warning"}">ECR ${analysis.ecrCount}${analysis.verified ? "" : " · 확인 필요"}</span>` : ""}</td><td>${dateFormat(row.publishedAt)}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`; }).join("") : $("#empty-row").innerHTML; document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)])); }
+
+// 고급검색. Worker의 Workers AI가 자연어를 조회 조건으로만 바꾸고, 조회 자체는 평소와 똑같이
+// 워커 스캔이 한다 — 데이터가 R2의 gzip CSV 수십만 건이라 모델에 먹일 수 있는 대상이 아니다.
+$("#advanced-toggle").onclick = () => { const panel = $("#advanced-panel"), open = panel.hidden; panel.hidden = !open; $("#advanced-toggle").setAttribute("aria-pressed", String(open)); $("#advanced-toggle").classList.toggle("active", open); if (open) $("#nl-query").focus(); };
+$("#nl-run").onclick = runNlQuery;
+$("#nl-query").onkeydown = (event) => { if (event.key === "Enter") runNlQuery(); };
+function setNl(busy, text, kind = "") { const button = $("#nl-run"), box = $("#nl-status"); button.disabled = busy; button.setAttribute("aria-busy", String(busy)); button.textContent = busy ? "해석 중…" : "해석해서 조회"; box.hidden = !text; box.className = `nl-status ${kind}`.trim(); box.textContent = text || ""; }
+async function runNlQuery() {
+  const query = $("#nl-query").value.trim();
+  if (query.length < 2) { setNl(false, "찾고 싶은 내용을 한 문장으로 적어 주세요.", "error"); return; }
+  setNl(true, "질의를 해석하는 중입니다.");
+  let state;
+  try {
+    const response = await fetch(ASK_API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: query, mode: viewMode }) });
+    state = await response.json().catch(() => ({}));
+    // 서버가 준 message를 항상 먼저 보여준다(startRefresh와 같은 규칙). 404는 구 배포본이다.
+    if (!response.ok) throw new Error(state.message || (response.status === 404 ? "고급검색 API가 없습니다. 배포본이 오래된 것 같습니다." : `고급검색이 실패했습니다 (${response.status}).`));
+  } catch (error) { setNl(false, error.message, "error"); return; }
+  applyNlFilter(state);
+  page = 1; applyFilters();
+}
+// 해석 결과를 실제 컨트롤에 그대로 채운다. 사용자가 무엇으로 검색됐는지 눈으로 보고 고칠 수 있어야 한다.
+function applyNlFilter(state) {
+  const filter = state.filter || {}, notes = [...(state.notes || [])];
+  if (filter.mode && MODE_NAMES[filter.mode] && filter.mode !== viewMode) { setMode(filter.mode); closeModal(); }
+  if (filter.begin) $("#begin").value = filter.begin;
+  if (filter.end) $("#end").value = filter.end;
+  $("#business-type").value = filter.type || "";
+  $("#q").value = filter.q || "";
+  // 기관을 뽑았으면 칩을 그것으로 갈아 끼운다. activePreset을 null로 두면 이 목록은 저장되지
+  // 않아서, 사용자가 만들어 둔 프리셋이 자연어 질의 한 번에 덮이는 일이 없다.
+  if (filter.institutions?.length) {
+    activePreset = null;
+    institutionList = filter.institutions.map((name) => ({ name, code: "" }));
+    renderPresets(); renderInstitutions();
+    notes.push("관심 기관을 이 질의의 기관으로 임시 교체했습니다. 저장된 프리셋은 그대로입니다.");
+  }
+  $("#inst-loose").checked = Boolean(filter.looseInstitution);
+  // 보유 범위 밖을 물으면 0건이 나온다. 해석 실패로 오해하지 않도록 미리 알린다(특히 발주계획).
+  if (!fileIndex.some((file) => modeOf(file) === viewMode && file.end >= $("#begin").value && file.begin <= $("#end").value)) notes.push(`${MODE_NAMES[viewMode]}에는 이 기간의 보유 데이터가 없습니다.`);
+  setNl(false, [`해석: ${state.explain || "-"}`, ...notes].join(" · "), "done");
+}
+function renderRows(rows) { const pages = Math.max(1, Math.ceil(rows.length / pageSize)); page = Math.min(page, pages); const visible = rows.slice((page - 1) * pageSize, page * pageSize); $("#result-summary").textContent = `${format(rows.length)}건`; $("#page-label").textContent = `${page} / ${pages}`; $("#previous").disabled = page === 1; $("#next").disabled = page === pages; $("#download-btn").disabled = !rows.length; $("#download-ecr-btn").disabled = !analyses.size; $("#results").innerHTML = visible.length ? visible.map((row, i) => { const files = normalizeFiles(row.files), analysis = analyses.get(numberOf(row)); return `<tr><td><span class="badge ${row.mode}">${MODE_NAMES[row.mode] || row.mode}</span></td><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(사업명 없음)")}</button>${fileBadge(row, files)}${analysis ? `<span class="ecr-badge ${analysis.verified ? "" : "warning"}">ECR ${analysis.ecrCount}${analysis.verified ? "" : " · 확인 필요"}</span>` : ""}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">오늘</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`; }).join("") : $("#empty-row").innerHTML; document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)])); }
 function modalSubtitle(row, files) {
   if (row.mode !== "plan") return `${row.institution || "-"} · ${row.businessType || "-"} · 번호 ${numberOf(row) || "-"} · 첨부 ${files.length}건`;
   const parts = [row.institution || "-", row.businessType || "-", `계획번호 ${numberOf(row) || "-"}`];
@@ -293,7 +432,9 @@ function specTable(specs) { return specs.length ? `<p><strong>기본규격</stro
 // 발주계획은 마감일이 없고 발주예정월이 그 자리를 대신한다. 첨부 열에는 URL이 없으므로 상세 링크를 넣는다.
 function downloadCsv() { downloadRows([["유형", "공고번호", "업무", "수요기관", "사업명(공고명)", "게시일", "마감일/발주예정", "첨부파일"], ...filtered.map((row) => [MODE_NAMES[row.mode] || row.mode, numberOf(row), row.businessType, row.institution, row.title, row.publishedAt, row.mode === "plan" ? row.orderMonth : row.closeAt, row.mode === "plan" ? row.detailUrl || "" : normalizeFiles(row.files).map((file) => `${file.name} (${file.url})`).join(" | ")])], "gong-go"); }
 async function downloadEcr() { const rows = [["공고번호", "사업명", "ID", "분류", "명칭", "수량", "산출물", "세부내용 원문", "검증"]]; for (const row of filtered) { const entry = analyses.get(numberOf(row)); if (!entry) continue; try { const data = await getJson(`${DATA_BASE}/${entry.path}`); (data.ecr || []).forEach((item) => rows.push([numberOf(row), row.title, item.id, item.분류, item.명칭, (item.기본규격 || []).map((spec) => spec.수량).filter(Boolean).join(", "), (item.산출물 || []).join(", "), item.세부내용_원문, data.verified ? "통과" : "원문 확인 필요"])); } catch {} } downloadRows(rows, "gong-go-ecr"); }
-function downloadRows(rows, prefix) { const csv = rows.map((row) => row.map((value) => { const text = String(value ?? ""); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }).join(",")).join("\n"), blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }), url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `${prefix}_${localDate(new Date()).replaceAll("-", "")}.csv`; document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url); }
+function downloadRows(rows, prefix) { const csv = rows.map((row) => row.map((value) => { const text = String(value ?? ""); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }).join(",")).join("\n"); downloadBlob(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }), `${prefix}_${localDate(new Date()).replaceAll("-", "")}.csv`); }
+// CSV\uC640 \uD504\uB9AC\uC14B JSON\uC774 \uD568\uAED8 \uC4F4\uB2E4.
+function downloadBlob(blob, filename) { const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = filename; document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url); }
 async function downloadAll() { const files = normalizeFiles(currentRow?.files), button = $("#download-all-btn"); if (!files.length) return; button.disabled = true; for (let i = 0; i < files.length; i += 1) { button.textContent = `다운로드 중... (${i + 1}/${files.length})`; window.open(files[i].url, "_blank", "noopener,noreferrer"); if (i < files.length - 1) await new Promise((resolve) => setTimeout(resolve, 700)); } button.textContent = `전체 다운로드 완료 (${files.length}건)`; button.disabled = false; }
 async function getJson(url) { const response = await fetch(url); if (!response.ok) throw new Error(`${url}을 찾지 못했습니다.`); return response.json(); }
 // CSV 파싱과 행 모델(예전 parseCsv/displayRow/planRow/guess)은 rows.js로 옮겼다. 워커도 같은 것을 쓴다.
