@@ -239,7 +239,7 @@ async function applyFilters({ revalidateRecent = false } = {}) {
   parts.push(institutions.length ? `관심 기관 ${institutions.length}곳으로 좁혔습니다${criteria.loose ? "(부분일치)" : ""}.` : "기관 목록이 비어 있어 전체 기관을 조회했습니다.");
   // 오늘 하루만 보는데 그 모드의 오늘 파일이 아직 없으면 0건이 나온다. 조건을 잘못 준 것으로
   // 오해하지 않도록 사유를 밝힌다.
-  if (criteria.from === criteria.to && criteria.from === todayKey() && !todayFile(mode)) parts.push(`오늘(${today()}) ${MODE_NAMES[mode]} 데이터가 아직 없습니다. 수집은 매일 05:00(KST)에 돕니다.`);
+  if (criteria.from === criteria.to && criteria.from === todayKey() && !todayFile(mode)) parts.push(`오늘(${today()}) ${MODE_NAMES[mode]} 데이터가 아직 없습니다. 수집은 09:00·17:00(KST)에 돕니다.`);
   if (state.capped) parts.push(`표시 한도 ${format(MAX_ROWS)}건에 도달해 나머지 파일은 읽지 않았습니다. 기간을 좁히거나 관심 기관을 지정하세요.`);
   if (state.failures) parts.push(`${format(state.failures)}개 파일을 읽지 못했습니다.`);
   $("#status").textContent = parts.join(" ");

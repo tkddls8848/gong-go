@@ -1,9 +1,9 @@
-# 매일 또는 배포 웹의 갱신 버튼으로 나라장터 공고를 수집해 R2에 올린다.
+# 하루 두 번 또는 배포 웹의 갱신 버튼으로 나라장터 공고를 수집해 R2에 올린다.
 name: collect
 
 on:
   schedule:
-    - cron: "0 20 * * *" # UTC 20:00 = KST 05:00
+    - cron: "0 0,8 * * *" # UTC 00:00·08:00 = KST 09:00·17:00
   workflow_dispatch:
     inputs:
       begin:
