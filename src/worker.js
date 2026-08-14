@@ -26,8 +26,6 @@ const RECENT_DAYS = 40;
 const GITHUB_API = "https://api.github.com/repos/tkddls8848/gong-go";
 const WORKFLOW = "collect.yml";
 const WORKFLOW_REF = "dev";
-// 매시 갱신이 collect.yml을 거는 이름. 워크플로의 repository_dispatch.types와 같아야 한다.
-const COLLECT_EVENT = "collect";
 const DAY_MS = 86400000;
 
 export default {
@@ -76,20 +74,18 @@ export default {
 // 실행 뒤에 등록된 공고가 어제 날짜로 남아 다음 날 새벽 전면 수집까지 안 들어오기 때문이다
 // (.github/workflows/collect.yml).
 //
-// repository_dispatch를 쓰는 것은 갱신 버튼과 섞이지 않기 위해서다. 버튼의 상태 조회는 최근
-// workflow_dispatch 실행 하나를 보므로(handleRefresh), 크론까지 그쪽으로 걸면 버튼이 방금 끝난
-// 크론 실행을 보고 곧바로 "갱신 완료"를 띄운다.
+// 갱신 버튼과 같은 workflow_dispatch를 쓴다. repository_dispatch가 두 경로를 깔끔하게 갈라
+// 주지만 Contents 쓰기를 요구하고, 이 토큰에는 Actions 쓰기만 있어 403이 난다. 권한을 넓히는
+// 대신 같은 문을 쓴다 — 버튼과 섞이는 문제는 handleRefresh 쪽에서 본다.
 async function dispatchCollect(env, scheduledTime) {
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN 시크릿이 없어 collect를 걸 수 없습니다.");
   const end = kstToday(scheduledTime);
   const begin = kstToday(scheduledTime - DAY_MS);
-  const response = await github(env, "/dispatches", {
+  const response = await github(env, `/actions/workflows/${WORKFLOW}/dispatches`, {
     method: "POST",
-    body: JSON.stringify({ event_type: COLLECT_EVENT, client_payload: { begin, end } }),
+    body: JSON.stringify({ ref: WORKFLOW_REF, inputs: { begin, end } }),
   });
   // 반드시 던진다. 삼켜 버리면 Cron Trigger는 성공으로 남고 갱신만 조용히 멈춘다.
-  // 403이면 대개 GITHUB_TOKEN에 저장소 쓰기 권한이 없는 것이다 — repository_dispatch는
-  // workflow_dispatch(Actions 쓰기)와 달리 Contents 쓰기를 요구한다.
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(`collect 실행 요청 실패 (${response.status}): ${data.message || "응답 본문 없음"}`);

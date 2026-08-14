@@ -145,17 +145,19 @@ Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN` 세 개�
 
 | 거는 쪽 | 시각 | GitHub 이벤트 | 수집 범위 |
 | --- | --- | --- | --- |
-| Worker Cron Trigger (`wrangler.jsonc`의 `triggers.crons` → `src/worker.js`의 `scheduled`) | `0 0-9 * * *` UTC = KST 09~18시 정각, 하루 10회 | `repository_dispatch` (`collect`) | 어제~오늘 |
+| Worker Cron Trigger (`wrangler.jsonc`의 `triggers.crons` → `src/worker.js`의 `scheduled`) | `0 0-9 * * *` UTC = KST 09~18시 정각, 하루 10회 | `workflow_dispatch` | 어제~오늘 |
 | GitHub `schedule` | `0 20 * * *` UTC = KST 05:00 | `schedule` | 오늘과 이전 35일 |
 | 배포 화면의 갱신 버튼 | 누를 때 | `workflow_dispatch` | 입력값, 비우면 오늘과 이전 35일 |
 
 **매시 갱신을 Worker가 거는 이유**는 GitHub의 `schedule`이 최선 노력이라 혼잡 시간대에 수십 분씩 밀리기 때문입니다. 그 지연 위에서는 "당일 공고를 한 시간 안에"가 성립하지 않습니다. Cloudflare Cron Trigger는 예정 시각에 거의 그대로 뜨므로 트리거만 그쪽으로 옮겼고, 수집 자체는 그대로 GitHub 러너에서 돕니다. 다만 정시성은 **트리거 시각**의 정시성입니다 — 러너 준비와 수집에 다시 1~2분이 걸리므로 R2 반영은 그만큼 뒤입니다.
 
-**`repository_dispatch`인 이유**는 갱신 버튼과 섞이지 않기 위해서입니다. 버튼의 상태 조회는 최근 `workflow_dispatch` 실행 하나를 보므로, 크론까지 `workflow_dispatch`로 걸면 버튼이 방금 끝난 크론 실행을 보고 곧바로 "갱신 완료"를 띄웁니다. 대신 `repository_dispatch`는 `workflow_dispatch`(Actions 쓰기)와 달리 **저장소 Contents 쓰기 권한**을 요구하므로, `GITHUB_TOKEN`이 fine-grained라면 Contents를 read+write로 올려야 합니다. 권한이 모자라면 Cron Trigger 실행이 403으로 실패하고 Worker 로그에 사유가 남습니다.
+**크론과 갱신 버튼이 같은 `workflow_dispatch`를 씁니다.** 둘을 갈라 주는 `repository_dispatch`를 먼저 썼다가 되돌렸습니다 — 그쪽은 `workflow_dispatch`(Actions 쓰기)와 달리 저장소 **Contents 쓰기**를 요구하는데, `GITHUB_TOKEN`은 Actions read/write만 가지고 있어 403이 납니다. 토큰을 넓히는 것보다 같은 문을 쓰는 편이 낫다고 봤습니다.
+
+대신 **알려진 자국이 하나 있습니다.** 버튼의 상태 조회는 최근 `workflow_dispatch` 실행 하나를 보므로(`handleRefresh`), 크론 실행이 방금 끝난 직후에 버튼을 누르면 그 크론 실행을 보고 곧바로 "갱신 완료"를 띄울 수 있습니다. 수집 자체는 정상이고 표시만 어긋납니다. 고치려면 실행 이름 표식을 두고 상태 조회가 크론 실행을 걸러내야 합니다.
 
 **범위를 나눈 이유**는 비용입니다. 본공고 한 페이지가 5~6MB라 매시 36일치를 다시 훑으면 하루에 수 GB를 나라장터에서 되받습니다. 매시 범위를 오늘 하루가 아니라 **어제~오늘**로 잡은 것은, 전날 18시 실행 뒤에 등록된 공고가 어제 날짜로 남아 다음 날 05:00까지 들어오지 못하기 때문입니다. 이틀은 28일 청크 하나에 들어가므로 작업 수는 그대로이고 페이지 수만 늡니다.
 
-바꿀 때 함께 맞춰야 하는 것이 둘 있습니다. `wrangler.jsonc`의 크론 식은 **UTC로만** 해석되고(KST 표기가 없습니다), Worker의 `COLLECT_EVENT`는 워크플로의 `repository_dispatch.types`와 같아야 합니다. 크론 트리거는 `npm run deploy`로 배포해야 등록되며, 로컬에서는 `npx wrangler dev --test-scheduled` 뒤 `curl "http://localhost:8787/__scheduled"`로 확인합니다.
+`wrangler.jsonc`의 크론 식은 **UTC로만** 해석됩니다(KST 표기가 없습니다). 크론 트리거는 `npm run deploy`로 배포해야 등록되며, 로컬에서는 `npx wrangler dev --test-scheduled` 뒤 `curl "http://localhost:8787/__scheduled"`로 확인합니다.
 
 ### 갱신에 걸리는 시간
 

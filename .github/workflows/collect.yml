@@ -1,5 +1,6 @@
 # 나라장터 공고를 수집해 R2에 올린다. 거는 경로가 셋이고 목적이 다르다 —
-#   업무 시간대 매시: Worker Cron Trigger가 건다. 당일 공고가 목적이라 어제~오늘만 받는다.
+#   업무 시간대 매시: Worker Cron Trigger가 workflow_dispatch로 건다. 당일 공고가 목적이라
+#     어제~오늘만 받는다.
 #   하루 한 번(새벽): 아래 schedule. 소급 수정된 지난 공고가 목적이라 35일을 다시 받는다.
 #   배포 웹의 갱신 버튼: workflow_dispatch. 입력이 비어 있으면 새벽과 같은 35일이다.
 # 매시 실행까지 35일을 훑으면 본공고 한 페이지가 5~6MB라 하루에 수 GB를 되받게 된다.
@@ -10,17 +11,11 @@ on:
   schedule:
     - cron: "0 20 * * *"
 
-  # 업무 시간대 매시 갱신. 거는 쪽은 Worker의 Cron Trigger다(src/worker.js의 scheduled와
-  # wrangler.jsonc의 triggers.crons). GitHub의 schedule로 걸지 않는 이유는 그것이 최선 노력이라
-  # 혼잡 시간대에 수십 분씩 밀려, "당일 공고를 한 시간 안에"라는 목적 자체가 성립하지 않기
-  # 때문이다. 수집 범위는 Worker가 client_payload로 실어 보낸다.
-  #
-  # workflow_dispatch가 아니라 repository_dispatch인 것은 갱신 버튼과 섞이지 않기 위해서다.
-  # 버튼의 상태 조회는 최근 workflow_dispatch 실행 하나를 보므로, 크론까지 그쪽으로 걸면
-  # 버튼이 방금 끝난 크론 실행을 보고 곧바로 "갱신 완료"를 띄운다.
-  repository_dispatch:
-    types: [collect]
-
+  # 업무 시간대 매시 갱신과 배포 웹의 갱신 버튼이 함께 쓰는 문이다. 매시 갱신을 거는 쪽은
+  # Worker의 Cron Trigger다(src/worker.js의 scheduled와 wrangler.jsonc의 triggers.crons).
+  # GitHub의 schedule로 걸지 않는 이유는 그것이 최선 노력이라 혼잡 시간대에 수십 분씩 밀려,
+  # "당일 공고를 한 시간 안에"라는 목적 자체가 성립하지 않기 때문이다.
+  # 매시 갱신은 begin/end를 채워 보내고, 버튼은 비워 보내 아래 기본값(35일)으로 간다.
   workflow_dispatch:
     inputs:
       begin:
@@ -69,10 +64,9 @@ jobs:
       - name: 수집 범위 결정
         id: range
         env:
-          # 수동 실행 입력 > Worker가 실은 client_payload > 아래 기본값 순.
           # 값을 셸에 직접 펼치지 않고 환경변수로 받는다.
-          IN_BEGIN: ${{ inputs.begin || github.event.client_payload.begin || '' }}
-          IN_END: ${{ inputs.end || github.event.client_payload.end || '' }}
+          IN_BEGIN: ${{ inputs.begin }}
+          IN_END: ${{ inputs.end }}
         run: |
           BEGIN="$IN_BEGIN"
           END="$IN_END"
