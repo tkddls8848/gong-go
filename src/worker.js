@@ -26,6 +26,9 @@ const RECENT_DAYS = 40;
 const GITHUB_API = "https://api.github.com/repos/tkddls8848/gong-go";
 const WORKFLOW = "collect.yml";
 const WORKFLOW_REF = "dev";
+// 매시 갱신이 collect.yml을 거는 이름. 워크플로의 repository_dispatch.types와 같아야 한다.
+const COLLECT_EVENT = "collect";
+const DAY_MS = 86400000;
 
 export default {
   async fetch(request, env) {
@@ -58,7 +61,41 @@ export default {
       "Cache-Control": "no-store",
     });
   },
+
+  // 업무 시간대 매시 갱신(wrangler.jsonc의 triggers.crons). 게이트와 무관한 경로다 —
+  // 요청이 아니라 런타임이 부른다.
+  //
+  // scheduledTime은 "예정된 시각"이다. 호출이 조금 밀려도 이 값으로 날짜를 세야 09시 실행이
+  // 09시 기준으로 남는다.
+  async scheduled(event, env) {
+    await dispatchCollect(env, event.scheduledTime);
+  },
 };
+
+// collect 워크플로를 어제~오늘 범위로 건다. 오늘 하루로 줄이지 않는 이유는, 전날 마지막
+// 실행 뒤에 등록된 공고가 어제 날짜로 남아 다음 날 새벽 전면 수집까지 안 들어오기 때문이다
+// (.github/workflows/collect.yml).
+//
+// repository_dispatch를 쓰는 것은 갱신 버튼과 섞이지 않기 위해서다. 버튼의 상태 조회는 최근
+// workflow_dispatch 실행 하나를 보므로(handleRefresh), 크론까지 그쪽으로 걸면 버튼이 방금 끝난
+// 크론 실행을 보고 곧바로 "갱신 완료"를 띄운다.
+async function dispatchCollect(env, scheduledTime) {
+  if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN 시크릿이 없어 collect를 걸 수 없습니다.");
+  const end = kstToday(scheduledTime);
+  const begin = kstToday(scheduledTime - DAY_MS);
+  const response = await github(env, "/dispatches", {
+    method: "POST",
+    body: JSON.stringify({ event_type: COLLECT_EVENT, client_payload: { begin, end } }),
+  });
+  // 반드시 던진다. 삼켜 버리면 Cron Trigger는 성공으로 남고 갱신만 조용히 멈춘다.
+  // 403이면 대개 GITHUB_TOKEN에 저장소 쓰기 권한이 없는 것이다 — repository_dispatch는
+  // workflow_dispatch(Actions 쓰기)와 달리 Contents 쓰기를 요구한다.
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(`collect 실행 요청 실패 (${response.status}): ${data.message || "응답 본문 없음"}`);
+  }
+  console.log(`collect 실행 요청 ${begin} ~ ${end}`);
+}
 
 async function routeRequest(request, env) {
   const url = new URL(request.url);

@@ -1,6 +1,6 @@
 # 나라장터 공고·ECR 조회
 
-나라장터 사전공고·본공고·발주계획을 수집해 검색하고, 본공고 첨부 문서에서 ECR 규격을 추출하는 개인용 서비스입니다. 운영 경로는 Cloudflare Worker + R2이며, 하루 두 번 GitHub Actions가 최근 35일을 다시 수집합니다.
+나라장터 사전공고·본공고·발주계획을 수집해 검색하고, 본공고 첨부 문서에서 ECR 규격을 추출하는 개인용 서비스입니다. 운영 경로는 Cloudflare Worker + R2이며, GitHub Actions가 업무 시간대(KST 09~18시)에는 매시 당일치를, 매일 새벽에는 최근 35일을 다시 수집합니다.
 
 ## 구성
 
@@ -141,7 +141,21 @@ npm run deploy
 
 Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN` 세 개입니다. `GITHUB_TOKEN`이 없으면 배포 화면의 갱신 API가, `RELAY_TOKEN`이 없으면 중계가 501을 반환합니다. GitHub 저장소에는 Actions용 `SERVICE_KEY`, `API_BASE`, `RELAY_TOKEN`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다.
 
-`.github/workflows/collect.yml`은 KST 09:00과 17:00(UTC 00:00·08:00)에 실행되며, 배포 화면의 갱신 버튼도 같은 워크플로를 실행하고 완료 상태를 표시합니다. GitHub의 예약 실행은 정시에 러너가 몰려 몇 분 밀릴 수 있고, 실행 시각을 보장하지 않습니다. 크론은 UTC로만 해석되므로 서머타임이 없는 KST는 두 시각이 연중 그대로입니다.
+수집은 `.github/workflows/collect.yml` 하나가 다 하고, 그것을 **거는 경로가 셋**입니다.
+
+| 거는 쪽 | 시각 | GitHub 이벤트 | 수집 범위 |
+| --- | --- | --- | --- |
+| Worker Cron Trigger (`wrangler.jsonc`의 `triggers.crons` → `src/worker.js`의 `scheduled`) | `0 0-9 * * *` UTC = KST 09~18시 정각, 하루 10회 | `repository_dispatch` (`collect`) | 어제~오늘 |
+| GitHub `schedule` | `0 20 * * *` UTC = KST 05:00 | `schedule` | 오늘과 이전 35일 |
+| 배포 화면의 갱신 버튼 | 누를 때 | `workflow_dispatch` | 입력값, 비우면 오늘과 이전 35일 |
+
+**매시 갱신을 Worker가 거는 이유**는 GitHub의 `schedule`이 최선 노력이라 혼잡 시간대에 수십 분씩 밀리기 때문입니다. 그 지연 위에서는 "당일 공고를 한 시간 안에"가 성립하지 않습니다. Cloudflare Cron Trigger는 예정 시각에 거의 그대로 뜨므로 트리거만 그쪽으로 옮겼고, 수집 자체는 그대로 GitHub 러너에서 돕니다. 다만 정시성은 **트리거 시각**의 정시성입니다 — 러너 준비와 수집에 다시 1~2분이 걸리므로 R2 반영은 그만큼 뒤입니다.
+
+**`repository_dispatch`인 이유**는 갱신 버튼과 섞이지 않기 위해서입니다. 버튼의 상태 조회는 최근 `workflow_dispatch` 실행 하나를 보므로, 크론까지 `workflow_dispatch`로 걸면 버튼이 방금 끝난 크론 실행을 보고 곧바로 "갱신 완료"를 띄웁니다. 대신 `repository_dispatch`는 `workflow_dispatch`(Actions 쓰기)와 달리 **저장소 Contents 쓰기 권한**을 요구하므로, `GITHUB_TOKEN`이 fine-grained라면 Contents를 read+write로 올려야 합니다. 권한이 모자라면 Cron Trigger 실행이 403으로 실패하고 Worker 로그에 사유가 남습니다.
+
+**범위를 나눈 이유**는 비용입니다. 본공고 한 페이지가 5~6MB라 매시 36일치를 다시 훑으면 하루에 수 GB를 나라장터에서 되받습니다. 매시 범위를 오늘 하루가 아니라 **어제~오늘**로 잡은 것은, 전날 18시 실행 뒤에 등록된 공고가 어제 날짜로 남아 다음 날 05:00까지 들어오지 못하기 때문입니다. 이틀은 28일 청크 하나에 들어가므로 작업 수는 그대로이고 페이지 수만 늡니다.
+
+바꿀 때 함께 맞춰야 하는 것이 둘 있습니다. `wrangler.jsonc`의 크론 식은 **UTC로만** 해석되고(KST 표기가 없습니다), Worker의 `COLLECT_EVENT`는 워크플로의 `repository_dispatch.types`와 같아야 합니다. 크론 트리거는 `npm run deploy`로 배포해야 등록되며, 로컬에서는 `npx wrangler dev --test-scheduled` 뒤 `curl "http://localhost:8787/__scheduled"`로 확인합니다.
 
 ### 갱신에 걸리는 시간
 
@@ -152,9 +166,7 @@ Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN` 세 개�
 - **동시 요청 수와 페이지 크기**: 요청별 계측 없이 `concurrency`나 `numOfRows`부터 올리지 마세요. 상대 서버 부하와 429 위험이 함께 커집니다. 한 번 실행한 뒤 `queueWaitMs`와 `fetchMs` 분포를 보고 결정하고, 변경할 때는 한 단계씩 적용한 뒤 `data/sync-errors.json`을 확인하세요.
 - **브라우저 반영**: 최근 일별 CSV는 최대 300초 캐시되지만, 갱신 완료 직후 현재 선택된 최근 파일은 `cache: "no-cache"`로 한 번 조건부 재검증합니다. URL을 바꾸지 않으므로 바뀌지 않은 파일은 ETag로 304 응답을 받고 기존 캐시를 계속 씁니다.
 
-기본 수집 범위는 **오늘과 이전 35일**, 즉 양끝을 포함해 36개 날짜입니다. 나라장터가 지난 공고를 소급 수정하므로 어제 하루만 받으면 그 사이 바뀐 건을 놓칩니다.
-
-하루 두 번 돌면 이 범위를 두 번 다시 훑습니다. 정상 실행의 전체 요청이 45~47회이므로 공공데이터포털 호출은 하루 약 95회, Actions 사용 시간은 실행당 111초 기준으로 하루 약 4분입니다. 오전 실행은 전날 오후에 올라온 건을, 오후 실행은 당일 오전 건을 각각 따라잡습니다.
+위 111초는 **오늘과 이전 35일**(양끝 포함 36개 날짜)을 받은 실행입니다. 새벽 크론과 갱신 버튼이 이 범위로 돌고, 업무 시간대 매시 실행만 어제~오늘로 좁혀 이보다 훨씬 짧게 끝납니다. 넓은 범위를 없애지 않는 이유는 나라장터가 지난 공고를 소급 수정하기 때문입니다 — 어제 하루만 받으면 그 사이 바뀐 건을 놓칩니다.
 
 ## 조회 화면이 긴 구간을 다루는 방법
 
@@ -182,7 +194,7 @@ Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN` 세 개�
 
 `index.json` 항목이 `{mode, begin, end, path, count}`이고 일별 파일은 `begin === end === 그 날짜`라, **파일을 하나도 내려받지 않고** 인덱스만으로 오늘 건수를 셀 수 있다. 조회 조건 위에 사전공고·본공고·발주계획 세 건수가 한 줄로 뜨고, 숫자를 누르면 그 모드로 갈아탄 뒤 게시일을 오늘 하루로 좁힌다. 표에서도 오늘 게시된 행에 `오늘` 배지가 붙는다.
 
-"오늘"은 브라우저의 로컬 날짜다. 데이터의 날짜는 타임존 표기가 없는 KST 벽시계 문자열이라 KST 밖에서 열면 하루 어긋난다. 그날 파일이 아직 없으면 0건과 함께 사유를 알린다 — 수집은 09:00과 17:00(KST)에 돈다.
+"오늘"은 브라우저의 로컬 날짜다. 데이터의 날짜는 타임존 표기가 없는 KST 벽시계 문자열이라 KST 밖에서 열면 하루 어긋난다. 그날 파일이 아직 없으면 0건과 함께 사유를 알린다 — 수집은 KST 09~18시 매시 정각과 매일 05:00에 돈다.
 
 ## 고급검색 (자연어 질의)
 
