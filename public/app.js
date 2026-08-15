@@ -201,7 +201,10 @@ document.querySelectorAll(".modal-tab").forEach((button) => button.onclick = () 
 // 그 일을 메인 스레드에서 하면 1년 조회 동안 화면이 통째로 멈춘다. 그래서 내려받기부터
 // 조건 검사까지는 search-worker.js가 맡고, 여기서는 조건을 만들어 넘기고 결과만 그린다.
 function modeOf(file) { return file.mode || String(file.path || "").split("/")[0]; }
-function byPublishedDesc(a, b) { return String(b.publishedAt).localeCompare(String(a.publishedAt)); }
+// localeCompare를 쓰지 않는다. 게시일은 고정 형식의 숫자·구분자 문자열이라 코드유닛 비교와
+// 결과가 같은데, localeCompare는 호출마다 ICU 대조를 타 20만 행 정렬에서 377ms가 걸렸다
+// (같은 입력에 일반 비교는 119ms, 정렬 결과는 동일).
+function byPublishedDesc(a, b) { const x = a.publishedAt, y = b.publishedAt; return x < y ? 1 : x > y ? -1 : 0; }
 
 async function applyFilters({ revalidateRecent = false } = {}) {
   const version = ++searchVersion;
