@@ -1,5 +1,5 @@
 {
-  "name": "gong-go-dev",
+  "name": "gong-go",
   "private": true,
   "scripts": {
     "serve": "node devserver/server.js",

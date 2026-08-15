@@ -31,7 +31,7 @@ const SERVICE_KEY = process.env.SERVICE_KEY || "";
 // 요청이 나가는 곳. 기본은 공공데이터포털 직접 호출이다.
 // GitHub Actions 러너에서는 apis.data.go.kr로 TCP 연결이 성립하지 않으므로(차단이 국가가 아니라
 // IP 대역 기준이다) API_BASE에 Worker의 중계 주소를 넣어 우회한다. 예:
-//   API_BASE=https://gong-go-dev.<계정>.workers.dev/api/relay
+//   API_BASE=https://gong-go.<계정>.workers.dev/api/relay
 //   RELAY_TOKEN=<Worker에 등록한 것과 같은 값>
 // 경로와 쿼리는 그대로 유지되므로 아래 정의는 어느 쪽이든 바뀌지 않는다.
 // (docs/프로젝트-통합-문서.md 2부)

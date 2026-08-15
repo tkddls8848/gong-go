@@ -96,7 +96,7 @@ npx wrangler secret put RELAY_TOKEN      # 직접 연 터미널에서
 npm run deploy
 
 gh secret set RELAY_TOKEN --repo tkddls8848/gong-go
-gh secret set API_BASE --repo tkddls8848/gong-go --body "https://gong-go-dev.<계정>.workers.dev/api/relay"
+gh secret set API_BASE --repo tkddls8848/gong-go --body "https://gong-go.<계정>.workers.dev/api/relay"
 ```
 
 `API_BASE`를 비워 두면 러너가 직접 호출로 되돌아가 다시 타임아웃납니다.
@@ -106,14 +106,14 @@ gh secret set API_BASE --repo tkddls8848/gong-go --body "https://gong-go-dev.<�
 배포 후 토큰이 비지 않았는지 응답 코드로 확인합니다. 토큰 없이 부르면 **401이 나와야 정상**입니다.
 
 ```powershell
-curl -s -o NUL -w "%{http_code}`n" "https://gong-go-dev.<계정>.workers.dev/api/relay/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch"
+curl -s -o NUL -w "%{http_code}`n" "https://gong-go.<계정>.workers.dev/api/relay/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch"
 ```
 
 **상태 코드만으로는 부족합니다.** 중계 경로가 없는 구 배포본도 조회 화면의 게이트가 로그인
 화면을 401로 돌려주기 때문에, 정상일 때와 코드가 같습니다. 본문까지 봐야 구분됩니다.
 
 ```powershell
-curl -s -i "https://gong-go-dev.<계정>.workers.dev/api/relay/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch" | Select-String "HTTP/|content-type"
+curl -s -i "https://gong-go.<계정>.workers.dev/api/relay/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch" | Select-String "HTTP/|content-type"
 ```
 
 | 응답 | 본문 | 뜻 |
