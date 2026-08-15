@@ -1,0 +1,109 @@
+# 나라장터 공고를 수집해 R2에 올린다. 거는 경로가 셋이고 목적이 다르다 —
+#   업무 시간대 매시: Worker Cron Trigger가 workflow_dispatch로 건다. 당일 공고가 목적이라
+#     어제~오늘만 받는다.
+#   하루 한 번(새벽): 아래 schedule. 소급 수정된 지난 공고가 목적이라 35일을 다시 받는다.
+#   배포 웹의 갱신 버튼: workflow_dispatch. 입력이 비어 있으면 새벽과 같은 35일이다.
+# 매시 실행까지 35일을 훑으면 본공고 한 페이지가 5~6MB라 하루에 수 GB를 되받게 된다.
+name: collect
+
+on:
+  # UTC 20:00 = KST 05:00. 소급 수정을 잡는 35일 재수집.
+  schedule:
+    - cron: "0 20 * * *"
+
+  # 업무 시간대 매시 갱신과 배포 웹의 갱신 버튼이 함께 쓰는 문이다. 매시 갱신을 거는 쪽은
+  # Worker의 Cron Trigger다(src/worker.js의 scheduled와 wrangler.jsonc의 triggers.crons).
+  # GitHub의 schedule로 걸지 않는 이유는 그것이 최선 노력이라 혼잡 시간대에 수십 분씩 밀려,
+  # "당일 공고를 한 시간 안에"라는 목적 자체가 성립하지 않기 때문이다.
+  # 매시 갱신은 begin/end를 채워 보내고, 버튼은 비워 보내 아래 기본값(35일)으로 간다.
+  workflow_dispatch:
+    inputs:
+      begin:
+        description: "수집 시작일(YYYY-MM-DD). 비우면 오늘과 이전 35일."
+        default: ""
+      end:
+        description: "수집 종료일(YYYY-MM-DD). 비우면 오늘."
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+      # 러너는 apis.data.go.kr에 TCP 연결이 되지 않는다. Worker 중계를 거친다.
+      # (docs/이슈-Actions-수집-차단.md) 비워 두면 직접 호출로 되돌아가 다시 타임아웃난다.
+      API_BASE: ${{ secrets.API_BASE }}
+      RELAY_TOKEN: ${{ secrets.RELAY_TOKEN }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev
+
+      - uses: actions/setup-node@v7
+        with:
+          # ubuntu-latest tool cache에 있는 버전을 써 매 실행의 Node 20 다운로드를 피한다.
+          node-version: "22"
+
+      # 수집 범위를 먼저 정한다. 날짜는 KST로 센다 — 저장 형식의 일자가 타임존 표기 없는
+      # KST 벽시계 문자열이라, UTC로 세면 KST 09시 이전 실행에서 하루 어긋난다.
+      #
+      # 비어 있을 때의 기본은 오늘과 이전 35일, 양끝 포함 36일이다. 나라장터는 지난 공고를
+      # 소급 수정하므로 어제 하루만 받으면 그 사이 바뀐 건을 놓친다. 새벽 크론과 갱신 버튼이
+      # 이 기본으로 돈다. 매시 갱신만 Worker가 어제~오늘을 실어 보내 짧게 끝낸다.
+      - name: 수집 범위 결정
+        id: range
+        env:
+          # 값을 셸에 직접 펼치지 않고 환경변수로 받는다.
+          IN_BEGIN: ${{ inputs.begin }}
+          IN_END: ${{ inputs.end }}
+        run: |
+          BEGIN="$IN_BEGIN"
+          END="$IN_END"
+          [ -n "$BEGIN" ] || BEGIN=$(TZ=Asia/Seoul date -d "35 days ago" +%Y-%m-%d)
+          [ -n "$END" ] || END=$(TZ=Asia/Seoul date +%Y-%m-%d)
+          echo "begin=$BEGIN" >> "$GITHUB_OUTPUT"
+          echo "end=$END" >> "$GITHUB_OUTPUT"
+          echo "수집 범위 $BEGIN ~ $END (${{ github.event_name }})"
+
+      - name: 수집
+        env:
+          SYNC_BEGIN: ${{ steps.range.outputs.begin }}
+          SYNC_END: ${{ steps.range.outputs.end }}
+        run: node collector/collector.js --no-resume
+
+      - name: 수집 실패 확인
+        run: |
+          COUNT=$(node -p "try{require('./data/sync-errors.json').length}catch{0}")
+          echo "실패 작업 $COUNT건"
+          [ "$COUNT" = "0" ] || { node -p "JSON.stringify(require('./data/sync-errors.json').slice(0,10),null,2)"; exit 1; }
+
+      # collector는 Node 내장 모듈만 쓴다. 외부 패키지가 필요한 uploader 직전에 production
+      # 의존성만 받고, dev tarball이 든 예전 setup-node 캐시는 복원하지 않는다.
+      - name: 업로더 의존성 설치
+        run: npm ci --omit=dev --no-audit --fund=false
+
+      - name: 업로드
+        env:
+          SYNC_BEGIN: ${{ steps.range.outputs.begin }}
+          SYNC_END: ${{ steps.range.outputs.end }}
+        run: node uploader/upload.js --commit
+
+      - name: 오류 로그 보관
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sync-errors
+          path: data/sync-errors.json
+          if-no-files-found: ignore
+          retention-days: 14

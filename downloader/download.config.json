@@ -1,0 +1,8 @@
+{
+  "mode": "bid",
+  "begin": "2026-07-01",
+  "institutions": ["국민건강보험공단", "건강보험심사평가원"],
+  "fileNamePattern": "제안요청|과업내용|과업지시|규격|사양",
+  "maxNoticesPerRun": 50,
+  "concurrency": 4
+}

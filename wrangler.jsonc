@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "gong-go-dev",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-08-08",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  // 업무 시간대 매시 갱신. 크론 식은 UTC로만 해석된다 — KST 09~18시 정각이 UTC 00~09시다.
+  // 뜨는 시각이 GitHub Actions의 schedule보다 훨씬 정확해서, 당일 공고를 제때 올리려고
+  // 트리거를 이쪽으로 옮겼다. 실제로 하는 일은 src/worker.js의 scheduled가 collect 워크플로를
+  // repository_dispatch로 거는 것뿐이다(수집은 그대로 GitHub 러너에서 돈다).
+  //
+  // wrangler dev는 이 트리거를 자동으로 돌리지 않는다. 확인하려면
+  //   npx wrangler dev --test-scheduled  뒤에  curl "http://localhost:8787/__scheduled"
+  "triggers": {
+    "crons": ["0 0-9 * * *"]
+  },
+  // Workers AI는 로컬 시뮬레이션이 없다. wrangler dev도 실제 계정으로 프록시하고 사용량이
+  // 과금된다. remote를 적지 않으면 경고가 뜨고, --local로 켜면 remote:false와 같아져 오류가 난다
+  // (그래서 package.json의 worker:dev에서 --local을 뺐다).
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
+  "r2_buckets": [
+    {
+      "binding": "DATA",
+      "bucket_name": "gong-go-data"
+    }
+  ]
+}
