@@ -25,7 +25,10 @@ const KEY = /^(index\.json|analysis-index\.json|(pre|bid|plan)\/\d{4}\/\d{2}(\/\
 const RECENT_DAYS = 40;
 const GITHUB_API = "https://api.github.com/repos/tkddls8848/gong-go";
 const WORKFLOW = "collect.yml";
-const WORKFLOW_REF = "dev";
+// 운영 브랜치. 크론과 갱신 버튼이 이 ref로 워크플로를 걸고, 상태 조회도 이 브랜치의
+// 실행만 본다. 저장소 기본 브랜치와 같아야 한다 — GitHub의 schedule은 기본 브랜치의
+// 워크플로만 돌기 때문에, 어긋나면 매시 갱신과 새벽 재수집이 서로 다른 코드로 돈다.
+const WORKFLOW_REF = "main";
 const DAY_MS = 86400000;
 
 export default {

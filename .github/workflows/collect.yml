@@ -46,9 +46,11 @@ jobs:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
+      # ref를 적지 않는다. 실행을 부른 ref를 그대로 받아쓰면 브랜치 이름이 여기 한 번 더
+      # 박히지 않는다 — 크론·갱신 버튼은 Worker의 WORKFLOW_REF로, schedule은 기본 브랜치로
+      # 걸리므로 어느 쪽이든 그 코드로 돈다. 예전에는 dev가 박혀 있어 main으로 옮길 때
+      # 함께 고쳐야 했다.
       - uses: actions/checkout@v7
-        with:
-          ref: dev
 
       - uses: actions/setup-node@v7
         with:
