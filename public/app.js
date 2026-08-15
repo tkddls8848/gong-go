@@ -23,7 +23,7 @@ const INDEX_STORAGE_KEY = "gong-go:index-updated-at";
 const DEFAULT_PRESET = "기본";
 // activePreset이 null이면 고급검색이 만든 임시 목록이다. 이때는 저장하지 않는다 — 자연어 질의가
 // 사용자가 공들여 만든 프리셋을 조용히 덮어쓰면 되돌릴 방법이 없다.
-let presets = [], activePreset = DEFAULT_PRESET, institutionList = [], searchTimer = null, refreshRunId = null;
+let presets = [], activePreset = DEFAULT_PRESET, institutionList = [], searchTimer = null, refreshRunId = null, refreshRange = null;
 function cleanInstitutions(list) { return Array.isArray(list) ? list.map((inst) => ({ name: String(inst?.name || ""), code: String(inst?.code || "") })).filter((inst) => inst.name || inst.code) : []; }
 function normalizePresets(list) { return Array.isArray(list) ? list.map((preset) => ({ name: String(preset?.name || "").trim(), institutions: cleanInstitutions(preset?.institutions) })).filter((preset) => preset.name) : []; }
 // 구 형식(단일 목록)이 남아 있으면 "기본" 프리셋으로 옮긴다. 기존 사용자의 칩이 그대로 살아난다.
@@ -327,22 +327,27 @@ async function startRefresh() {
       throw new Error(state.message || (response.status === 404 ? "갱신 API가 없습니다." : `갱신 요청이 실패했습니다 (${response.status}).`));
     }
     refreshRunId = state.runId || null;
+    // 범위는 시작 응답에만 실려 온다. 상태 조회는 GitHub의 실행 정보만 되돌려주므로,
+    // 여기서 붙들지 않으면 진행·완료 문구의 구간이 계속 "-"로 남는다.
+    refreshRange = state.range || null;
   } catch (error) { setRefresh(false, error.message, "error"); return; }
   pollRefresh();
 }
 function refreshUrl() { return refreshRunId ? `${REFRESH_API}?runId=${refreshRunId}` : REFRESH_API; }
+function withRange(state) { return state.range || !refreshRange ? state : { ...state, range: refreshRange }; }
 function resumeRefresh() { getJson(REFRESH_API).then((state) => { if (state.running) { refreshRunId = state.runId || null; setRefresh(true, refreshText(state)); pollRefresh(); } }).catch(() => {}); }
 async function pollRefresh() {
   for (;;) {
     let state;
-    try { state = await getJson(refreshUrl()); } catch (error) { setRefresh(false, `갱신 상태를 확인하지 못했습니다: ${error.message}`, "error"); return; }
+    try { state = withRange(await getJson(refreshUrl())); } catch (error) { setRefresh(false, `갱신 상태를 확인하지 못했습니다: ${error.message}`, "error"); return; }
     if (!state.running) return finishRefresh(state);
     setRefresh(true, refreshText(state));
     await new Promise((resolve) => setTimeout(resolve, pollDelay(state)));
   }
 }
 async function finishRefresh(state) {
-  refreshRunId = null;
+  // state.range는 pollRefresh가 이미 채워 넘겼으므로 여기서 비워도 아래 문구는 온전하다.
+  refreshRunId = null; refreshRange = null;
   if (state.error) { setRefresh(false, `갱신 실패: ${state.error}`, "error"); return; }
   const beforePaths = new Set(fileIndex.map((file) => file.path)), beforeTotal = totalCount(), beforeLast = dataRange().end;
   try { await loadIndex(false); } catch (error) { setRefresh(false, `갱신은 끝났지만 목록을 다시 읽지 못했습니다: ${error.message}`, "error"); return; }

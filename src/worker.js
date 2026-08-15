@@ -70,27 +70,34 @@ export default {
   },
 };
 
-// collect 워크플로를 어제~오늘 범위로 건다. 오늘 하루로 줄이지 않는 이유는, 전날 마지막
+// 매시 크론과 갱신 버튼이 함께 쓰는 범위다. 오늘 하루로 줄이지 않는 이유는, 전날 마지막
 // 실행 뒤에 등록된 공고가 어제 날짜로 남아 다음 날 새벽 전면 수집까지 안 들어오기 때문이다
 // (.github/workflows/collect.yml).
 //
+// 35일 전면 재수집은 새벽 크론이 맡는다. 버튼까지 그 범위로 돌리면 사람이 기다리는 자리에서
+// 26초로 끝날 일이 111초가 된다 — 버튼을 누르는 목적은 "지금 올라온 것"이다.
+function collectRange(nowMs) { return { begin: kstToday(nowMs - DAY_MS), end: kstToday(nowMs) }; }
+
 // 갱신 버튼과 같은 workflow_dispatch를 쓴다. repository_dispatch가 두 경로를 깔끔하게 갈라
 // 주지만 Contents 쓰기를 요구하고, 이 토큰에는 Actions 쓰기만 있어 403이 난다. 권한을 넓히는
 // 대신 같은 문을 쓴다 — 버튼과 섞이는 문제는 handleRefresh 쪽에서 본다.
 async function dispatchCollect(env, scheduledTime) {
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN 시크릿이 없어 collect를 걸 수 없습니다.");
-  const end = kstToday(scheduledTime);
-  const begin = kstToday(scheduledTime - DAY_MS);
-  const response = await github(env, `/actions/workflows/${WORKFLOW}/dispatches`, {
-    method: "POST",
-    body: JSON.stringify({ ref: WORKFLOW_REF, inputs: { begin, end } }),
-  });
+  const range = collectRange(scheduledTime);
+  const response = await dispatchWorkflow(env, range);
   // 반드시 던진다. 삼켜 버리면 Cron Trigger는 성공으로 남고 갱신만 조용히 멈춘다.
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(`collect 실행 요청 실패 (${response.status}): ${data.message || "응답 본문 없음"}`);
   }
-  console.log(`collect 실행 요청 ${begin} ~ ${end}`);
+  console.log(`collect 실행 요청 ${range.begin} ~ ${range.end}`);
+}
+
+function dispatchWorkflow(env, range) {
+  return github(env, `/actions/workflows/${WORKFLOW}/dispatches`, {
+    method: "POST",
+    body: JSON.stringify({ ref: WORKFLOW_REF, inputs: range }),
+  });
 }
 
 async function routeRequest(request, env) {
@@ -110,13 +117,13 @@ async function routeRequest(request, env) {
 async function handleRefresh(request, env, url) {
   if (!env.GITHUB_TOKEN) return jsonResponse({ message: "GITHUB_TOKEN 시크릿이 설정되지 않았습니다." }, 501);
   if (request.method === "POST") {
-    const response = await github(env, `/actions/workflows/${WORKFLOW}/dispatches`, {
-      method: "POST",
-      body: JSON.stringify({ ref: WORKFLOW_REF, inputs: { begin: "", end: "" } }),
-    });
+    // 매시 크론과 같은 어제~오늘이다. 예전에는 비워 보내 35일 기본값으로 갔는데, 사람이
+    // 기다리는 자리에서 111초를 쓰던 것이 26초로 줄었다. 35일은 새벽 크론이 맡는다.
+    const range = collectRange(Date.now());
+    const response = await dispatchWorkflow(env, range);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) return jsonResponse({ message: data.message || `GitHub Actions 실행 요청 실패 (${response.status})` }, response.status);
-    return jsonResponse({ running: true, runId: data.workflow_run_id, runUrl: data.html_url, lastLine: "GitHub Actions 실행을 요청했습니다." }, 202);
+    return jsonResponse({ running: true, range, runId: data.workflow_run_id, runUrl: data.html_url, lastLine: "GitHub Actions 실행을 요청했습니다." }, 202);
   }
   if (request.method !== "GET") return jsonResponse({ message: "GET 또는 POST만 지원합니다." }, 405, { Allow: "GET, POST" });
 
