@@ -8,7 +8,7 @@ const ANALYSIS_ROOT = path.join(DATA_DIR, "analysis", "bid");
 const STATE_FILE = path.join(DATA_DIR, "analysis-state.json");
 const INDEX_FILE = path.join(DATA_DIR, "analysis-index.json");
 const PROVIDER = valueFlag("--provider", "ollama");
-const MODEL = valueFlag("--model", PROVIDER === "ollama" ? "qwen3.5-hermes-64k:latest" : "claude-opus-4-8");
+const MODEL = valueFlag("--model", PROVIDER === "ollama" ? "@cf/qwen/qwen3-30b-a3b-fp8" : "claude-opus-4-8");
 const OLLAMA_CONTEXT = numberFlag("--ollama-context", 8192);
 const MAX_TOKENS = 64000;
 
