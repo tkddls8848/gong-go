@@ -8,6 +8,8 @@ const { kstToday, normalizeAsk, ruleParse } = require("../shared/nl-filter");
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.PORT) || 8788;
 const LOG_LIMIT = 60;
+// 정적 서빙을 여는 디렉터리. 조회 화면은 /public/의 자산과 /data/의 CSV·인덱스만 읽는다.
+const SERVE_ROOTS = ["public", "data"].map((name) => path.resolve(ROOT, name));
 const TYPES = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8", ".md": "text/markdown; charset=utf-8", ".svg": "image/svg+xml",
@@ -98,9 +100,18 @@ function status() {
 }
 
 async function serveStatic(pathname, response) {
-  const target = path.join(ROOT, decodeURIComponent(pathname).replace(/^\/+/, ""));
-  const resolved = path.resolve(target);
-  if (resolved !== path.resolve(ROOT) && !resolved.startsWith(path.resolve(ROOT) + path.sep)) return send(response, 403, { message: "허용되지 않은 경로입니다." });
+  let decoded;
+  // 잘못된 퍼센트 인코딩은 500이 아니라 404다. 여기서 던지면 원인이 서버 오류처럼 보인다.
+  try { decoded = decodeURIComponent(pathname); } catch { return send(response, 404, { message: "찾을 수 없습니다." }); }
+  if (decoded === "/") return redirect(response, "/public/");
+  const resolved = path.resolve(path.join(ROOT, decoded.replace(/^\/+/, "")));
+  // 저장소 루트를 통째로 열면 .env(SERVICE_KEY·R2 자격증명·GATE_PASSWORD·GITHUB_TOKEN·
+  // ANTHROPIC_API_KEY)와 .git이 함께 노출된다. 127.0.0.1 바인딩이라도 같은 PC의 다른
+  // 프로세스와 DNS rebinding이 남으므로, 화면이 실제로 읽는 두 디렉터리만 연다.
+  // 판정은 해석된 절대경로로 한다 — 문자열 앞부분만 보면 %5C(역슬래시)로 빠져나갈 수 있다.
+  if (!SERVE_ROOTS.some((dir) => resolved === dir || resolved.startsWith(dir + path.sep))) {
+    return send(response, 403, { message: "허용되지 않은 경로입니다." });
+  }
   let file = resolved;
   try { if ((await fs.stat(file)).isDirectory()) file = path.join(file, "index.html"); } catch { return send(response, 404, { message: "찾을 수 없습니다." }); }
   let body;
@@ -109,6 +120,11 @@ async function serveStatic(pathname, response) {
   // 프런트의 DecompressionStream과 이중 처리로 깨진다(배포계획서 5장과 동일한 제약).
   response.writeHead(200, { "Content-Type": TYPES[path.extname(file).toLowerCase()] || "application/octet-stream", "Cache-Control": "no-store" });
   response.end(body);
+}
+
+function redirect(response, location) {
+  response.writeHead(302, { Location: location, "Cache-Control": "no-store" });
+  response.end();
 }
 
 function send(response, code, value) {
