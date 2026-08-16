@@ -1,5 +1,7 @@
 // 배포본은 Worker가 R2를 중계하고, 로컬은 devserver가 저장소의 data/를 제공한다.
 const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", ASK_API = "/api/ask", POLL_SLOW_MS = 5000, POLL_FAST_MS = 2000, MAX_ROWS = 200000;
+// dispatch는 받아들여졌는데 실행이 끝내 목록에 뜨지 않는 경우의 한도. 이게 없으면 영원히 폴링한다.
+const REFRESH_WAIT_LIMIT_MS = 120000;
 // CSV 스캔은 search-worker.js가 맡는다. 여기서는 워커를 몇 개 띄우고 각자 몇 개씩
 // 동시에 받게 할지만 정한다(둘을 곱한 값이 예전 LOAD_CONCURRENCY 자리다).
 const POOL_SIZE = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)), FETCH_CONCURRENCY = 12;
@@ -23,7 +25,7 @@ const INDEX_STORAGE_KEY = "gong-go:index-updated-at";
 const DEFAULT_PRESET = "기본";
 // activePreset이 null이면 고급검색이 만든 임시 목록이다. 이때는 저장하지 않는다 — 자연어 질의가
 // 사용자가 공들여 만든 프리셋을 조용히 덮어쓰면 되돌릴 방법이 없다.
-let presets = [], activePreset = DEFAULT_PRESET, institutionList = [], searchTimer = null, refreshRunId = null, refreshRange = null;
+let presets = [], activePreset = DEFAULT_PRESET, institutionList = [], searchTimer = null, refreshRunId = null, refreshRange = null, refreshSince = null;
 function cleanInstitutions(list) { return Array.isArray(list) ? list.map((inst) => ({ name: String(inst?.name || ""), code: String(inst?.code || "") })).filter((inst) => inst.name || inst.code) : []; }
 function normalizePresets(list) { return Array.isArray(list) ? list.map((preset) => ({ name: String(preset?.name || "").trim(), institutions: cleanInstitutions(preset?.institutions) })).filter((preset) => preset.name) : []; }
 // 구 형식(단일 목록)이 남아 있으면 "기본" 프리셋으로 옮긴다. 기존 사용자의 칩이 그대로 살아난다.
@@ -330,19 +332,36 @@ async function startRefresh() {
       throw new Error(state.message || (response.status === 404 ? "갱신 API가 없습니다." : `갱신 요청이 실패했습니다 (${response.status}).`));
     }
     refreshRunId = state.runId || null;
+    // dispatch 시각. 상태 조회가 이 뒤에 만들어진 실행만 보게 해서, 아직 등록되지 않은 내
+    // 실행 대신 직전 실행(크론이나 앞선 버튼)의 결과를 받아 오는 일을 막는다.
+    // 로컬 devserver는 이 값을 주지 않고 자기 작업 상태를 직접 답하므로 그대로 null이다.
+    refreshSince = state.dispatchedAt || null;
     // 범위는 시작 응답에만 실려 온다. 상태 조회는 GitHub의 실행 정보만 되돌려주므로,
     // 여기서 붙들지 않으면 진행·완료 문구의 구간이 계속 "-"로 남는다.
     refreshRange = state.range || null;
   } catch (error) { setRefresh(false, error.message, "error"); return; }
   pollRefresh();
 }
-function refreshUrl() { return refreshRunId ? `${REFRESH_API}?runId=${refreshRunId}` : REFRESH_API; }
+function refreshUrl() {
+  if (refreshRunId) return `${REFRESH_API}?runId=${refreshRunId}`;
+  return refreshSince ? `${REFRESH_API}?since=${encodeURIComponent(refreshSince)}` : REFRESH_API;
+}
 function withRange(state) { return state.range || !refreshRange ? state : { ...state, range: refreshRange }; }
 function resumeRefresh() { getJson(REFRESH_API).then((state) => { if (state.running) { refreshRunId = state.runId || null; setRefresh(true, refreshText(state)); pollRefresh(); } }).catch(() => {}); }
 async function pollRefresh() {
+  const startedAt = Date.now();
   for (;;) {
     let state;
     try { state = withRange(await getJson(refreshUrl())); } catch (error) { setRefresh(false, `갱신 상태를 확인하지 못했습니다: ${error.message}`, "error"); return; }
+    // 실행 id를 처음 본 순간 거기에 고정한다. 이후 폴링은 그 실행만 보므로, 도중에 매시
+    // 크론이 새 실행을 걸어도 대상이 갈아타지 않는다.
+    if (state.runId && !refreshRunId) refreshRunId = String(state.runId);
+    // waiting은 "dispatch는 됐는데 실행이 아직 목록에 없다"는 뜻이다. 보통 몇 초면 끝나지만
+    // 끝내 뜨지 않으면(워크플로 미등록 등) 여기서 끊는다.
+    if (state.waiting && Date.now() - startedAt > REFRESH_WAIT_LIMIT_MS) {
+      setRefresh(false, "갱신을 요청했지만 GitHub Actions 실행이 등록되지 않았습니다. Actions 탭에서 확인하세요.", "error");
+      return;
+    }
     if (!state.running) return finishRefresh(state);
     setRefresh(true, refreshText(state));
     await new Promise((resolve) => setTimeout(resolve, pollDelay(state)));
@@ -350,7 +369,7 @@ async function pollRefresh() {
 }
 async function finishRefresh(state) {
   // state.range는 pollRefresh가 이미 채워 넘겼으므로 여기서 비워도 아래 문구는 온전하다.
-  refreshRunId = null; refreshRange = null;
+  refreshRunId = null; refreshRange = null; refreshSince = null;
   if (state.error) { setRefresh(false, `갱신 실패: ${state.error}`, "error"); return; }
   const beforePaths = new Set(fileIndex.map((file) => file.path)), beforeTotal = totalCount(), beforeLast = dataRange().end;
   try { await loadIndex(false); } catch (error) { setRefresh(false, `갱신은 끝났지만 목록을 다시 읽지 못했습니다: ${error.message}`, "error"); return; }

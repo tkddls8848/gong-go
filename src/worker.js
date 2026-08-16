@@ -30,6 +30,9 @@ const WORKFLOW = "collect.yml";
 // 워크플로만 돌기 때문에, 어긋나면 매시 갱신과 새벽 재수집이 서로 다른 코드로 돈다.
 const WORKFLOW_REF = "main";
 const DAY_MS = 86400000;
+// dispatch 기준 시각을 이만큼 앞으로 당겨 둔다. GitHub의 created 필터는 초 단위라, 요청 직후의
+// 시각을 그대로 쓰면 반올림이나 시계 오차로 자기 실행을 걸러 내고 영영 기다리게 된다.
+const DISPATCH_MARGIN_MS = 2000;
 
 export default {
   async fetch(request, env) {
@@ -122,23 +125,38 @@ async function handleRefresh(request, env, url) {
   if (request.method === "POST") {
     // 매시 크론과 같은 어제~오늘이다. 예전에는 비워 보내 35일 기본값으로 갔는데, 사람이
     // 기다리는 자리에서 111초를 쓰던 것이 26초로 줄었다. 35일은 새벽 크론이 맡는다.
+    const dispatchedAt = new Date(Date.now() - DISPATCH_MARGIN_MS).toISOString();
     const range = collectRange(Date.now());
     const response = await dispatchWorkflow(env, range);
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) return jsonResponse({ message: data.message || `GitHub Actions 실행 요청 실패 (${response.status})` }, response.status);
-    return jsonResponse({ running: true, range, runId: data.workflow_run_id, runUrl: data.html_url, lastLine: "GitHub Actions 실행을 요청했습니다." }, 202);
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      return jsonResponse({ message: data.message || `GitHub Actions 실행 요청 실패 (${response.status})` }, response.status);
+    }
+    // workflow_dispatch는 204 No Content다 — 실행 id를 주지 않는다. 그래서 시각을 돌려주고
+    // 아래 조회가 그 시각 이후에 만들어진 실행만 보게 한다. 이게 없으면 GitHub이 실행을
+    // 만들기 전에 도착한 첫 폴링이 직전 실행(크론이나 앞선 버튼)을 집어, 남의 결과를 내
+    // 갱신의 결과로 보고한다 — 직전이 실패였으면 멀쩡한 수집 중에 "갱신 실패"가 뜬다.
+    return jsonResponse({ running: true, range, dispatchedAt, lastLine: "GitHub Actions 실행을 요청했습니다." }, 202);
   }
   if (request.method !== "GET") return jsonResponse({ message: "GET 또는 POST만 지원합니다." }, 405, { Allow: "GET, POST" });
 
   const runId = url.searchParams.get("runId");
-  const endpoint = runId && /^\d+$/.test(runId)
+  const since = url.searchParams.get("since");
+  // 실행 id를 알면 그것만 본다. 매시 크론도 같은 workflow_dispatch를 쓰므로 "최신 1건"을
+  // 계속 물으면 폴링 도중 대상이 크론 실행으로 갈아탄다.
+  const pinned = runId && /^\d+$/.test(runId);
+  const scoped = isTimestamp(since);
+  const endpoint = pinned
     ? `/actions/runs/${runId}`
-    : `/actions/workflows/${WORKFLOW}/runs?branch=${WORKFLOW_REF}&event=workflow_dispatch&per_page=1`;
+    : `/actions/workflows/${WORKFLOW}/runs?branch=${WORKFLOW_REF}&event=workflow_dispatch&per_page=1`
+      + (scoped ? `&created=${encodeURIComponent(`>=${since}`)}` : "");
   const response = await github(env, endpoint);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return jsonResponse({ message: data.message || `GitHub Actions 상태 조회 실패 (${response.status})` }, response.status);
-  const run = runId ? data : data.workflow_runs?.[0];
-  if (!run) return jsonResponse({ running: false });
+  const run = pinned ? data : data.workflow_runs?.[0];
+  // since를 준 조회에서 아직 실행이 없는 것은 "실행 없음"이 아니라 "등록 대기"다.
+  // 여기서 완료로 답하면 사용자가 방금 건 갱신이 시작도 전에 끝난 것으로 보인다.
+  if (!run) return jsonResponse(scoped ? { running: true, waiting: true, lastLine: "실행이 등록되기를 기다리는 중입니다." } : { running: false });
   const running = run.status !== "completed";
   return jsonResponse({
     running,
@@ -262,6 +280,10 @@ function github(env, path, init = {}) {
     },
   });
 }
+
+// since는 그대로 GitHub 질의에 실리므로 모양을 먼저 고정한다. RELAY_ALLOW와 같은 원칙이다 —
+// 임의 입력을 상류로 흘리지 않는다. 우리가 만든 toISOString() 형식만 통과시킨다.
+function isTimestamp(value) { return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/.test(value); }
 
 function jsonResponse(value, status = 200, headers = {}) {
   return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers } });
