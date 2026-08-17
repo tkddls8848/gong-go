@@ -131,6 +131,15 @@ $("#clear-inst-btn").onclick = () => { institutionList = []; renderInstitutions(
 $("#inst-search-btn").onclick = () => { addInstitution(); clearTimeout(searchTimer); page = 1; applyFilters(); };
 ["#inst-name", "#inst-code"].forEach((selector) => $(selector).onkeydown = (event) => { if (event.key === "Enter") addInstitution(); });
 $("#inst-loose").onchange = () => { page = 1; applyFilters(); };
+// 칩과 부분일치는 늘 보이고, 기관을 더하거나 프리셋을 관리하는 도구만 접어 둔다.
+// 고급검색 토글과 같은 방식이다 — 여는 순간 바로 입력할 수 있게 초점을 옮긴다.
+$("#inst-edit-toggle").onclick = () => {
+  const panel = $("#inst-editor"), open = panel.hidden;
+  panel.hidden = !open;
+  $("#inst-edit-toggle").setAttribute("aria-pressed", String(open));
+  $("#inst-edit-toggle").classList.toggle("active", open);
+  if (open) $("#inst-name").focus();
+};
 $("#today-btn").onclick = () => jumpToToday();
 $("#inst-preset").onchange = () => { const name = $("#inst-preset").value; if (name) { usePreset(name); scheduleSearch(); } };
 $("#preset-new").onclick = () => {
@@ -144,25 +153,6 @@ $("#preset-delete").onclick = () => {
   if (activePreset === null || presets.length <= 1 || !confirm(`"${activePreset}" 프리셋을 지울까요?`)) return;
   presets = presets.filter((preset) => preset.name !== activePreset);
   usePreset(presets[0].name);
-  scheduleSearch();
-};
-$("#preset-export").onclick = () => downloadBlob(new Blob([JSON.stringify({ version: 1, presets }, null, 2)], { type: "application/json" }), `gong-go-presets_${localDate(new Date()).replaceAll("-", "")}.json`);
-$("#preset-import-btn").onclick = () => $("#preset-import").click();
-// 같은 이름은 덮어쓰고 새 이름은 더한다. 형식이 어긋나면 아무것도 바꾸지 않고 사유만 알린다.
-$("#preset-import").onchange = async (event) => {
-  const file = event.target.files?.[0];
-  event.target.value = "";
-  if (!file) return;
-  let incoming;
-  try { incoming = normalizePresets(JSON.parse(await file.text())?.presets); }
-  catch { $("#status").textContent = "프리셋 파일을 읽지 못했습니다. JSON 형식이 아닙니다."; return; }
-  if (!incoming.length) { $("#status").textContent = "파일에서 쓸 수 있는 프리셋을 찾지 못했습니다."; return; }
-  for (const preset of incoming) {
-    const found = presets.find((existing) => existing.name === preset.name);
-    if (found) found.institutions = preset.institutions; else presets.push(preset);
-  }
-  usePreset(incoming[0].name);
-  $("#status").textContent = `프리셋 ${incoming.length}개를 불러왔습니다.`;
   scheduleSearch();
 };
 function nextPresetName() { for (let i = presets.length + 1; ; i += 1) if (!presets.some((preset) => preset.name === `프리셋 ${i}`)) return `프리셋 ${i}`; }

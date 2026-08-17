@@ -22,52 +22,57 @@
 
     <section class="panel">
       <h2>조회 조건</h2>
+      <!-- 상태·오늘 요약·갱신을 한 줄에 모은다. 셋을 따로 쌓으면 그것만으로 세로가 100px을
+           넘어 조회 결과가 접히는 선 아래로 밀린다.
+           오늘 건수는 index.json 항목의 count만 보고 낸다 — 일별 파일은 begin === end === 그
+           날짜라 파일을 하나도 받지 않고 세 모드를 셀 수 있다. -->
       <div class="data-status">
         <p class="data-range"><span class="data-range-label">보유 데이터</span><span id="data-range">확인하는 중입니다.</span><span id="data-count" class="data-count"></span><span id="last-crawl" class="data-crawl"></span></p>
+        <p id="today-summary" class="today-summary" hidden></p>
         <button id="refresh-btn" class="secondary-btn" type="button">보유데이터 갱신</button>
       </div>
       <p id="refresh-status" class="refresh-status" hidden></p>
-      <p id="status" class="hint">로컬 CSV를 불러오는 중입니다.</p>
-      <!-- 오늘 건수는 index.json 항목의 count만 보고 낸다. 일별 파일은 begin === end === 그 날짜라
-           파일을 하나도 받지 않고 세 모드를 한 줄에 보여줄 수 있다. -->
-      <p id="today-summary" class="today-summary" hidden></p>
 
-      <div class="inst-section">
-        <div class="preset-row">
-          <span class="inst-label">즐겨찾기</span>
-          <select id="inst-preset" class="preset-select"></select>
-          <button id="preset-new" class="secondary-btn btn-sm" type="button">새 프리셋</button>
-          <button id="preset-delete" class="secondary-btn btn-sm" type="button">삭제</button>
-          <div class="inst-tools"><button id="preset-export" class="secondary-btn btn-sm" type="button">내보내기</button><button id="preset-import-btn" class="secondary-btn btn-sm" type="button">불러오기</button></div>
-          <input id="preset-import" type="file" accept="application/json,.json" hidden>
-        </div>
-        <div class="inst-row" title="코드를 넣으면 코드 기준으로 정확히 조회합니다(본공고만 지원). 비우면 기관명이 정확히 일치하는 건만 남고, 모두 비우면 전체 기관을 조회합니다.">
-          <span class="inst-label">관심 기관 <span id="inst-count" class="inst-count"></span></span>
-          <input id="inst-name" class="inst-input-name" placeholder="기관명">
-          <input id="inst-code" class="inst-input-code" placeholder="코드">
-          <button id="add-row-btn" class="secondary-btn btn-sm" type="button">+ 추가</button>
-          <label class="inst-loose" title="기관명이 조건을 포함하기만 하면 맞는 것으로 봅니다. '국민건강보험공단'으로 '국민건강보험공단 일산병원'까지 찾습니다. 두 글자 이하 조건이 섞이면 켜지지 않습니다."><input id="inst-loose" type="checkbox">기관명 부분일치</label>
-          <div class="inst-tools"><button id="inst-search-btn" class="primary-btn btn-sm" type="button">관심 기관 검색</button><button id="clear-inst-btn" class="secondary-btn btn-sm" type="button">전체 비우기</button></div>
-        </div>
-        <div id="inst-chips" class="inst-chips"></div>
-      </div>
-
+      <!-- 사람이 가장 자주 만지는 것을 맨 위에 둔다. 관심 기관 관리는 아래에서 접어 둔다. -->
       <div class="filter-row">
         <label class="filter-q">검색어<input id="q" placeholder="기관명, 공고번호, 사업명"></label>
         <label class="filter-type">업무구분<select id="business-type"><option value="">전체</option><option>물품</option><option>외자</option><option>용역</option><option>공사</option></select></label>
         <div class="filter-date"><span class="field-label">게시일</span><div class="date-pair"><input id="begin" class="date-input" type="date"><span class="date-sep">~</span><input id="end" class="date-input" type="date"><button id="today-btn" class="secondary-btn btn-sm" type="button" title="게시일을 오늘 하루로 좁힙니다">오늘</button></div></div>
-        <div class="filter-actions"><button id="search" class="primary-btn" type="button">검색</button><button id="reset" class="secondary-btn" type="button">초기화</button></div>
-      </div>
-
-      <div class="advanced-row">
-        <button id="advanced-toggle" class="secondary-btn btn-sm" type="button" aria-pressed="false" aria-controls="advanced-panel">고급검색</button>
-        <span class="advanced-hint">자연어로 물어보면 위 조회 조건을 채워 드립니다. 해석이 틀리면 손으로 고쳐 다시 검색하세요.</span>
+        <div class="filter-actions"><button id="search" class="primary-btn" type="button">검색</button><button id="reset" class="secondary-btn" type="button">초기화</button><button id="advanced-toggle" class="secondary-btn" type="button" aria-pressed="false" aria-controls="advanced-panel" title="자연어로 물어보면 위 조건을 채워 드립니다. 해석이 틀리면 손으로 고쳐 다시 검색하세요.">고급검색</button></div>
       </div>
       <div id="advanced-panel" class="advanced-panel" hidden>
         <input id="nl-query" class="nl-input" placeholder="예: 국민연금공단의 4월 본공고 알려줘" maxlength="200">
         <button id="nl-run" class="primary-btn btn-sm" type="button">해석해서 조회</button>
       </div>
       <p id="nl-status" class="nl-status" hidden></p>
+
+      <!-- 지금 걸려 있는 조건(칩)과 그것을 바꾸는 스위치(부분일치)는 늘 보이고, 편집·프리셋
+           관리 도구만 접는다. 칩을 감추면 무엇으로 걸러지는지 모르는 채 조회하게 된다.
+           칩은 라벨과 같은 줄에 두고 넘치면 가로로 스크롤한다 — 줄을 따로 쓰면 40px을 더 먹는다. -->
+      <div class="inst-section">
+        <div class="inst-head">
+          <span class="inst-label">관심 기관 <span id="inst-count" class="inst-count"></span></span>
+          <div id="inst-chips" class="inst-chips"></div>
+          <label class="inst-loose" title="기관명이 조건을 포함하기만 하면 맞는 것으로 봅니다. '국민건강보험공단'으로 '국민건강보험공단 일산병원'까지 찾습니다. 두 글자 이하 조건이 섞이면 켜지지 않습니다."><input id="inst-loose" type="checkbox">기관명 부분일치</label>
+          <button id="inst-edit-toggle" class="secondary-btn btn-sm" type="button" aria-pressed="false" aria-controls="inst-editor">편집</button>
+        </div>
+        <div id="inst-editor" class="inst-editor" hidden>
+          <div class="inst-row" title="코드를 넣으면 코드 기준으로 정확히 조회합니다(본공고만 지원). 비우면 기관명이 정확히 일치하는 건만 남고, 모두 비우면 전체 기관을 조회합니다.">
+            <input id="inst-name" class="inst-input-name" placeholder="기관명">
+            <input id="inst-code" class="inst-input-code" placeholder="코드">
+            <button id="add-row-btn" class="secondary-btn btn-sm" type="button">+ 추가</button>
+            <div class="inst-tools"><button id="inst-search-btn" class="primary-btn btn-sm" type="button">관심 기관 검색</button><button id="clear-inst-btn" class="secondary-btn btn-sm" type="button">전체 비우기</button></div>
+          </div>
+          <div class="preset-row">
+            <span class="inst-label">즐겨찾기</span>
+            <select id="inst-preset" class="preset-select"></select>
+            <button id="preset-new" class="secondary-btn btn-sm" type="button">새 프리셋</button>
+            <button id="preset-delete" class="secondary-btn btn-sm" type="button">삭제</button>
+          </div>
+        </div>
+      </div>
+
+      <p id="status" class="hint">로컬 CSV를 불러오는 중입니다.</p>
     </section>
 
     <section class="panel">
