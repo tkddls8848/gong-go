@@ -19,19 +19,21 @@ const TYPES = {
 // 진행 중인 수집 작업은 한 번에 하나만 둔다. 브라우저는 이 상태를 폴링해서 진행률을 보여준다.
 let job = null;
 
-http.createServer(async (request, response) => {
-  const url = new URL(request.url, `http://${request.headers.host}`);
-  try {
-    if (url.pathname === "/api/refresh") return await handleRefresh(request, response);
-    if (url.pathname === "/api/ask") return await handleAsk(request, response);
-    await serveStatic(url.pathname, response);
-  } catch (error) {
-    send(response, 500, { message: error.message });
-  }
-}).listen(PORT, HOST, () => {
-  console.log(`로컬 서버: http://${HOST}:${PORT}/public/`);
-  console.log(`수집기 실행: POST http://${HOST}:${PORT}/api/refresh`);
-});
+if (require.main === module) {
+  http.createServer(async (request, response) => {
+    const url = new URL(request.url, `http://${request.headers.host}`);
+    try {
+      if (url.pathname === "/api/refresh") return await handleRefresh(request, response);
+      if (url.pathname === "/api/ask") return await handleAsk(request, response);
+      await serveStatic(url.pathname, response);
+    } catch (error) {
+      send(response, 500, { message: error.message });
+    }
+  }).listen(PORT, HOST, () => {
+    console.log(`로컬 서버: http://${HOST}:${PORT}/public/`);
+    console.log(`수집기 실행: POST http://${HOST}:${PORT}/api/refresh`);
+  });
+}
 
 async function handleRefresh(request, response) {
   if (request.method === "GET") return send(response, 200, status());
@@ -99,20 +101,27 @@ function status() {
   return { ...job, lastLine: job.log.at(-1) || "" };
 }
 
-async function serveStatic(pathname, response) {
+// 요청 경로를 서빙할 절대경로로 바꾼다. 디스크는 보지 않으므로 순수 함수다.
+// 저장소 루트를 통째로 열면 .env(SERVICE_KEY·R2 자격증명·GATE_PASSWORD·GITHUB_TOKEN·
+// ANTHROPIC_API_KEY)와 .git이 함께 노출된다. 127.0.0.1 바인딩이라도 같은 PC의 다른
+// 프로세스와 DNS rebinding이 남으므로, 화면이 실제로 읽는 두 디렉터리만 연다.
+// 판정은 해석된 절대경로로 한다 — 문자열 앞부분만 보면 %5C(역슬래시)로 빠져나갈 수 있다.
+function resolveStatic(pathname) {
   let decoded;
   // 잘못된 퍼센트 인코딩은 500이 아니라 404다. 여기서 던지면 원인이 서버 오류처럼 보인다.
-  try { decoded = decodeURIComponent(pathname); } catch { return send(response, 404, { message: "찾을 수 없습니다." }); }
-  if (decoded === "/") return redirect(response, "/public/");
+  try { decoded = decodeURIComponent(pathname); } catch { return { status: 404 }; }
+  if (decoded === "/") return { redirect: "/public/" };
   const resolved = path.resolve(path.join(ROOT, decoded.replace(/^\/+/, "")));
-  // 저장소 루트를 통째로 열면 .env(SERVICE_KEY·R2 자격증명·GATE_PASSWORD·GITHUB_TOKEN·
-  // ANTHROPIC_API_KEY)와 .git이 함께 노출된다. 127.0.0.1 바인딩이라도 같은 PC의 다른
-  // 프로세스와 DNS rebinding이 남으므로, 화면이 실제로 읽는 두 디렉터리만 연다.
-  // 판정은 해석된 절대경로로 한다 — 문자열 앞부분만 보면 %5C(역슬래시)로 빠져나갈 수 있다.
-  if (!SERVE_ROOTS.some((dir) => resolved === dir || resolved.startsWith(dir + path.sep))) {
-    return send(response, 403, { message: "허용되지 않은 경로입니다." });
-  }
-  let file = resolved;
+  if (!SERVE_ROOTS.some((dir) => resolved === dir || resolved.startsWith(dir + path.sep))) return { status: 403 };
+  return { file: resolved };
+}
+
+async function serveStatic(pathname, response) {
+  const target = resolveStatic(pathname);
+  if (target.redirect) return redirect(response, target.redirect);
+  if (target.status === 404) return send(response, 404, { message: "찾을 수 없습니다." });
+  if (target.status === 403) return send(response, 403, { message: "허용되지 않은 경로입니다." });
+  let file = target.file;
   try { if ((await fs.stat(file)).isDirectory()) file = path.join(file, "index.html"); } catch { return send(response, 404, { message: "찾을 수 없습니다." }); }
   let body;
   try { body = await fs.readFile(file); } catch { return send(response, 404, { message: "찾을 수 없습니다." }); }
@@ -133,3 +142,5 @@ function send(response, code, value) {
 }
 
 function today() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; }
+
+module.exports = { resolveStatic, SERVE_ROOTS, TYPES };
