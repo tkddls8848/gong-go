@@ -439,33 +439,36 @@ function loginPageHtml({ redirect = "/", error = "" } = {}) {
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="robots" content="noindex, nofollow" />
+<meta name="theme-color" content="#151a21" />
 <title>접근 확인</title>
 <style>
-  /* 조회 화면(public/style.css)과 같은 규칙을 쓴다. 여기만 어두운 카드였던 탓에, 들어가면
-     밝은 화면이 나와 서로 다른 앱을 지나온 것처럼 보였다. */
+  /* 조회 화면(public/style.css)과 같은 규칙·같은 색을 쓴다. 여기 값이 어긋나면 들어가는
+     순간 화면이 번쩍이고 서로 다른 앱을 지나온 것처럼 보인다. Worker가 문자열로 내려주는
+     페이지라 style.css를 공유할 수 없어 토큰을 그대로 옮겨 적는다. */
   * { box-sizing: border-box; }
+  :root { color-scheme: dark; }
   body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
-    background: #fff; color: #17212f; font-family: "Pretendard", "Noto Sans KR", system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+    background: #151a21; color: #e7ebf1; font-family: "Pretendard", "Noto Sans KR", system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
   .card { display: flex; flex-direction: column; width: 100%; max-width: 340px; }
   .brand { display: flex; align-items: center; gap: 10px; padding-bottom: 26px; }
   .brand-mark { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
-    width: 34px; height: 34px; border-radius: 10px; background: #f7f9fb; }
-  .brand-mark svg { width: 17px; height: 17px; fill: none; stroke: #5b6472; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    width: 34px; height: 34px; border-radius: 10px; background: #1b212b; }
+  .brand-mark svg { width: 17px; height: 17px; fill: none; stroke: #a5afbd; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .brand-name { font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
-  .brand-tag { margin-top: 2px; color: #98a2b0; font-size: 12px; }
+  .brand-tag { margin-top: 2px; color: #8a94a2; font-size: 12px; }
   h1 { margin: 0 0 7px; font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
-  p.sub { margin: 0 0 26px; font-size: 13px; line-height: 1.65; color: #98a2b0; }
-  label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: #98a2b0; }
+  p.sub { margin: 0 0 26px; font-size: 13px; line-height: 1.65; color: #8a94a2; }
+  label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: #8a94a2; }
   input[type="password"] { width: 100%; height: 44px; padding: 0 13px; font-family: inherit; font-size: 15px;
-    border: 1px solid transparent; border-radius: 10px; background: #f6f8fb; color: #17212f; outline: none; }
-  input[type="password"]:focus { border-color: #c6d7f2; background: #fff; box-shadow: 0 0 0 3px rgba(40, 100, 207, .10); }
-  button { height: 44px; margin-top: 14px; border: 0; border-radius: 10px; background: #2864cf; color: #fff;
+    border: 1px solid transparent; border-radius: 10px; background: #1b212b; color: #e7ebf1; outline: none; }
+  input[type="password"]:focus { border-color: #2c4b7a; background: #1d232d; box-shadow: 0 0 0 3px rgba(72, 128, 224, .22); }
+  button { height: 44px; margin-top: 14px; border: 0; border-radius: 10px; background: #3a72d8; color: #fff;
     font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
-  button:hover { background: #1f4fa6; }
-  .error input[type="password"] { border-color: #e2b6b6; background: #fdf7f7; }
-  .error-text { display: flex; align-items: center; gap: 6px; margin: 9px 0 0; font-size: 12px; color: #a32b2b; }
+  button:hover { background: #2f62c4; }
+  .error input[type="password"] { border-color: #6b3a3d; background: #2b1a1c; }
+  .error-text { display: flex; align-items: center; gap: 6px; margin: 9px 0 0; font-size: 12px; color: #ef9a9a; }
   .error-text svg { flex: 0 0 auto; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-  .note { margin: 22px 0 0; font-size: 12px; line-height: 1.6; color: #b0b8c4; }
+  .note { margin: 22px 0 0; font-size: 12px; line-height: 1.6; color: #79828f; }
 </style>
 </head>
 <body>
