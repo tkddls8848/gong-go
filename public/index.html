@@ -7,93 +7,128 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="container">
-    <header>
-      <div class="header-top">
-        <h1>나라장터 공고 조회 웹</h1>
-        <div class="mode-toggle" id="mode-toggle" role="group" aria-label="공고 유형 선택">
-          <button type="button" class="mode-toggle-btn active" data-mode="pre" aria-pressed="true">사전공고</button>
-          <button type="button" class="mode-toggle-btn" data-mode="bid" aria-pressed="false">본공고</button>
-          <button type="button" class="mode-toggle-btn" data-mode="plan" aria-pressed="false">발주계획</button>
+  <div class="app">
+    <!-- 왼쪽 레일에는 한 번 정해 두고 계속 쓰는 것(공고 유형·관심 기관·보유 데이터)만 둔다.
+         본문은 검색과 결과만 갖는다 — 예전에는 조회 조건 패널이 결과를 화면 아래로 밀어냈다.
+         좁은 화면에서는 이 레일이 서랍이 되어 덮개(.rail-scrim) 위로 열린다. -->
+    <aside id="rail" class="rail">
+      <div class="rail-brand">
+        <div>
+          <h1>나라장터 조회</h1>
+          <p class="rail-tag">수집한 CSV에서 공고를 찾습니다</p>
+        </div>
+        <button id="rail-toggle" class="icon-btn" type="button" title="레일 접기" aria-label="레일 접기" aria-expanded="true"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.6 4.2L5.8 8l3.8 3.8"></path><path d="M12.4 3.4v9.2"></path></svg></button>
+      </div>
+
+      <!-- 오늘 건수는 index.json 항목의 count만 보고 낸다 — 일별 파일은 begin === end === 그
+           날짜라 파일을 하나도 받지 않고 세 모드를 셀 수 있다. 그래서 유형을 고르기 전에
+           어느 유형에 오늘 것이 있는지 여기서 바로 보인다. -->
+      <div class="rail-label-row"><span class="rail-label">공고 유형</span><span id="today-summary" class="today-summary" hidden></span></div>
+      <div class="mode-toggle" id="mode-toggle" role="group" aria-label="공고 유형 선택">
+        <div class="mode-row active">
+          <button type="button" class="mode-toggle-btn active" data-mode="pre" aria-pressed="true"><span class="mode-dot pre"></span>사전공고</button>
+          <button type="button" class="today-jump" data-mode="pre" title="게시일을 오늘 하루로 좁힙니다">-</button>
+        </div>
+        <div class="mode-row">
+          <button type="button" class="mode-toggle-btn" data-mode="bid" aria-pressed="false"><span class="mode-dot bid"></span>본공고</button>
+          <button type="button" class="today-jump" data-mode="bid" title="게시일을 오늘 하루로 좁힙니다">-</button>
+        </div>
+        <div class="mode-row">
+          <button type="button" class="mode-toggle-btn" data-mode="plan" aria-pressed="false"><span class="mode-dot plan"></span>발주계획</button>
+          <button type="button" class="today-jump" data-mode="plan" title="게시일을 오늘 하루로 좁힙니다">-</button>
         </div>
       </div>
-      <p class="subtitle" id="app-subtitle">로컬 CSV에 저장한 사전공고를 조회합니다.</p>
-    </header>
 
-    <section class="panel">
-      <h2>조회 조건</h2>
-      <!-- 상태·오늘 요약·갱신을 한 줄에 모은다. 셋을 따로 쌓으면 그것만으로 세로가 100px을
-           넘어 조회 결과가 접히는 선 아래로 밀린다.
-           오늘 건수는 index.json 항목의 count만 보고 낸다 — 일별 파일은 begin === end === 그
-           날짜라 파일을 하나도 받지 않고 세 모드를 셀 수 있다. -->
-      <div class="data-status">
-        <p class="data-range"><span class="data-range-label">보유 데이터</span><span id="data-range">확인하는 중입니다.</span><span id="data-count" class="data-count"></span><span id="last-crawl" class="data-crawl"></span></p>
-        <p id="today-summary" class="today-summary" hidden></p>
-        <button id="refresh-btn" class="secondary-btn" type="button">보유데이터 갱신</button>
-      </div>
-      <p id="refresh-status" class="refresh-status" hidden></p>
-
-      <!-- 사람이 가장 자주 만지는 것을 맨 위에 둔다. 관심 기관 관리는 아래에서 접어 둔다. -->
-      <div class="filter-row">
-        <label class="filter-q">검색어<input id="q" placeholder="기관명, 공고번호, 사업명"></label>
-        <label class="filter-type">업무구분<select id="business-type"><option value="">전체</option><option>물품</option><option>외자</option><option>용역</option><option>공사</option></select></label>
-        <div class="filter-date"><span class="field-label">게시일</span><div class="date-pair"><input id="begin" class="date-input" type="date"><span class="date-sep">~</span><input id="end" class="date-input" type="date"><button id="today-btn" class="secondary-btn btn-sm" type="button" title="게시일을 오늘 하루로 좁힙니다">오늘</button></div></div>
-        <div class="filter-actions"><button id="search" class="primary-btn" type="button">검색</button><button id="reset" class="secondary-btn" type="button">초기화</button><button id="advanced-toggle" class="secondary-btn" type="button" aria-pressed="false" aria-controls="advanced-panel" title="자연어로 물어보면 위 조건을 채워 드립니다. 해석이 틀리면 손으로 고쳐 다시 검색하세요.">고급검색</button></div>
-      </div>
-      <div id="advanced-panel" class="advanced-panel" hidden>
-        <input id="nl-query" class="nl-input" placeholder="예: 국민연금공단의 4월 본공고 알려줘" maxlength="200">
-        <button id="nl-run" class="primary-btn btn-sm" type="button">해석해서 조회</button>
-      </div>
-      <p id="nl-status" class="nl-status" hidden></p>
-
-      <!-- 지금 걸려 있는 조건(칩)과 그것을 바꾸는 스위치(부분일치)는 늘 보이고, 편집·프리셋
-           관리 도구만 접는다. 칩을 감추면 무엇으로 걸러지는지 모르는 채 조회하게 된다.
-           칩은 라벨과 같은 줄에 두고 넘치면 가로로 스크롤한다 — 줄을 따로 쓰면 40px을 더 먹는다. -->
+      <!-- 지금 걸려 있는 조건(칩·개수·부분일치)은 늘 보이고, 기관을 더하고 프리셋을 관리하는
+           도구만 접는다. 칩을 감추면 무엇으로 걸러지는지 모르는 채 조회하게 된다. -->
       <div class="inst-section">
         <div class="inst-head">
           <span class="inst-label">관심 기관 <span id="inst-count" class="inst-count"></span></span>
-          <div id="inst-chips" class="inst-chips"></div>
-          <label class="inst-loose" title="기관명이 조건을 포함하기만 하면 맞는 것으로 봅니다. '국민건강보험공단'으로 '국민건강보험공단 일산병원'까지 찾습니다. 두 글자 이하 조건이 섞이면 켜지지 않습니다."><input id="inst-loose" type="checkbox">기관명 부분일치</label>
-          <button id="inst-edit-toggle" class="secondary-btn btn-sm" type="button" aria-pressed="false" aria-controls="inst-editor">편집</button>
+          <button id="inst-edit-toggle" class="link-btn" type="button" aria-pressed="false" aria-controls="inst-editor">편집</button>
         </div>
+        <div id="inst-chips" class="inst-chips"></div>
+        <label class="inst-loose" title="기관명이 조건을 포함하기만 하면 맞는 것으로 봅니다. '국민건강보험공단'으로 '국민건강보험공단 일산병원'까지 찾습니다. 두 글자 이하 조건이 섞이면 켜지지 않습니다."><input id="inst-loose" type="checkbox">기관명 부분일치</label>
         <div id="inst-editor" class="inst-editor" hidden>
           <div class="inst-row" title="코드를 넣으면 코드 기준으로 정확히 조회합니다(본공고만 지원). 비우면 기관명이 정확히 일치하는 건만 남고, 모두 비우면 전체 기관을 조회합니다.">
             <input id="inst-name" class="inst-input-name" placeholder="기관명">
             <input id="inst-code" class="inst-input-code" placeholder="코드">
             <button id="add-row-btn" class="secondary-btn btn-sm" type="button">+ 추가</button>
-            <div class="inst-tools"><button id="inst-search-btn" class="primary-btn btn-sm" type="button">관심 기관 검색</button><button id="clear-inst-btn" class="secondary-btn btn-sm" type="button">전체 비우기</button></div>
           </div>
+          <div class="inst-tools"><button id="inst-search-btn" class="primary-btn btn-sm" type="button">관심 기관 검색</button><button id="clear-inst-btn" class="secondary-btn btn-sm" type="button">전체 비우기</button></div>
           <div class="preset-row">
-            <span class="inst-label">즐겨찾기</span>
+            <span class="rail-label">즐겨찾기</span>
             <select id="inst-preset" class="preset-select"></select>
-            <button id="preset-new" class="secondary-btn btn-sm" type="button">새 프리셋</button>
-            <button id="preset-delete" class="secondary-btn btn-sm" type="button">삭제</button>
+            <div class="preset-tools"><button id="preset-new" class="secondary-btn btn-sm" type="button">새 프리셋</button><button id="preset-delete" class="secondary-btn btn-sm" type="button">삭제</button></div>
           </div>
         </div>
       </div>
 
+      <!-- 보유 데이터와 갱신 버튼은 레일 맨 아래에 붙인다. 자주 보지만 자주 누르지는 않는다. -->
+      <div class="data-status">
+        <p class="data-range"><span class="data-range-label">보유 데이터</span><span id="data-range">확인하는 중입니다.</span><span id="data-count" class="data-count"></span><span id="last-crawl" class="data-crawl"></span></p>
+        <button id="refresh-btn" class="secondary-btn refresh-btn" type="button">보유데이터 갱신</button>
+        <p id="refresh-status" class="refresh-status" hidden></p>
+      </div>
+    </aside>
+    <div class="rail-scrim" id="rail-scrim"></div>
+
+    <main class="main">
+      <div class="filter-row">
+        <button id="rail-open" class="icon-btn rail-open" type="button" title="레일 펼치기" aria-label="레일 펼치기" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.8 4.5h10.4M2.8 8h10.4M2.8 11.5h10.4"></path></svg></button>
+        <div class="filter-q">
+          <svg class="field-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.2" cy="7.2" r="4.6"></circle><path d="M10.6 10.6L13.5 13.5"></path></svg>
+          <input id="q" placeholder="기관명, 공고번호, 사업명으로 검색" aria-label="검색어">
+        </div>
+        <select id="business-type" class="filter-type" aria-label="업무구분"><option value="">업무 전체</option><option>물품</option><option>외자</option><option>용역</option><option>공사</option></select>
+        <div class="filter-date">
+          <svg class="field-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.2" y="3.2" width="11.6" height="10.6" rx="2"></rect><path d="M2.2 6.4h11.6M5.6 1.8v2.6M10.4 1.8v2.6"></path></svg>
+          <span class="field-label">게시일</span>
+          <input id="begin" class="date-input" type="date" aria-label="게시일 시작"><span class="date-sep">~</span><input id="end" class="date-input" type="date" aria-label="게시일 종료">
+          <button id="today-btn" class="link-btn date-today" type="button" title="게시일을 오늘 하루로 좁힙니다">오늘</button>
+        </div>
+        <div class="filter-actions"><button id="search" class="primary-btn" type="button">검색</button><button id="reset" class="ghost-btn" type="button">초기화</button><button id="advanced-toggle" class="ghost-btn" type="button" aria-pressed="false" aria-controls="advanced-panel" title="자연어로 물어보면 위 조건을 채워 드립니다. 해석이 틀리면 손으로 고쳐 다시 검색하세요.">고급검색</button></div>
+      </div>
+      <div id="advanced-panel" class="advanced-panel" hidden>
+        <input id="nl-query" class="nl-input" placeholder="예: 국민연금공단의 4월 본공고 알려줘" maxlength="200">
+        <button id="nl-run" class="primary-btn" type="button">해석해서 조회</button>
+        <p class="advanced-hint">자연어로 물어보면 위 조건을 채워 드립니다. 해석이 틀리면 손으로 고쳐 다시 검색하세요.</p>
+      </div>
+      <p id="nl-status" class="nl-status" hidden></p>
       <p id="status" class="hint">로컬 CSV를 불러오는 중입니다.</p>
-    </section>
 
-    <section class="panel">
-      <div class="results-header"><h2>조회 결과 <span id="result-summary"></span></h2><div class="download-actions"><button id="download-btn" class="secondary-btn" type="button" disabled>CSV로 다운로드</button><button id="download-ecr-btn" class="secondary-btn" type="button" disabled>ECR 펼쳐서 내보내기</button></div></div>
-      <div class="table-scroll"><table><thead><tr><th>유형</th><th>공고번호</th><th>업무</th><th>수요기관</th><th>사업명(공고명)</th><th>게시일</th><th id="close-col">마감일</th></tr></thead><tbody id="results"></tbody></table></div>
-      <div class="pagination"><button id="previous" class="secondary-btn" type="button">이전</button><span id="page-label">-</span><button id="next" class="secondary-btn" type="button">다음</button><label class="page-size">페이지당 <select id="page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option><option>500</option></select> 건</label></div>
-    </section>
+      <div class="results-header">
+        <div class="results-title"><h2>조회 결과 <span id="result-summary"></span></h2><p class="subtitle" id="app-subtitle">로컬 CSV에 저장한 사전공고를 조회합니다.</p></div>
+        <div class="download-actions"><button id="download-btn" class="secondary-btn btn-sm" type="button" disabled>CSV로 다운로드</button><button id="download-ecr-btn" class="secondary-btn btn-sm" type="button" disabled>ECR 펼쳐서 내보내기</button></div>
+      </div>
+      <!-- 유형 열은 없다. 한 번에 한 모드만 조회하므로(applyFilters가 그 모드의 파일만 받는다)
+           모든 행에서 같은 값이 되고, 지금 보는 유형은 레일에서 이미 켜져 있다. -->
+      <div class="table-scroll"><table><thead><tr><th>공고번호</th><th>업무</th><th>수요기관</th><th>사업명(공고명)</th><th class="col-date">게시일</th><th id="close-col" class="col-date">마감일</th></tr></thead><tbody id="results"></tbody></table></div>
+      <div class="pagination">
+        <label class="page-size">페이지당 <select id="page-size"><option>25</option><option selected>50</option><option>100</option><option>200</option><option>500</option></select> 건</label>
+        <div class="pager"><button id="previous" class="secondary-btn btn-sm" type="button">이전</button><span id="page-label">-</span><button id="next" class="secondary-btn btn-sm" type="button">다음</button></div>
+      </div>
 
-    <footer class="page-footer"><span id="updated-at">updated -</span></footer>
+      <footer class="page-footer"><span id="updated-at">updated -</span></footer>
+    </main>
   </div>
+
   <div id="file-modal" class="modal-backdrop" style="display: none;">
     <div class="modal">
-      <div class="modal-header"><h3 id="modal-title">첨부파일</h3><button id="modal-close" class="modal-close" type="button">&times;</button></div>
-      <p class="hint" id="modal-subtitle"></p>
+      <div class="modal-header"><div class="modal-heading"><h3 id="modal-title">첨부파일</h3><p class="modal-subtitle" id="modal-subtitle"></p></div><button id="modal-close" class="modal-close" type="button" aria-label="닫기">&times;</button></div>
       <div class="modal-tabs"><button class="modal-tab active" data-tab="files" type="button">첨부파일</button><button id="ecr-tab" class="modal-tab" data-tab="ecr" type="button">ECR 규격</button></div>
       <div id="files-content"><ul id="modal-file-list" class="file-list"></ul><div class="modal-footer"><p class="hint">파일은 나라장터 서버에서 새 창으로 열립니다. 전체 다운로드를 사용하려면 팝업을 허용하세요.</p><button id="download-all-btn" class="primary-btn" type="button">전체 다운로드</button></div></div>
       <div id="ecr-content" hidden></div>
       <p class="modal-disclaimer">ECR 결과는 1차 참고용이며 최종 확인은 원문으로 해야 합니다.</p>
     </div>
   </div>
-  <template id="empty-row"><tr><td colspan="7" class="empty">표시할 공고가 없습니다.</td></tr></template>
+  <!-- 빈 결과에도 갱신 버튼을 둔다. 0건의 가장 잦은 이유가 "아직 수집되지 않은 기간"이라
+       레일까지 눈을 옮기지 않고 그 자리에서 다시 받을 수 있어야 한다. -->
+  <template id="empty-row"><tr><td colspan="6" class="empty">
+    <span class="empty-icon"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.4"></circle><path d="M12.8 12.8L16.6 16.6"></path><path d="M6.6 8.8h4.4"></path></svg></span>
+    <span class="empty-title">표시할 공고가 없습니다.</span>
+    <span class="empty-hint">조건을 넓히거나, 아직 수집하지 않은 기간이면 보유 데이터를 갱신해 보세요.</span>
+    <button type="button" class="secondary-btn empty-refresh">보유데이터 갱신</button>
+  </td></tr></template>
   <!-- rows.js는 app.js와 search-worker.js가 함께 쓰는 CSV 파서·행 모델이라 먼저 읽는다. -->
   <script src="rows.js"></script>
   <script src="app.js"></script>

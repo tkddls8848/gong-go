@@ -441,33 +441,50 @@ function loginPageHtml({ redirect = "/", error = "" } = {}) {
 <meta name="robots" content="noindex, nofollow" />
 <title>접근 확인</title>
 <style>
+  /* 조회 화면(public/style.css)과 같은 규칙을 쓴다. 여기만 어두운 카드였던 탓에, 들어가면
+     밝은 화면이 나와 서로 다른 앱을 지나온 것처럼 보였다. */
   * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: #0f172a; color: #e2e8f0; font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; padding: 20px; }
-  .card { width: 100%; max-width: 360px; background: #1e293b; border: 1px solid #334155;
-    border-radius: 14px; padding: 28px 24px; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
-  h1 { font-size: 18px; margin: 0 0 6px; }
-  p.sub { margin: 0 0 20px; font-size: 13px; color: #94a3b8; line-height: 1.5; }
-  label { display: block; font-size: 13px; margin-bottom: 6px; color: #cbd5e1; }
-  input[type="password"] { width: 100%; padding: 11px 12px; font-size: 15px; border-radius: 9px;
-    border: 1px solid #475569; background: #0f172a; color: #e2e8f0; outline: none; }
-  input[type="password"]:focus { border-color: #3b82f6; }
-  button { width: 100%; margin-top: 16px; padding: 11px 12px; font-size: 15px; font-weight: 600;
-    border: none; border-radius: 9px; background: #3b82f6; color: #fff; cursor: pointer; }
-  button:hover { background: #2563eb; }
-  .error { margin: 0 0 14px; padding: 9px 11px; font-size: 13px; border-radius: 8px;
-    background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.35); color: #fca5a5; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
+    background: #fff; color: #17212f; font-family: "Pretendard", "Noto Sans KR", system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+  .card { display: flex; flex-direction: column; width: 100%; max-width: 340px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding-bottom: 26px; }
+  .brand-mark { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+    width: 34px; height: 34px; border-radius: 10px; background: #f7f9fb; }
+  .brand-mark svg { width: 17px; height: 17px; fill: none; stroke: #5b6472; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .brand-name { font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
+  .brand-tag { margin-top: 2px; color: #98a2b0; font-size: 12px; }
+  h1 { margin: 0 0 7px; font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+  p.sub { margin: 0 0 26px; font-size: 13px; line-height: 1.65; color: #98a2b0; }
+  label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: #98a2b0; }
+  input[type="password"] { width: 100%; height: 44px; padding: 0 13px; font-family: inherit; font-size: 15px;
+    border: 1px solid transparent; border-radius: 10px; background: #f6f8fb; color: #17212f; outline: none; }
+  input[type="password"]:focus { border-color: #c6d7f2; background: #fff; box-shadow: 0 0 0 3px rgba(40, 100, 207, .10); }
+  button { height: 44px; margin-top: 14px; border: 0; border-radius: 10px; background: #2864cf; color: #fff;
+    font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button:hover { background: #1f4fa6; }
+  .error input[type="password"] { border-color: #e2b6b6; background: #fdf7f7; }
+  .error-text { display: flex; align-items: center; gap: 6px; margin: 9px 0 0; font-size: 12px; color: #a32b2b; }
+  .error-text svg { flex: 0 0 auto; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .note { margin: 22px 0 0; font-size: 12px; line-height: 1.6; color: #b0b8c4; }
 </style>
 </head>
 <body>
-  <form class="card" method="POST" action="${LOGIN_PATH}">
+  <form class="card${error ? " error" : ""}" method="POST" action="${LOGIN_PATH}">
+    <div class="brand">
+      <span class="brand-mark"><svg viewBox="0 0 20 20"><rect x="4" y="8.8" width="12" height="7.9" rx="2.2"></rect><path d="M7 8.8V6.5a3 3 0 0 1 6 0v2.3"></path><path d="M10 12.1v1.7"></path></svg></span>
+      <div>
+        <div class="brand-name">나라장터 조회</div>
+        <div class="brand-tag">수집한 CSV에서 공고를 찾습니다</div>
+      </div>
+    </div>
     <h1>접근 확인</h1>
-    <p class="sub">이 페이지는 비밀번호로 보호되어 있습니다. 공유받은 암호를 입력하세요.</p>
-    ${error ? `<p class="error">${esc(error)}</p>` : ""}
+    <p class="sub">이 화면은 비밀번호로 보호되어 있습니다.<br />공유받은 비밀번호를 입력하세요.</p>
     <label for="pw">비밀번호</label>
     <input id="pw" name="password" type="password" autocomplete="current-password" autofocus required />
+    ${error ? `<p class="error-text"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"></circle><path d="M8 5v3.4M8 10.8v.2"></path></svg>${esc(error)}</p>` : ""}
     <input type="hidden" name="redirect" value="${esc(redirect)}" />
     <button type="submit">들어가기</button>
+    <p class="note">이 페이지는 검색엔진에 노출되지 않습니다.</p>
   </form>
 </body>
 </html>`;

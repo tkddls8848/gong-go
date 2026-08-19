@@ -86,7 +86,7 @@ async function loadIndex(initial) {
   if (initial) { defaultRange(); $("#status").textContent = `${fileIndex.length}개 CSV를 찾았습니다.`; }
   return { index, changed: Boolean(previous && index.updatedAt && previous !== index.updatedAt) };
 }
-function renderDataStatus(index) { const { begin, end } = dataRange(), total = totalCount(); $("#data-range").textContent = end ? `${begin} ~ ${end}` : "없음"; $("#data-count").textContent = end ? `· ${format(fileIndex.length)}개 파일 · ${format(total)}건` : ""; $("#last-crawl").textContent = `마지막 크롤링 ${stamp(index?.updatedAt)}`; $("#updated-at").textContent = `updated ${stamp(index?.updatedAt)}`; renderTodaySummary(); }
+function renderDataStatus(index) { const { begin, end } = dataRange(), total = totalCount(); $("#data-range").textContent = end ? `${begin} ~ ${end}` : "없음"; $("#data-count").textContent = end ? `${format(fileIndex.length)}개 파일 · ${format(total)}건` : ""; $("#last-crawl").textContent = `마지막 크롤링 ${stamp(index?.updatedAt)}`; $("#updated-at").textContent = `updated ${stamp(index?.updatedAt)}`; renderTodaySummary(); }
 
 // "오늘"은 브라우저 로컬 날짜다. 데이터의 날짜는 KST 벽시계 문자열이라 KST 밖에서 열면 하루 어긋난다.
 function today() { return localDate(new Date()); }
@@ -95,13 +95,17 @@ function isToday(value) { return dateKey(value) === todayKey(); }
 // 일별 인덱스 항목은 begin === end === 그 날짜다(shared/pipeline-utils.js의 indexEntry).
 // 그래서 파일을 하나도 내려받지 않고 오늘 건수를 세 모드 모두 셀 수 있다.
 function todayFile(mode) { const date = today(); return fileIndex.find((file) => modeOf(file) === mode && file.begin === date && file.end === date); }
+// 오늘 건수는 레일의 유형 줄에 붙는다. 버튼은 index.html에 고정으로 있고 여기서는 숫자만
+// 갈아 끼운다 — 매번 다시 그리면 클릭 핸들러도 매번 다시 걸어야 한다.
 function renderTodaySummary() {
   const box = $("#today-summary");
   box.hidden = !fileIndex.length;
-  if (!fileIndex.length) return;
-  const buttons = ["pre", "bid", "plan"].map((mode) => { const file = todayFile(mode); return `<button class="today-jump" type="button" data-mode="${mode}">${MODE_NAMES[mode]} ${file ? `${format(Number(file.count) || 0)}건` : "-"}</button>`; });
-  box.innerHTML = `<span class="today-label">오늘 ${today()}</span>${buttons.join("")}`;
-  box.querySelectorAll(".today-jump").forEach((button) => button.onclick = () => jumpToToday(button.dataset.mode));
+  if (fileIndex.length) box.textContent = `오늘 ${today()}`;
+  document.querySelectorAll(".today-jump").forEach((button) => {
+    const file = todayFile(button.dataset.mode);
+    button.textContent = fileIndex.length && file ? format(Number(file.count) || 0) : "-";
+    button.title = `게시일을 오늘 하루로 좁혀 ${MODE_NAMES[button.dataset.mode]}를 봅니다`;
+  });
 }
 // 게시일을 오늘 하루로 좁힌다. 모드를 함께 주면 그 모드로 갈아탄 뒤 한 번만 조회한다.
 function jumpToToday(mode) {
@@ -116,11 +120,30 @@ function totalCount() { return fileIndex.reduce((sum, file) => sum + (Number(fil
 function stamp(value) { const date = new Date(value), pad = (part) => String(part).padStart(2, "0"); return value && !Number.isNaN(date.valueOf()) ? `${localDate(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` : "-"; }
 
 $("#search").onclick = () => { page = 1; applyFilters(); }; $("#reset").onclick = () => { ["#q", "#business-type", "#nl-query"].forEach((s) => { $(s).value = ""; }); $("#inst-loose").checked = false; setNl(false, ""); defaultRange(); page = 1; applyFilters(); }; $("#q").onkeydown = (event) => { if (event.key === "Enter") { page = 1; applyFilters(); } };
-// 사전공고/본공고는 조회 조건이 아니라 상단 토글로 전환한다(main 브랜치와 동일). 초기화 버튼은 건드리지 않는다.
+// 사전공고/본공고는 조회 조건이 아니라 레일의 유형 목록으로 전환한다. 초기화 버튼은 건드리지 않는다.
+// 오늘 건수는 같은 줄에 있지만 별개의 버튼이라 여기 걸린 위임에 잡히지 않는다(제 핸들러가 있다).
 $("#mode-toggle").onclick = (event) => { const button = event.target.closest(".mode-toggle-btn"); if (button && button.dataset.mode !== viewMode) applyMode(button.dataset.mode); };
+document.querySelectorAll(".today-jump").forEach((button) => button.onclick = () => jumpToToday(button.dataset.mode));
+
+// 레일은 접을 수 있다. 넓은 화면에서는 접힌 상태를 기억하고(표에 248px을 더 주려고 접는
+// 것이므로 다음에도 그대로여야 한다), 좁은 화면에서는 서랍이라 늘 닫힌 채로 연다.
+const RAIL_STORAGE_KEY = "gong-go:rail-collapsed";
+const railNarrow = () => window.matchMedia("(max-width: 900px)").matches;
+function setRail(collapsed, remember) {
+  document.body.classList.toggle("rail-collapsed", collapsed);
+  $("#rail-toggle").setAttribute("aria-expanded", String(!collapsed));
+  $("#rail-open").setAttribute("aria-expanded", String(!collapsed));
+  if (remember && !railNarrow()) { try { localStorage.setItem(RAIL_STORAGE_KEY, collapsed ? "1" : ""); } catch {} }
+}
+$("#rail-toggle").onclick = () => setRail(true, true);
+$("#rail-open").onclick = () => setRail(false, true);
+$("#rail-scrim").onclick = () => setRail(true, false);
+setRail(railNarrow() || (() => { try { return localStorage.getItem(RAIL_STORAGE_KEY) === "1"; } catch { return false; } })(), false);
 // 상태와 DOM만 바꾸는 부분을 떼어 둔다. 고급검색은 모드·기간·검색어를 다 채운 뒤 한 번만
 // 조회해야 하므로 모드 전환이 그 자리에서 조회를 걸면 안 된다.
-function setMode(key) { viewMode = key; document.querySelectorAll(".mode-toggle-btn").forEach((button) => { const active = button.dataset.mode === key; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); }); $("#app-subtitle").textContent = MODE_SUBTITLES[key]; $("#close-col").textContent = key === "plan" ? "발주예정" : "마감일"; }
+// 켜짐 표시는 버튼을 감싼 줄(.mode-row)에도 건다. 오늘 건수가 버튼이라 유형 버튼 안에 넣을
+// 수 없어서, 줄 전체가 켜진 것처럼 보이게 하려면 부모가 그 상태를 알아야 한다.
+function setMode(key) { viewMode = key; document.querySelectorAll(".mode-toggle-btn").forEach((button) => { const active = button.dataset.mode === key; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); button.parentElement.classList.toggle("active", active); }); $("#app-subtitle").textContent = MODE_SUBTITLES[key]; $("#close-col").textContent = key === "plan" ? "발주예정" : "마감일"; }
 function applyMode(key) { setMode(key); closeModal(); page = 1; applyFilters(); }
 $("#previous").onclick = () => { if (page > 1) { page -= 1; renderRows(filtered); } }; $("#next").onclick = () => { if (page * pageSize < filtered.length) { page += 1; renderRows(filtered); } }; $("#download-btn").onclick = downloadCsv; $("#download-ecr-btn").onclick = downloadEcr;
 $("#refresh-btn").onclick = startRefresh;
@@ -372,7 +395,7 @@ async function finishRefresh(state) {
 function pollDelay(state) { const started = Date.parse(state.startedAt || ""); return !Number.isNaN(started) && Date.now() - started >= 60000 ? POLL_FAST_MS : POLL_SLOW_MS; }
 function isRecentDaily(file) { const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 40); return /^(pre|bid|plan)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/.test(file.path || "") && file.end >= localDate(cutoff); }
 function refreshText(state) { return `수집 중입니다 · ${state.range ? `${state.range.begin} ~ ${state.range.end}` : "-"}${state.lastLine ? ` · ${state.lastLine}` : ""}`; }
-function setRefresh(busy, text, kind = "") { const button = $("#refresh-btn"), box = $("#refresh-status"); button.disabled = busy; button.setAttribute("aria-busy", String(busy)); button.textContent = busy ? "갱신 중…" : "보유데이터 갱신"; box.hidden = !text; box.className = `refresh-status ${kind}`.trim(); box.textContent = text || ""; }
+function setRefresh(busy, text, kind = "") { const button = $("#refresh-btn"), box = $("#refresh-status"); button.disabled = busy; button.setAttribute("aria-busy", String(busy)); button.textContent = busy ? "갱신 중…" : "보유데이터 갱신"; box.hidden = !text; box.className = `refresh-status ${kind}`.trim(); box.textContent = text || ""; document.querySelectorAll(".empty-refresh").forEach((other) => { other.disabled = busy; other.textContent = button.textContent; }); }
 
 // 고급검색. Worker의 Workers AI가 자연어를 조회 조건으로만 바꾸고, 조회 자체는 평소와 똑같이
 // 워커 스캔이 한다 — 데이터가 R2의 gzip CSV 수십만 건이라 모델에 먹일 수 있는 대상이 아니다.
@@ -415,7 +438,10 @@ function applyNlFilter(state) {
   if (!fileIndex.some((file) => modeOf(file) === viewMode && file.end >= $("#begin").value && file.begin <= $("#end").value)) notes.push(`${MODE_NAMES[viewMode]}에는 이 기간의 보유 데이터가 없습니다.`);
   setNl(false, [`해석: ${state.explain || "-"}`, ...notes].join(" · "), "done");
 }
-function renderRows(rows) { const pages = Math.max(1, Math.ceil(rows.length / pageSize)); page = Math.min(page, pages); const visible = rows.slice((page - 1) * pageSize, page * pageSize); $("#result-summary").textContent = `${format(rows.length)}건`; $("#page-label").textContent = `${page} / ${pages}`; $("#previous").disabled = page === 1; $("#next").disabled = page === pages; $("#download-btn").disabled = !rows.length; $("#download-ecr-btn").disabled = !analyses.size; $("#results").innerHTML = visible.length ? visible.map((row, i) => { const files = normalizeFiles(row.files), analysis = analyses.get(numberOf(row)); return `<tr><td><span class="badge ${row.mode}">${MODE_NAMES[row.mode] || row.mode}</span></td><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(사업명 없음)")}</button>${fileBadge(row, files)}${analysis ? `<span class="ecr-badge ${analysis.verified ? "" : "warning"}">ECR ${analysis.ecrCount}${analysis.verified ? "" : " · 확인 필요"}</span>` : ""}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">오늘</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`; }).join("") : $("#empty-row").innerHTML; document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)])); }
+function renderRows(rows) { const pages = Math.max(1, Math.ceil(rows.length / pageSize)); page = Math.min(page, pages); const visible = rows.slice((page - 1) * pageSize, page * pageSize); $("#result-summary").textContent = `${format(rows.length)}건`; $("#page-label").textContent = `${page} / ${pages}`; $("#previous").disabled = page === 1; $("#next").disabled = page === pages; $("#download-btn").disabled = !rows.length; $("#download-ecr-btn").disabled = !analyses.size; $("#results").innerHTML = visible.length ? visible.map((row, i) => { const files = normalizeFiles(row.files), analysis = analyses.get(numberOf(row)); return `<tr><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(사업명 없음)")}</button>${fileBadge(row, files)}${analysis ? `<span class="ecr-badge ${analysis.verified ? "" : "warning"}">ECR ${analysis.ecrCount}${analysis.verified ? "" : " · 확인 필요"}</span>` : ""}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">오늘</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`; }).join("") : $("#empty-row").innerHTML; document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)])); wireEmptyRefresh(); }
+// 빈 결과 안내에도 갱신 버튼이 있다. 템플릿을 통째로 다시 그리므로 매번 다시 걸고, 지금
+// 갱신이 도는 중이면 레일의 버튼과 같이 잠가 둔다 — 둘을 눌러 두 번 dispatch되면 안 된다.
+function wireEmptyRefresh() { document.querySelectorAll(".empty-refresh").forEach((button) => { button.onclick = startRefresh; button.disabled = $("#refresh-btn").disabled; button.textContent = $("#refresh-btn").textContent; }); }
 function modalSubtitle(row, files) {
   if (row.mode !== "plan") return `${row.institution || "-"} · ${row.businessType || "-"} · 번호 ${numberOf(row) || "-"} · 첨부 ${files.length}건`;
   const parts = [row.institution || "-", row.businessType || "-", `계획번호 ${numberOf(row) || "-"}`];

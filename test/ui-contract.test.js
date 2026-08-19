@@ -15,6 +15,8 @@ const CSS = read("style.css");
 
 const idsIn = (source) => new Set([...source.matchAll(/id="([\w-]+)"/g)].map((match) => match[1]));
 const lookupsIn = (source) => new Set([...source.matchAll(/\$\("#([\w-]+)"\)/g)].map((match) => match[1]));
+// 위치를 견주는 검사가 많다. 찾지 못한 표식은 -1이 되어 비교를 조용히 통과시키므로 여기서 끊는다.
+const at = (needle) => { const index = HTML.indexOf(needle); assert.notEqual(index, -1, `index.html에 ${needle}가 없다`); return index; };
 
 test("app.js가 id로 찾는 요소는 index.html에 모두 있다", () => {
   const missing = [...lookupsIn(APP)].filter((id) => !idsIn(HTML).has(id));
@@ -40,30 +42,46 @@ test("토글 버튼의 aria-controls는 실재하는 요소를 가리킨다", ()
 test("관심 기관은 조건과 편집 도구를 갈라 둔다", () => {
   // 지금 무엇으로 걸러지는지(칩·개수·부분일치)는 접으면 안 된다. 접힌 채로 조회하면
   // 결과가 왜 이만큼인지 알 수 없다. 접는 것은 기관을 더하고 프리셋을 관리하는 도구뿐이다.
-  const editor = HTML.slice(HTML.indexOf('id="inst-editor"'), HTML.indexOf('class="advanced-row"'));
+  const editor = at('id="inst-editor"');
   for (const id of ["inst-name", "inst-code", "add-row-btn", "inst-preset", "preset-new", "preset-delete", "inst-search-btn", "clear-inst-btn"]) {
-    assert.ok(editor.includes(`id="${id}"`), `${id}는 편집 영역 안에 있어야 한다`);
+    assert.ok(at(`id="${id}"`) > editor, `${id}는 편집 영역 안에 있어야 한다`);
   }
   for (const id of ["inst-chips", "inst-count", "inst-loose"]) {
-    assert.ok(!editor.includes(`id="${id}"`), `${id}는 접히면 안 된다`);
+    assert.ok(at(`id="${id}"`) < editor, `${id}는 접히면 안 된다`);
   }
 });
 
-test("주 조회 줄이 관심 기관 블록보다 위에 있다", () => {
-  // 사람이 가장 자주 만지는 것이 먼저 와야 한다. 예전에는 관심 기관 관리 블록이 위에 있어
-  // 검색어와 게시일이 그 아래로 밀려 있었다.
-  assert.ok(HTML.indexOf('class="filter-row"') < HTML.indexOf('class="inst-section"'));
+test("레일에는 늘 쓰는 것을, 본문에는 검색과 결과를 둔다", () => {
+  // 한 번 정해 두고 계속 쓰는 것(유형·관심 기관·보유 데이터)은 왼쪽 레일에, 매번 바꾸는
+  // 것(검색어·기간)과 결과는 본문에 둔다. 예전에는 조건 패널이 본문 위를 다 먹어 결과가
+  // 첫 화면 밖으로 밀려 있었다.
+  const rail = HTML.slice(at('id="rail"'), at('<main class="main">'));
+  for (const id of ["mode-toggle", "today-summary", "inst-chips", "inst-editor", "data-range", "refresh-btn"]) {
+    assert.ok(rail.includes(`id="${id}"`), `${id}는 레일에 있어야 한다`);
+  }
+  const main = HTML.slice(at('<main class="main">'));
+  for (const id of ["q", "business-type", "begin", "end", "search", "advanced-toggle", "status", "results", "page-size"]) {
+    assert.ok(main.includes(`id="${id}"`), `${id}는 본문에 있어야 한다`);
+  }
+  assert.ok(at('class="filter-row"') < at('class="results-header"'), "조회 줄이 결과보다 위에 있어야 한다");
 });
 
-test("조회 조건은 세로를 먹는 줄을 따로 쌓지 않는다", () => {
-  // 조회 결과가 첫 화면에 함께 보여야 한다. 상태·오늘 요약·갱신 버튼이 각자 줄을 쓰면
-  // 그것만으로 100px이 넘고, 칩이 제 줄을 쓰면 40px이 더 붙는다.
-  const statusBar = HTML.slice(HTML.indexOf('class="data-status"'), HTML.indexOf('id="refresh-status"'));
-  assert.ok(statusBar.includes('id="today-summary"'), "오늘 요약은 보유 데이터 줄 안에 있어야 한다");
-  assert.ok(statusBar.includes('id="refresh-btn"'), "갱신 버튼은 보유 데이터 줄 안에 있어야 한다");
-  const head = HTML.slice(HTML.indexOf('class="inst-head"'), HTML.indexOf('id="inst-editor"'));
-  assert.ok(head.includes('id="inst-chips"'), "칩은 관심 기관 라벨과 같은 줄에 있어야 한다");
-  // 고급검색 토글은 검색·초기화와 같은 버튼 묶음에 있다(예전에는 제 줄을 하나 썼다).
-  const actions = HTML.slice(HTML.indexOf('class="filter-actions"'), HTML.indexOf('id="advanced-panel"'));
-  assert.ok(actions.includes('id="advanced-toggle"'));
+test("표의 열 수와 빈 행의 colspan, renderRows가 그리는 칸 수가 모두 같다", () => {
+  // 한 번에 한 모드만 조회하므로(applyFilters가 그 모드의 파일만 받는다) 유형 열은 모든
+  // 행에서 같은 값이 된다. 그래서 뺐다 — 지금 보는 유형은 레일에서 이미 켜져 있다.
+  const head = HTML.slice(at("<thead>"), at("</thead>"));
+  const columns = [...head.matchAll(/<th\b/g)].length;
+  assert.equal(columns, 6);
+  assert.match(HTML, new RegExp(`id="empty-row"[\\s\\S]*?colspan="${columns}"`), "빈 행이 표 전체를 덮지 않는다");
+  // 셋 중 하나만 어긋나도 값이 옆 칸으로 밀려 들어간다.
+  const start = APP.indexOf("visible.map((row, i)");
+  const row = APP.slice(start, APP.indexOf("</tr>`", start));
+  assert.equal([...row.matchAll(/<td/g)].length, columns, "renderRows가 그리는 칸 수가 머리글과 다르다");
+});
+
+test("결과가 없을 때도 그 자리에서 보유데이터를 갱신할 수 있다", () => {
+  // 0건의 가장 잦은 이유가 "아직 수집하지 않은 기간"이라, 레일까지 눈을 옮기지 않고
+  // 안내 문구 아래에서 바로 다시 받을 수 있어야 한다.
+  assert.match(HTML, /id="empty-row"[\s\S]*?class="[^"]*\bempty-refresh\b/);
+  assert.match(APP, /querySelectorAll\("\.empty-refresh"\)/, "템플릿은 매번 다시 그려지므로 그릴 때마다 버튼을 걸어야 한다");
 });
