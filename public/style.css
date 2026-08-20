@@ -60,7 +60,6 @@ a { color: var(--link); text-decoration: none; } a:hover { color: var(--link-hov
 .main { flex: 1 1 auto; min-width: 0; padding: 20px 28px 28px; }
 body.rail-collapsed .rail { display: none; }
 .rail-scrim { display: none; }
-.rail-open { display: none; } body.rail-collapsed .rail-open { display: inline-flex; }
 
 .rail-brand { display: flex; align-items: flex-start; gap: 8px; padding: 0 4px 18px 8px; }
 .rail-brand h1 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
@@ -141,11 +140,30 @@ body.rail-collapsed .rail { display: none; }
 .date-input { width: auto; height: auto; padding: 0; border: 0; background: none; color: var(--text-1); font-size: 13px; }
 .date-input:focus { outline: none; box-shadow: none; }
 .date-sep { color: var(--faint); }
-.date-today { height: 30px; margin-left: 2px; padding: 0 10px; border-left: 1px solid var(--line); border-radius: 0; }
+/* 조회 줄이 좁아지면 flex가 이 버튼부터 줄여 "오늘"이 두 글자로 접힌다. 여기서 막는다. */
+.date-today { flex: 0 0 auto; height: 30px; margin-left: 2px; padding: 0 10px; border-left: 1px solid var(--line); border-radius: 0; white-space: nowrap; }
 .filter-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 
-/* 고급검색은 기본으로 접어 둔다. 켜져 있을 때만 토글이 눌린 것처럼 보인다. */
-#advanced-toggle.active { border-color: var(--blue-line); background: var(--blue-bg); color: var(--blue-text); }
+/* ── ☰ 메뉴 ───────────────────────────────────────────────────────────────
+   자주 쓰지 않는 동작(초기화·고급검색·내보내기·갱신)을 조회 줄 밖으로 빼 여기 모은다.
+   예전에 이 자리에 있던 .rail-open은 `display: none`을 뒤에 오는 `.icon-btn`의
+   `display: inline-flex`에 빼앗겨, 레일이 펼쳐진 넓은 화면에서도 보이면서 눌러도
+   아무 일도 하지 않았다. 그래서 감출 규칙(.menu-rail-open)은 반드시 .menu-item
+   뒤에 둔다 — 특정도가 같으면 뒤에 쓴 쪽이 이긴다. */
+.menu { position: relative; flex: 0 0 auto; }
+.menu-btn { width: 38px; height: 42px; color: var(--text-2); }
+.menu-btn svg { width: 18px; height: 18px; }
+.menu-btn.active { background: var(--bg-hover); color: var(--text); }
+.menu-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 16; display: flex; flex-direction: column; min-width: 210px; padding: 6px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-raised); box-shadow: 0 16px 40px var(--shadow); }
+.menu-label { margin: 9px 0 3px; padding: 0 9px; color: var(--faint); font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; }
+.menu-item { display: flex; align-items: center; height: 34px; padding: 0 9px; border-radius: 7px; color: var(--text-1); font-size: 13px; text-align: left; white-space: nowrap; }
+.menu-item:hover:not(:disabled) { background: var(--bg-hover); }
+.menu-item.active { background: var(--blue-bg); color: var(--blue-text); }
+/* 레일을 여는 항목은 레일이 접혀 있을 때만 뜻이 있다. 펼쳐져 있으면 감춘다. */
+.menu-rail-open { display: none; }
+body.rail-collapsed .menu-rail-open { display: flex; }
+
+/* 고급검색은 기본으로 접어 둔다. 켜져 있을 때는 메뉴 항목이 .active로 켜져 보인다. */
 .advanced-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; padding: 14px; border-radius: 10px; background: var(--bg-field); }
 .nl-input { flex: 1 1 260px; height: 42px; }
 .advanced-hint { flex: 1 1 100%; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
@@ -156,12 +174,11 @@ body.rail-collapsed .rail { display: none; }
 .hint { margin: 10px 2px 0; color: var(--faint); font-size: 12px; line-height: 1.65; }
 
 /* ── 조회 결과 ───────────────────────────────────────────────────────────── */
-.results-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 22px 0 13px; }
+.results-header { margin: 22px 0 13px; }
 .results-title { min-width: 0; }
 .results-header h2 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
 #result-summary { margin-left: 4px; color: var(--text-2); font-weight: 500; }
 .subtitle { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
-.download-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 6px; }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; table-layout: fixed; border-collapse: collapse; }
 th { padding: 0 12px 9px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; font-weight: 600; text-align: left; }
@@ -212,8 +229,6 @@ input:not([type="checkbox"]):focus, select:focus { outline: none; border-color: 
 .icon-btn { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 26px; height: 26px; border-radius: 7px; color: var(--muted); }
 .icon-btn:hover { background: var(--bg-hover); color: var(--text-2); }
 .icon-btn svg { width: 15px; height: 15px; }
-.rail-open { width: 38px; height: 42px; color: var(--text-2); }
-.rail-open svg { width: 18px; height: 18px; }
 code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
 
 /* ── 상세 모달 ───────────────────────────────────────────────────────────── */
@@ -268,16 +283,18 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
 @media (max-width: 900px) {
   .rail { position: fixed; top: 0; left: 0; flex-basis: 288px; width: 288px; box-shadow: 8px 0 32px var(--shadow); }
   body:not(.rail-collapsed) .rail-scrim { display: block; position: fixed; inset: 0; z-index: 14; background: var(--scrim); }
-  .rail-open { display: inline-flex; }
   .main { padding: 12px 16px 24px; }
   .filter-row { flex-wrap: wrap; }
   .filter-q { flex: 1 1 180px; }
   .filter-type, .filter-date { flex: 1 1 auto; }
   .filter-actions { flex: 1 1 100%; }
-  .filter-actions .primary-btn, .filter-actions .ghost-btn { flex: 1 1 0; justify-content: center; }
-  .results-header { flex-wrap: wrap; }
+  .filter-actions .primary-btn { flex: 1 1 0; justify-content: center; }
 }
 @media (max-width: 700px) {
+  /* 네이티브 날짜 입력은 제 폭 아래로 줄지 않는다(둘이면 이미 270px이 넘는다). 게시일 칸이
+     통째로 화면 밖으로 나가 본문이 가로로 흐르던 자리다. 여기서는 칸 안에서 접히게 둔다. */
+  .filter-date { flex-wrap: wrap; height: auto; padding: 7px 10px; row-gap: 4px; }
+  .date-today { margin-left: auto; border-left: 0; }
   table, tbody, tr, td { display: block; }
   thead { display: none; }
   table { table-layout: auto; }

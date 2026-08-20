@@ -139,6 +139,22 @@ $("#rail-toggle").onclick = () => setRail(true, true);
 $("#rail-open").onclick = () => setRail(false, true);
 $("#rail-scrim").onclick = () => setRail(true, false);
 setRail(railNarrow() || (() => { try { return localStorage.getItem(RAIL_STORAGE_KEY) === "1"; } catch { return false; } })(), false);
+
+// 조회 줄의 ☰. 자주 쓰지 않는 동작(초기화·고급검색·내보내기·갱신)을 여기 모아 두고, 줄에는
+// 검색어·업무·게시일·검색만 남긴다. 예전에는 이 자리가 레일을 펼치는 버튼 하나였는데
+// 넓은 화면에서는 레일이 이미 펼쳐져 있어 눌러도 아무 일도 하지 않았다.
+// 항목을 고르면 바로 닫는다 — 하나 고르고 나면 볼 일이 끝나는 메뉴다.
+function setMenu(open) {
+  $("#menu-panel").hidden = !open;
+  $("#menu-btn").setAttribute("aria-expanded", String(open));
+  $("#menu-btn").classList.toggle("active", open);
+}
+$("#menu-btn").onclick = () => setMenu($("#menu-panel").hidden);
+$("#menu-panel").onclick = (event) => { if (event.target.closest("button:not(:disabled)")) setMenu(false); };
+// 바깥을 누르거나 Esc로도 닫는다. 모달의 Esc 처리는 document.onkeydown 자리를 쓰고 있어
+// 여기서는 addEventListener로 따로 건다(그 자리를 빼앗으면 모달이 닫히지 않는다).
+document.addEventListener("click", (event) => { if (!event.target.closest(".menu")) setMenu(false); });
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") setMenu(false); });
 // 상태와 DOM만 바꾸는 부분을 떼어 둔다. 고급검색은 모드·기간·검색어를 다 채운 뒤 한 번만
 // 조회해야 하므로 모드 전환이 그 자리에서 조회를 걸면 안 된다.
 // 켜짐 표시는 버튼을 감싼 줄(.mode-row)에도 건다. 오늘 건수가 버튼이라 유형 버튼 안에 넣을
@@ -146,7 +162,7 @@ setRail(railNarrow() || (() => { try { return localStorage.getItem(RAIL_STORAGE_
 function setMode(key) { viewMode = key; document.querySelectorAll(".mode-toggle-btn").forEach((button) => { const active = button.dataset.mode === key; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); button.parentElement.classList.toggle("active", active); }); $("#app-subtitle").textContent = MODE_SUBTITLES[key]; $("#close-col").textContent = key === "plan" ? "발주예정" : "마감일"; }
 function applyMode(key) { setMode(key); closeModal(); page = 1; applyFilters(); }
 $("#previous").onclick = () => { if (page > 1) { page -= 1; renderRows(filtered); } }; $("#next").onclick = () => { if (page * pageSize < filtered.length) { page += 1; renderRows(filtered); } }; $("#download-btn").onclick = downloadCsv; $("#download-ecr-btn").onclick = downloadEcr;
-$("#refresh-btn").onclick = startRefresh;
+$("#refresh-btn").onclick = startRefresh; $("#menu-refresh").onclick = startRefresh;
 $("#page-size").onchange = () => { pageSize = Number($("#page-size").value) || 50; page = 1; renderRows(filtered); };
 $("#add-row-btn").onclick = addInstitution;
 $("#clear-inst-btn").onclick = () => { institutionList = []; renderInstitutions(); scheduleSearch(); };
@@ -395,7 +411,7 @@ async function finishRefresh(state) {
 function pollDelay(state) { const started = Date.parse(state.startedAt || ""); return !Number.isNaN(started) && Date.now() - started >= 60000 ? POLL_FAST_MS : POLL_SLOW_MS; }
 function isRecentDaily(file) { const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 40); return /^(pre|bid|plan)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/.test(file.path || "") && file.end >= localDate(cutoff); }
 function refreshText(state) { return `수집 중입니다 · ${state.range ? `${state.range.begin} ~ ${state.range.end}` : "-"}${state.lastLine ? ` · ${state.lastLine}` : ""}`; }
-function setRefresh(busy, text, kind = "") { const button = $("#refresh-btn"), box = $("#refresh-status"); button.disabled = busy; button.setAttribute("aria-busy", String(busy)); button.textContent = busy ? "갱신 중…" : "보유데이터 갱신"; box.hidden = !text; box.className = `refresh-status ${kind}`.trim(); box.textContent = text || ""; document.querySelectorAll(".empty-refresh").forEach((other) => { other.disabled = busy; other.textContent = button.textContent; }); }
+function setRefresh(busy, text, kind = "") { const button = $("#refresh-btn"), box = $("#refresh-status"); button.disabled = busy; button.setAttribute("aria-busy", String(busy)); button.textContent = busy ? "갱신 중…" : "보유데이터 갱신"; box.hidden = !text; box.className = `refresh-status ${kind}`.trim(); box.textContent = text || ""; document.querySelectorAll(".empty-refresh, #menu-refresh").forEach((other) => { other.disabled = busy; other.textContent = button.textContent; }); }
 
 // 고급검색. Worker의 Workers AI가 자연어를 조회 조건으로만 바꾸고, 조회 자체는 평소와 똑같이
 // 워커 스캔이 한다 — 데이터가 R2의 gzip CSV 수십만 건이라 모델에 먹일 수 있는 대상이 아니다.
