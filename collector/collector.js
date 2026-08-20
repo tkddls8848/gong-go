@@ -105,14 +105,17 @@ async function main() {
   let finished = 0;
   // flush는 바뀐 버킷 집합을 통째로 넘겨받고 새 집합을 연다. 저장이 도는 동안 다른 작업이
   // 같은 버킷을 또 건드리면 그 버킷은 새 집합에 들어가 다음 flush가 다시 쓴다.
-  // 저장끼리는 순서대로 이어 붙여 같은 파일을 두 번 겹쳐 쓰지 않는다.
+  // 저장끼리는 순서대로 이어 붙여 같은 파일을 두 번 겹쳐 쓰지 않는다. 재개 상태도 같은
+  // 시점에 스냅샷한다. 파일 쓰기를 기다리는 동안 끝난 후속 작업까지 이전 체크포인트에
+  // 섞이면, 그 파일을 쓰기 전에 프로세스가 끝났을 때 재개가 해당 작업을 잘못 건너뛴다.
   const flush = (saveResume) => {
     const batch = changed;
+    const checkpoint = saveResume ? checkpointState(state) : null;
     changed = new Set();
     flushing = flushing.then(async () => {
       if (batch.size) await writeRecords(store, batch);
       await writeIndexFromStore(store);
-      if (saveResume) await saveState(state);
+      if (checkpoint) await saveState(checkpoint);
     });
     return flushing;
   };
@@ -445,7 +448,8 @@ async function readState() {
     throw error;
   }
 }
-async function saveState(state) { await fs.writeFile(STATE_FILE, JSON.stringify({ completedJobs: [...new Set(state.completedJobs)] }, null, 2), "utf8"); }
+function checkpointState(state) { return { completedJobs: [...new Set(state.completedJobs)] }; }
+async function saveState(state) { await fs.writeFile(STATE_FILE, JSON.stringify(state, null, 2), "utf8"); }
 
 // resume:false일 때 해당 작업 구간의 기존 레코드를 비운다. 버킷 단위라 구간 밖은 건드리지 않는다.
 function clearJobRange(store, job, changed) {
@@ -507,4 +511,4 @@ function ymd(value) { return String(value).replaceAll("-", ""); }
 function ym(value) { return ymd(value).slice(0, 6); }
 function today() { return iso(new Date()); }
 
-module.exports = { applyItems, clearJobRange, clearLegacySources, recordsForWrite, sourceEndpoint, serverTimingDuration, isRetryable };
+module.exports = { applyItems, checkpointState, clearJobRange, clearLegacySources, recordsForWrite, sourceEndpoint, serverTimingDuration, isRetryable };

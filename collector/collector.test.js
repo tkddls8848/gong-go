@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { serializeCsv } = require("../shared/csv-record");
 const {
   applyItems,
+  checkpointState,
   clearJobRange,
   clearLegacySources,
   recordsForWrite,
@@ -10,6 +11,18 @@ const {
   serverTimingDuration,
   isRetryable,
 } = require("./collector");
+
+test("체크포인트는 flush 시작 뒤 완료된 작업을 포함하지 않는다", () => {
+  const state = { completedJobs: ["job-1", "job-1", "job-2"] };
+  const checkpoint = checkpointState(state);
+
+  // 파일 저장을 기다리는 동안 후속 작업이 끝나는 상황이다. 이전 체크포인트가 이 변경을
+  // 따라가면, 후속 작업의 파일을 쓰기 전에 중단됐을 때 재개가 job-3을 잘못 건너뛴다.
+  state.completedJobs.push("job-3");
+
+  assert.deepEqual(checkpoint, { completedJobs: ["job-1", "job-2"] });
+  assert.deepEqual(state.completedJobs, ["job-1", "job-1", "job-2", "job-3"]);
+});
 
 function storeOf(rows) {
   const store = { buckets: new Map(), location: new Map(), counts: new Map() };
