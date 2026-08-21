@@ -68,6 +68,7 @@ body.rail-collapsed .rail { display: none; }
 body.rail-collapsed .rail-restore { display: flex; }
 
 .rail-brand { display: flex; align-items: flex-start; gap: 8px; padding: 0 4px 18px 8px; }
+.rail-toggle-icon { display: block; width: 16px; height: 16px; background: currentColor; mask: url("assets/chevron-left.svg") center / contain no-repeat; }
 .rail-brand h1 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
 .rail-tag { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
 .rail-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 8px 8px; }
