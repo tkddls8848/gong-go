@@ -133,10 +133,12 @@ function setRail(collapsed, remember) {
   document.body.classList.toggle("rail-collapsed", collapsed);
   $("#rail-toggle").setAttribute("aria-expanded", String(!collapsed));
   $("#rail-open").setAttribute("aria-expanded", String(!collapsed));
+  $("#rail-restore").setAttribute("aria-expanded", String(!collapsed));
   if (remember && !railNarrow()) { try { localStorage.setItem(RAIL_STORAGE_KEY, collapsed ? "1" : ""); } catch {} }
 }
 $("#rail-toggle").onclick = () => setRail(true, true);
 $("#rail-open").onclick = () => setRail(false, true);
+$("#rail-restore").onclick = () => setRail(false, true);
 $("#rail-scrim").onclick = () => setRail(true, false);
 setRail(railNarrow() || (() => { try { return localStorage.getItem(RAIL_STORAGE_KEY) === "1"; } catch { return false; } })(), false);
 

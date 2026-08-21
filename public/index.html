@@ -73,6 +73,10 @@
       </div>
     </aside>
     <div class="rail-scrim" id="rail-scrim"></div>
+    <!-- 레일을 접으면 화면에 그것을 되돌릴 방법이 사라져서는 안 된다. ☰ 메뉴 맨 위에도
+         같은 동작(#rail-open)이 있지만 메뉴를 열어야 보인다. 이 탭은 접힌 동안 왼쪽 가장자리에
+         늘 붙어 있어 한 번에 누를 수 있다. -->
+    <button id="rail-restore" class="rail-restore" type="button" title="조회 조건 펼치기" aria-label="조회 조건 펼치기" aria-expanded="false" aria-controls="rail"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.4 4.2L10.2 8l-3.8 3.8"></path></svg></button>
 
     <main class="main">
       <div class="filter-row">

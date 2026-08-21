@@ -60,6 +60,12 @@ a { color: var(--link); text-decoration: none; } a:hover { color: var(--link-hov
 .main { flex: 1 1 auto; min-width: 0; padding: 20px 28px 28px; }
 body.rail-collapsed .rail { display: none; }
 .rail-scrim { display: none; }
+/* 레일을 접으면 되돌릴 자리가 왼쪽 가장자리에 하나 남는다. 접혀 있을 때만 보이고, 색은
+   레일 밖으로 나온 조각이라는 것만 알리면 되니 아이콘 버튼 하나만큼만 쓴다. */
+.rail-restore { display: none; position: fixed; top: 20px; left: 0; z-index: 15; align-items: center; justify-content: center; width: 18px; height: 44px; border: 1px solid var(--line); border-left: 0; border-radius: 0 9px 9px 0; background: var(--bg-rail); color: var(--muted); box-shadow: 2px 0 8px var(--shadow); }
+.rail-restore:hover { width: 22px; background: var(--bg-hover); color: var(--text-2); }
+.rail-restore svg { width: 13px; height: 13px; }
+body.rail-collapsed .rail-restore { display: flex; }
 
 .rail-brand { display: flex; align-items: flex-start; gap: 8px; padding: 0 4px 18px 8px; }
 .rail-brand h1 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
