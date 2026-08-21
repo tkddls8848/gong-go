@@ -385,6 +385,79 @@ test("dispatch가 실패하면 GitHub의 상태와 사유를 그대로 전한다
   assert.match((await json(response)).message, /workflow_dispatch trigger/);
 });
 
+// ── 갱신 버튼 남용 방지 ──────────────────────────────────────────────────────
+// R2를 상태 저장소로 재사용한다(새 바인딩을 늘리지 않는다). KEY 화이트리스트에 없는
+// 키라 /data/로는 절대 노출되지 않는다.
+function memoryData() {
+  const store = new Map();
+  return {
+    async get(key) { return store.has(key) ? { async json() { return JSON.parse(store.get(key)); } } : null; },
+    async put(key, value) { store.set(key, value); },
+  };
+}
+
+test("쿨다운 안에 다시 누르면 429이고 dispatch는 나가지 않는다", async (t) => {
+  freezeNow(t);
+  const calls = stubFetch(t, () => new Response(null, { status: 204 }));
+  const env = envOf({ DATA: memoryData() });
+  const cookie = await gateCookie(env);
+
+  const first = await authed("/api/refresh", { method: "POST", cookie }, env);
+  assert.equal(first.status, 202);
+  assert.equal(calls.length, 1);
+
+  const second = await authed("/api/refresh", { method: "POST", cookie }, env);
+  assert.equal(second.status, 429);
+  assert.equal(second.headers.get("Retry-After"), "180");
+  assert.match((await json(second)).message, /너무 자주/);
+  assert.equal(calls.length, 1, "쿨다운에 걸리면 GitHub에는 요청조차 나가면 안 된다");
+});
+
+test("쿨다운이 지나면 다시 누를 수 있다", async (t) => {
+  const calls = stubFetch(t, () => new Response(null, { status: 204 }));
+  const env = envOf({ DATA: memoryData() });
+  const cookie = await gateCookie(env);
+
+  const original = Date.now;
+  Date.now = () => NOW;
+  t.after(() => { Date.now = original; });
+  assert.equal((await authed("/api/refresh", { method: "POST", cookie }, env)).status, 202);
+
+  Date.now = () => NOW + 3 * 60 * 1000 + 1;
+  const response = await authed("/api/refresh", { method: "POST", cookie }, env);
+  assert.equal(response.status, 202);
+  assert.equal(calls.length, 2);
+});
+
+test("하루 한도에 닿으면 429이고, 자동 크론은 그대로 돈다", async (t) => {
+  freezeNow(t);
+  const calls = stubFetch(t, () => new Response(null, { status: 204 }));
+  const env = envOf({ DATA: memoryData() });
+  // 오늘 이미 한도만큼 눌렀고, 쿨다운은 지난 상태를 미리 심어 둔다.
+  await env.DATA.put("_meta/refresh-limit.json", JSON.stringify({
+    date: "2026-08-17", count: 20, lastAt: new Date(NOW - 10 * 60 * 1000).toISOString(),
+  }));
+  const cookie = await gateCookie(env);
+
+  const response = await authed("/api/refresh", { method: "POST", cookie }, env);
+  assert.equal(response.status, 429);
+  assert.match((await json(response)).message, /한도/);
+  assert.equal(calls.length, 0, "한도를 넘으면 GitHub에는 요청조차 나가면 안 된다");
+
+  // 같은 상태에서 크론(scheduled)은 버튼과 무관하게 그대로 동작해야 한다.
+  await worker.scheduled({ scheduledTime: NOW }, env);
+  assert.equal(calls.length, 1);
+});
+
+test("R2 상태를 못 읽어도 갱신 자체는 막지 않는다", async (t) => {
+  freezeNow(t);
+  const calls = stubFetch(t, () => new Response(null, { status: 204 }));
+  const broken = { async get() { throw new Error("R2 down"); }, async put() { throw new Error("R2 down"); } };
+  const response = await authed("/api/refresh", { method: "POST" }, envOf({ DATA: broken }));
+  assert.equal(response.status, 202);
+  assert.equal(calls.length, 1);
+});
+
 test("갱신 API는 GET·POST만 받는다", async (t) => {
   stubFetch(t);
   const response = await authed("/api/refresh", { method: "DELETE" });

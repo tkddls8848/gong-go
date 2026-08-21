@@ -34,6 +34,15 @@ const DAY_MS = 86400000;
 // 시각을 그대로 쓰면 반올림이나 시계 오차로 자기 실행을 걸러 내고 영영 기다리게 된다.
 const DISPATCH_MARGIN_MS = 2000;
 
+// 갱신 버튼 남용을 막는 한도. 매시 크론(하루 10회)은 여기 걸리지 않는다 — 버튼만 사람이
+// 얼마든지 눌러 나라장터 API의 하루 호출량을 태울 수 있는 자리라 그쪽만 세면 된다.
+// 비밀번호가 공유 자격이라 로그인마다 다른 값을 못 받으므로(tokenFor 참고) 세션별로 나눌
+// 수 없다 — 대신 시스템 전체를 하나로 세는 쪽이 "하루 한도를 넘기지 않는다"는 목적에 맞다.
+const REFRESH_COOLDOWN_MS = 3 * 60 * 1000;
+const REFRESH_DAILY_LIMIT = 20;
+// R2에 남긴 상태는 KEY 화이트리스트에 들지 않아 /data/로는 절대 안 보인다(serveData 참고).
+const REFRESH_LIMIT_KEY = "_meta/refresh-limit.json";
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -123,6 +132,10 @@ async function routeRequest(request, env) {
 async function handleRefresh(request, env, url) {
   if (!env.GITHUB_TOKEN) return jsonResponse({ message: "GITHUB_TOKEN 시크릿이 설정되지 않았습니다." }, 501);
   if (request.method === "POST") {
+    const prior = await readRefreshState(env);
+    const limited = refreshLimitError(prior);
+    if (limited) return jsonResponse({ message: limited.message }, 429, { "Retry-After": String(limited.retryAfterSec) });
+
     // 매시 크론과 같은 어제~오늘이다. 예전에는 비워 보내 35일 기본값으로 갔는데, 사람이
     // 기다리는 자리에서 111초를 쓰던 것이 26초로 줄었다. 35일은 새벽 크론이 맡는다.
     const dispatchedAt = new Date(Date.now() - DISPATCH_MARGIN_MS).toISOString();
@@ -132,6 +145,7 @@ async function handleRefresh(request, env, url) {
       const data = await response.json().catch(() => ({}));
       return jsonResponse({ message: data.message || `GitHub Actions 실행 요청 실패 (${response.status})` }, response.status);
     }
+    await writeRefreshState(env, nextRefreshState(prior));
     // workflow_dispatch는 204 No Content다 — 실행 id를 주지 않는다. 그래서 시각을 돌려주고
     // 아래 조회가 그 시각 이후에 만들어진 실행만 보게 한다. 이게 없으면 GitHub이 실행을
     // 만들기 전에 도착한 첫 폴링이 직전 실행(크론이나 앞선 버튼)을 집어, 남의 결과를 내
@@ -167,6 +181,44 @@ async function handleRefresh(request, env, url) {
     error: !running && run.conclusion !== "success" ? `GitHub Actions가 ${run.conclusion || "실패"} 상태로 끝났습니다.` : null,
     lastLine: running ? `GitHub Actions ${run.status}` : `GitHub Actions ${run.conclusion}`,
   });
+}
+
+// 오늘(KST) 누적 횟수와 마지막 시각만 R2에 남긴다. env.DATA가 비어 있거나(로컬 테스트) R2가
+// 잠깐 응답하지 않으면 막지 않고 열어 둔다 — 이 한도는 정확한 잠금이 아니라 남용을 줄이는
+// 안전판이라, 읽기가 실패했다고 정상 사용자의 갱신까지 막을 이유는 없다. 동시에 두 요청이
+// 들어오면 마지막에 쓴 값이 이기는 단순한 read-modify-write다. 비밀번호를 공유하는 소수만
+// 쓰는 화면이라 그 정도 경합은 실제로 일어나지 않는다.
+async function readRefreshState(env) {
+  try {
+    const object = await env.DATA.get(REFRESH_LIMIT_KEY);
+    return object ? await object.json() : null;
+  } catch { return null; }
+}
+async function writeRefreshState(env, state) {
+  try { await env.DATA.put(REFRESH_LIMIT_KEY, JSON.stringify(state)); } catch {}
+}
+// 날짜가 바뀌었으면(KST) 어제 카운트는 버린다 — 하루 한도는 KST 하루 기준이다.
+function refreshLimitError(state) {
+  const today = kstToday(Date.now());
+  const sameDay = state?.date === today;
+  const lastAt = sameDay ? Date.parse(state.lastAt || "") : NaN;
+  if (!Number.isNaN(lastAt)) {
+    const waitMs = REFRESH_COOLDOWN_MS - (Date.now() - lastAt);
+    if (waitMs > 0) {
+      const retryAfterSec = Math.ceil(waitMs / 1000);
+      return { message: `너무 자주 눌렀습니다. ${retryAfterSec}초 뒤에 다시 시도하세요.`, retryAfterSec };
+    }
+  }
+  const count = sameDay ? state.count || 0 : 0;
+  if (count >= REFRESH_DAILY_LIMIT) {
+    return { message: `오늘 갱신 버튼 사용 한도(${REFRESH_DAILY_LIMIT}회)에 도달했습니다. 자동 갱신은 그대로 진행됩니다.`, retryAfterSec: DAY_MS / 1000 };
+  }
+  return null;
+}
+function nextRefreshState(prior) {
+  const today = kstToday(Date.now());
+  const count = prior?.date === today ? (prior.count || 0) + 1 : 1;
+  return { date: today, count, lastAt: new Date(Date.now()).toISOString() };
 }
 
 // 자연어 질의를 조회 조건으로만 바꾼다. 공고 본문은 모델에 넣지 않는다 — 데이터는 R2의 gzip
