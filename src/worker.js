@@ -33,6 +33,9 @@ const DAY_MS = 86400000;
 // dispatch 기준 시각을 이만큼 앞으로 당겨 둔다. GitHub의 created 필터는 초 단위라, 요청 직후의
 // 시각을 그대로 쓰면 반올림이나 시계 오차로 자기 실행을 걸러 내고 영영 기다리게 된다.
 const DISPATCH_MARGIN_MS = 2000;
+// 새로 걸기 전에 훑어 볼 최근 실행 수. 끝나지 않은 실행은 언제나 목록 앞쪽에 있으므로
+// 몇 건만 봐도 충분하다.
+const RUNNING_LOOKBACK = 5;
 
 // 갱신 버튼 남용을 막는 한도. 매시 크론(하루 10회)은 여기 걸리지 않는다 — 버튼만 사람이
 // 얼마든지 눌러 나라장터 API의 하루 호출량을 태울 수 있는 자리라 그쪽만 세면 된다.
@@ -115,6 +118,22 @@ function dispatchWorkflow(env, range) {
   });
 }
 
+// 아직 끝나지 않은 collect 실행 하나. 없으면 null이다.
+//
+// event를 가리지 않는다. concurrency group은 이벤트와 무관하게 하나로 묶이므로, 새벽
+// schedule 실행(35일 재수집)도 버튼을 그 뒤에 줄 세운다 — 상태 조회(아래)가 event로 거르는
+// 것과 다른 이유다. 거기서는 "내가 건 실행"을 집어야 하고, 여기서는 "나를 막을 실행"을 찾는다.
+//
+// 조회가 실패하면 막지 않고 null로 답해 예전 경로(그냥 dispatch)로 내려간다. 최악이라도
+// 지금까지처럼 큐에서 기다릴 뿐이고, 상태 조회 한 번이 실패했다고 갱신 자체를 못 하게 될
+// 이유는 없다.
+async function runningCollect(env) {
+  const response = await github(env, `/actions/workflows/${WORKFLOW}/runs?branch=${WORKFLOW_REF}&per_page=${RUNNING_LOOKBACK}`);
+  if (!response.ok) return null;
+  const data = await response.json().catch(() => ({}));
+  return data.workflow_runs?.find((run) => run.status !== "completed") || null;
+}
+
 async function routeRequest(request, env) {
   const url = new URL(request.url);
   if (url.pathname === REFRESH_PATH) return handleRefresh(request, env, url);
@@ -135,6 +154,31 @@ async function handleRefresh(request, env, url) {
     const prior = await readRefreshState(env);
     const limited = refreshLimitError(prior);
     if (limited) return jsonResponse({ message: limited.message }, 429, { "Retry-After": String(limited.retryAfterSec) });
+
+    // 이미 도는 실행이 있으면 새로 걸지 않고 거기 붙는다. collect.yml의 concurrency가
+    // (group: collect, cancel-in-progress: false) 실행을 직렬화하므로, 지금 dispatch해 봐야
+    // 앞 실행이 끝날 때까지 러너조차 잡지 못하고 줄을 선다 — 09시 정각 크론과 겹친 버튼이
+    // 큐에서만 85초를 썼다(run 32709162111: run created 09:00:11, job created 09:01:36).
+    // 매시 크론과 버튼은 어차피 같은 어제~오늘을 받으므로 새 실행을 걸 이유도 없다.
+    //
+    // 한도·쿨다운보다 뒤에 둔다. 한도를 넘긴 요청은 GitHub에 아무것도 묻지 않는다는 성질을
+    // 그대로 지키기 위해서다. 여기 닿은 요청만 실행 하나를 조회한다.
+    const running = await runningCollect(env);
+    if (running) {
+      // 붙는 것은 나라장터 API를 한 번도 더 부르지 않으므로 한도를 세지 않는다(상태를 쓰지 않는다).
+      // 범위는 싣지 않는다 — workflow_dispatch의 inputs는 실행 정보로 되돌아오지 않아서,
+      // 그 실행이 어느 구간을 받는 중인지 여기서는 알 수 없다. 지어내느니 비운다.
+      // 409와 본문 모양은 로컬 devserver의 같은 경로와 맞춘다(devserver/server.js의 handleRefresh).
+      // 화면은 409를 오류로 보지 않고 여기 실린 runId로 폴링을 이어 간다(public/app.js의 startRefresh).
+      return jsonResponse({
+        message: "이미 갱신이 진행 중입니다.",
+        running: true,
+        runId: running.id,
+        runUrl: running.html_url,
+        startedAt: running.run_started_at || running.created_at,
+        lastLine: "이미 돌고 있는 수집에 붙었습니다.",
+      }, 409);
+    }
 
     // 매시 크론과 같은 어제~오늘이다. 예전에는 비워 보내 35일 기본값으로 갔는데, 사람이
     // 기다리는 자리에서 111초를 쓰던 것이 26초로 줄었다. 35일은 새벽 크론이 맡는다.

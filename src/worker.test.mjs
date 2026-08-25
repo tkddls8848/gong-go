@@ -292,12 +292,14 @@ test("갱신 요청은 어제~오늘을 KST로 실어 main 브랜치에 workflow
   const response = await authed("/api/refresh", { method: "POST" });
   assert.equal(response.status, 202);
 
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://api.github.com/repos/tkddls8848/gong-go/actions/workflows/collect.yml/dispatches");
-  assert.equal(calls[0].init.method, "POST");
-  assert.equal(calls[0].init.headers.Authorization, "Bearer gh-token");
+  // 먼저 도는 실행이 있는지 보고(없으므로) 그다음에 건다.
+  assert.equal(calls.length, 2);
+  assert.equal(new URL(calls[0].url).pathname, "/repos/tkddls8848/gong-go/actions/workflows/collect.yml/runs");
+  assert.equal(calls[1].url, "https://api.github.com/repos/tkddls8848/gong-go/actions/workflows/collect.yml/dispatches");
+  assert.equal(calls[1].init.method, "POST");
+  assert.equal(calls[1].init.headers.Authorization, "Bearer gh-token");
   // UTC로는 아직 8월 16일이다. KST로 세지 않으면 여기서 하루 어긋난다.
-  assert.deepEqual(JSON.parse(calls[0].init.body), { ref: "main", inputs: { begin: "2026-08-16", end: "2026-08-17" } });
+  assert.deepEqual(JSON.parse(calls[1].init.body), { ref: "main", inputs: { begin: "2026-08-16", end: "2026-08-17" } });
 
   const state = await json(response);
   assert.equal(state.running, true);
@@ -306,6 +308,62 @@ test("갱신 요청은 어제~오늘을 KST로 실어 main 브랜치에 workflow
   assert.equal(state.runId, undefined);
   // 대신 dispatch 시각을 준다. created 필터가 초 단위라 2초를 앞당겨 자기 실행을 거르지 않게 한다.
   assert.equal(state.dispatchedAt, "2026-08-16T22:59:58.000Z");
+});
+
+// collect.yml의 concurrency(group: collect)가 실행을 직렬화한다. 앞 실행이 도는 동안 건
+// dispatch는 러너조차 잡지 못하고 큐에서 기다린다 — 실측 85초. 그래서 새로 걸지 않고 붙는다.
+test("이미 도는 실행이 있으면 새로 걸지 않고 그 실행에 붙는다", async (t) => {
+  freezeNow(t);
+  const calls = stubFetch(t, (call) => call.url.includes("/dispatches")
+    ? new Response(null, { status: 204 })
+    : jsonResponse({ workflow_runs: [{ id: 77, status: "in_progress", html_url: "https://github.com/run/77", created_at: "2026-08-16T22:59:00Z", run_started_at: "2026-08-16T22:59:05Z" }] }));
+
+  const response = await authed("/api/refresh", { method: "POST" });
+  assert.equal(response.status, 409);
+  const state = await json(response);
+  assert.equal(state.running, true);
+  assert.equal(state.runId, 77);
+  assert.equal(state.startedAt, "2026-08-16T22:59:05Z");
+  // 실행 정보는 workflow_dispatch의 inputs를 돌려주지 않는다. 어느 구간을 받는 중인지
+  // 알 수 없으므로 지어내지 않고 비운다.
+  assert.equal(state.range, undefined);
+  assert.equal(calls.length, 1, "붙을 때는 dispatch가 나가면 안 된다");
+  // 새벽 schedule 실행(35일 재수집)도 같은 group이라 버튼을 줄 세운다. event로 거르면 놓친다.
+  assert.equal(new URL(calls[0].url).searchParams.get("event"), null);
+  assert.equal(new URL(calls[0].url).searchParams.get("branch"), "main");
+});
+
+test("도는 실행에 붙는 것은 한도를 세지 않는다", async (t) => {
+  freezeNow(t);
+  const calls = stubFetch(t, () => jsonResponse({ workflow_runs: [{ id: 77, status: "queued", html_url: "https://github.com/run/77", created_at: "2026-08-16T22:59:00Z" }] }));
+  const env = envOf({ DATA: memoryData() });
+  const cookie = await gateCookie(env);
+
+  assert.equal((await authed("/api/refresh", { method: "POST", cookie }, env)).status, 409);
+  // 바로 다시 눌러도 쿨다운에 걸리지 않는다 — 붙는 것은 나라장터 API를 한 번도 더 부르지 않는다.
+  assert.equal((await authed("/api/refresh", { method: "POST", cookie }, env)).status, 409);
+  assert.equal(calls.length, 2);
+});
+
+test("끝난 실행만 있으면 그대로 새로 건다", async (t) => {
+  freezeNow(t);
+  const calls = stubFetch(t, (call) => call.url.includes("/dispatches")
+    ? new Response(null, { status: 204 })
+    : jsonResponse({ workflow_runs: [{ id: 76, status: "completed", conclusion: "success" }] }));
+
+  assert.equal((await authed("/api/refresh", { method: "POST" })).status, 202);
+  assert.equal(calls.length, 2);
+  assert.ok(calls[1].url.endsWith("/dispatches"));
+});
+
+test("도는 실행을 조회하지 못해도 갱신을 막지는 않는다", async (t) => {
+  freezeNow(t);
+  const calls = stubFetch(t, (call) => call.url.includes("/dispatches")
+    ? new Response(null, { status: 204 })
+    : jsonResponse({ message: "Bad credentials" }, 403));
+
+  assert.equal((await authed("/api/refresh", { method: "POST" })).status, 202);
+  assert.equal(calls.length, 2, "조회가 실패하면 예전처럼 그냥 건다");
 });
 
 test("since를 준 상태 조회는 그 시각 뒤에 만들어진 실행만 본다", async (t) => {
@@ -404,13 +462,13 @@ test("쿨다운 안에 다시 누르면 429이고 dispatch는 나가지 않는�
 
   const first = await authed("/api/refresh", { method: "POST", cookie }, env);
   assert.equal(first.status, 202);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2, "도는 실행 조회 + dispatch");
 
   const second = await authed("/api/refresh", { method: "POST", cookie }, env);
   assert.equal(second.status, 429);
   assert.equal(second.headers.get("Retry-After"), "180");
   assert.match((await json(second)).message, /너무 자주/);
-  assert.equal(calls.length, 1, "쿨다운에 걸리면 GitHub에는 요청조차 나가면 안 된다");
+  assert.equal(calls.length, 2, "쿨다운에 걸리면 GitHub에는 요청조차 나가면 안 된다");
 });
 
 test("쿨다운이 지나면 다시 누를 수 있다", async (t) => {
@@ -426,7 +484,7 @@ test("쿨다운이 지나면 다시 누를 수 있다", async (t) => {
   Date.now = () => NOW + 3 * 60 * 1000 + 1;
   const response = await authed("/api/refresh", { method: "POST", cookie }, env);
   assert.equal(response.status, 202);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 4, "누를 때마다 도는 실행 조회 + dispatch");
 });
 
 test("하루 한도에 닿으면 429이고, 자동 크론은 그대로 돈다", async (t) => {
@@ -455,7 +513,7 @@ test("R2 상태를 못 읽어도 갱신 자체는 막지 않는다", async (t) =
   const broken = { async get() { throw new Error("R2 down"); }, async put() { throw new Error("R2 down"); } };
   const response = await authed("/api/refresh", { method: "POST" }, envOf({ DATA: broken }));
   assert.equal(response.status, 202);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2, "도는 실행 조회 + dispatch");
 });
 
 test("갱신 API는 GET·POST만 받는다", async (t) => {
