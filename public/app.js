@@ -410,7 +410,12 @@ async function finishRefresh(state) {
   setRefresh(false, `갱신 완료 · ${state.range ? `${state.range.begin} ~ ${state.range.end}` : "-"} · 새 파일 ${format(added)}개 · 총 ${format(totalCount())}건 (${diff >= 0 ? "+" : ""}${format(diff)})${last > beforeLast ? ` · 최신 ${last}` : ""}`, "done");
   page = 1; applyFilters({ revalidateRecent: true });
 }
-function pollDelay(state) { const started = Date.parse(state.startedAt || ""); return !Number.isNaN(started) && Date.now() - started >= 60000 ? POLL_FAST_MS : POLL_SLOW_MS; }
+// 초반을 촘촘히 보고, 길어진 실행만 느슨하게 본다. 예전에는 이게 뒤집혀 있어 60초를 넘겨야
+// 촘촘해졌는데, 버튼 실행(어제~오늘)은 30초대에 끝나므로 사실상 언제나 5초 간격만 썼다 —
+// 이미 끝난 실행을 최대 5초 늦게 봤다. 60초를 넘기는 것은 35일 재수집이거나 큐에 걸린 쪽이라
+// 그때는 느슨해도 된다. startedAt이 아직 없는 동안(dispatch 직후 실행 등록 대기)도 촘촘한
+// 쪽으로 떨어진다 — 그 구간이야말로 빨리 찾아야 하는 자리다.
+function pollDelay(state) { const started = Date.parse(state.startedAt || ""); return !Number.isNaN(started) && Date.now() - started >= 60000 ? POLL_SLOW_MS : POLL_FAST_MS; }
 function isRecentDaily(file) { const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 40); return /^(pre|bid|plan)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/.test(file.path || "") && file.end >= localDate(cutoff); }
 function refreshText(state) { return `수집 중입니다 · ${state.range ? `${state.range.begin} ~ ${state.range.end}` : "-"}${state.lastLine ? ` · ${state.lastLine}` : ""}`; }
 function setRefresh(busy, text, kind = "") { const button = $("#refresh-btn"), box = $("#refresh-status"); button.disabled = busy; button.setAttribute("aria-busy", String(busy)); button.textContent = busy ? "갱신 중…" : "보유데이터 갱신"; box.hidden = !text; box.className = `refresh-status ${kind}`.trim(); box.textContent = text || ""; document.querySelectorAll(".empty-refresh, #menu-refresh").forEach((other) => { other.disabled = busy; other.textContent = button.textContent; }); }

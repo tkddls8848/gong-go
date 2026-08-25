@@ -97,6 +97,14 @@ test("메뉴의 갱신 항목은 레일의 갱신 버튼과 진행 상태를 함
   assert.match(APP, /querySelectorAll\("\.empty-refresh, #menu-refresh"\)/, "메뉴 항목도 갱신 중 상태를 따라가야 한다");
 });
 
+test("폴링은 초반을 촘촘히 보고 60초를 넘긴 실행만 느슨하게 본다", () => {
+  // 버튼 실행(어제~오늘)은 30초대에 끝난다. 두 상수가 뒤바뀌면 그 구간을 5초 간격으로만 보게
+  // 되어 이미 끝난 실행을 최대 5초 늦게 알아챈다 — 눈에 띄지 않고 조용히 느려지는 자리라 박아 둔다.
+  const source = APP.match(/function pollDelay\([^)]*\)\s*\{[^}]*\}/)?.[0];
+  assert.ok(source, "pollDelay를 찾지 못했다");
+  assert.match(source, />=\s*60000\s*\?\s*POLL_SLOW_MS\s*:\s*POLL_FAST_MS/);
+});
+
 test("표의 열 수와 빈 행의 colspan, renderRows가 그리는 칸 수가 모두 같다", () => {
   // 한 번에 한 모드만 조회하므로(applyFilters가 그 모드의 파일만 받는다) 유형 열은 모든
   // 행에서 같은 값이 된다. 그래서 뺐다 — 지금 보는 유형은 레일에서 이미 켜져 있다.
