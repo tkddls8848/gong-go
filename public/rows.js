@@ -66,7 +66,7 @@
   // (예전 displayRow의 `row.rlDminsttNm || row.dminsttNm || ""`과 같은 규칙이다).
   const FIELDS = {
     pre: { number: ["bfSpecRgstNo"], institution: ["rlDminsttNm", "dminsttNm"], code: ["dminsttCd"], type: ["bsnsDivNm"], title: ["prdctClsfcNoNm", "bidNtceNm"], published: ["rgstDt", "bidNtceDt"], close: ["opninRgstClseDt", "bidClseDt"] },
-    bid: { number: ["bidNtceNo"], institution: ["rlDminsttNm", "dminsttNm"], code: ["dminsttCd"], type: ["ntceKindNm"], title: ["prdctClsfcNoNm", "bidNtceNm"], published: ["rgstDt", "bidNtceDt"], close: ["opninRgstClseDt", "bidClseDt"] },
+    bid: { number: ["bidNtceNo"], institution: ["rlDminsttNm", "dminsttNm"], code: ["dminsttCd"], type: ["ntceKindNm"], title: ["prdctClsfcNoNm", "bidNtceNm"], published: ["rgstDt", "bidNtceDt"], close: ["opninRgstClseDt", "bidClseDt"], detail: ["bidNtceDtlUrl", "bidNtceUrl"] },
     plan: { number: ["orderPlanUntyNo"], institution: ["orderInsttNm", "totlmngInsttNm"], code: ["orderInsttCd"], type: ["bsnsDivNm"], title: ["bizNm", "prdctClsfcNoNm"], published: ["nticeDt"], close: [] },
   };
   // 첨부 URL·이름 컬럼은 번호가 붙은 계열이다. 발주계획에는 아예 없다(상세 링크만 준다).
@@ -79,7 +79,7 @@
     for (let i = 0; i < header.length; i += 1) if (!at.has(header[i])) at.set(header[i], i);
     const pick = (names) => (names || []).map((name) => at.get(name)).filter((index) => index !== undefined);
     const fields = FIELDS[mode] || FIELDS.bid;
-    const columns = { mode, number: pick(fields.number), institution: pick(fields.institution), code: pick(fields.code), type: pick(fields.type), title: pick(fields.title), published: pick(fields.published), close: pick(fields.close), files: [], extra: {} };
+    const columns = { mode, number: pick(fields.number), institution: pick(fields.institution), code: pick(fields.code), type: pick(fields.type), title: pick(fields.title), published: pick(fields.published), close: pick(fields.close), detail: pick(fields.detail), files: [], extra: {} };
     const series = FILE_SERIES[mode];
     if (series) {
       for (let i = 1; i <= series.count; i += 1) {
@@ -182,7 +182,15 @@
       title: first(cells, columns.title),
       publishedAt: first(cells, columns.published),
     };
-    if (columns.mode !== "plan") { row.closeAt = first(cells, columns.close); row.files = filesOf(cells, columns); return row; }
+    if (columns.mode !== "plan") {
+      row.closeAt = first(cells, columns.close);
+      // 사전공고 API에는 상세화면 링크 필드가 없고, 컬럼을 추가하기 전에 모은 본공고 파일에도
+      // 없다. 빈 문자열을 20만 행에 싣지 않도록 값이 있을 때만 붙인다.
+      const detail = first(cells, columns.detail);
+      if (detail) row.detailUrl = detail;
+      row.files = filesOf(cells, columns);
+      return row;
+    }
     // 발주계획에는 마감일도 첨부 URL도 없다. 발주예정월과 상세 링크가 그 자리를 대신한다.
     const extra = (name) => { const index = columns.extra[name]; return index === undefined ? "" : cells[index] || ""; };
     const year = extra("orderYear"), month = extra("orderMnth");

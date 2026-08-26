@@ -124,3 +124,71 @@ test("결과가 없을 때도 그 자리에서 보유데이터를 갱신할 수 
   assert.match(HTML, /id="empty-row"[\s\S]*?class="[^"]*\bempty-refresh\b/);
   assert.match(APP, /querySelectorAll\("\.empty-refresh"\)/, "템플릿은 매번 다시 그려지므로 그릴 때마다 버튼을 걸어야 한다");
 });
+
+// app.js는 모듈이 아니라 브라우저 스크립트라 통째로는 불러올 수 없다(맨 위에서 DOM을 만진다).
+// 순수 함수만 원문에서 떼어 내 실제로 돌린다 — 문자열 매칭보다 훨씬 많은 것을 잡는다.
+function sourceOf(name) {
+  const start = APP.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `app.js에 ${name}가 없다`);
+  let depth = 0;
+  for (let i = APP.indexOf("{", start); i < APP.length; i += 1) {
+    if (APP[i] === "{") depth += 1;
+    else if (APP[i] === "}" && (depth -= 1) === 0) return APP.slice(start, i + 1);
+  }
+  throw new Error(`${name}의 끝을 찾지 못했다`);
+}
+function evaluate(...names) {
+  return new Function(`${names.map(sourceOf).join("\n")}\nreturn { ${names.join(", ")} };`)();
+}
+
+test("상세 링크가 있는 공고는 모드와 무관하게 나라장터로 열 수 있다", () => {
+  const { detailLink } = evaluate("detailLink", "html");
+  const bid = detailLink({ mode: "bid", detailUrl: "https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R25BK1&bidPbancOrd=000" });
+  assert.match(bid, /href="https:\/\/www\.g2b\.go\.kr\/link\/PNPE027_01\/single\/\?bidPbancNo=R25BK1&amp;bidPbancOrd=000"/, "쿼리의 &가 이스케이프되지 않았다");
+  assert.match(bid, /rel="noopener noreferrer"/);
+  assert.match(bid, /나라장터 공고 상세 열기/);
+  assert.match(detailLink({ mode: "plan", detailUrl: "https://example.go.kr/p" }), /나라장터 발주계획 상세 열기/);
+  // 사전공고와, 컬럼을 추가하기 전에 모은 본공고에는 링크가 없다.
+  assert.equal(detailLink({ mode: "pre" }), "");
+  assert.equal(detailLink({ mode: "bid", detailUrl: "" }), "");
+});
+
+test("첨부가 있는 공고에서도 상세 링크가 사라지지 않는다", () => {
+  // 예전 모달은 files.length가 0일 때만 대체 목록을 그렸다. 본공고는 첨부가 있는 쪽이
+  // 보통이라, 링크를 그 분기 안에 두면 정작 필요한 공고에서 링크가 안 보인다.
+  const start = APP.indexOf('$("#modal-file-list").innerHTML =');
+  const assignment = APP.slice(start, APP.indexOf(";", start));
+  assert.match(assignment, /^\$\("#modal-file-list"\)\.innerHTML = detailLink\(row\) \+/, "상세 링크가 첨부 유무 분기 밖에 있지 않다");
+  // planLinks도 같은 링크를 그리면 발주계획 모달에 링크가 두 번 나온다.
+  const plan = APP.slice(APP.indexOf("function planLinks("));
+  assert.ok(!plan.slice(0, plan.indexOf("\n}")).includes("detailUrl"), "planLinks가 상세 링크를 중복해서 그린다");
+});
+
+test("내려받은 CSV는 머리글과 칸 수가 같다", () => {
+  // 열이 하나만 어긋나도 값이 옆 칸으로 밀려 들어가는데, 눈으로는 파일을 열기 전까지 모른다.
+  // 바깥에서 끌어다 쓰는 것들을 인자로 가려 끼우고 실제로 돌려 본다.
+  let captured = null;
+  const build = new Function("filtered", "downloadRows", "MODE_NAMES", "normalizeFiles", "numberOf", `${sourceOf("downloadCsv")}\nreturn downloadCsv;`);
+  build(
+    [
+      { mode: "bid", announcementNumber: "20260105123-00", businessType: "물품", institution: "기관", title: "서버", publishedAt: "2026-01-05", closeAt: "2026-01-20", files: [{ name: "규격서.hwp", url: "https://example.go.kr/1" }], detailUrl: "https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R25BK1&bidPbancOrd=000" },
+      { mode: "plan", announcementNumber: "P-2026-0001", businessType: "기술용역", institution: "기관", title: "포털", publishedAt: "2026-02-03", orderMonth: "2026-07", detailUrl: "https://example.go.kr/plan/1" },
+      { mode: "pre", announcementNumber: "20260107001", businessType: "용역", institution: "기관", title: "유지관리", publishedAt: "2026-01-07", closeAt: "2026-01-14", files: [] },
+    ],
+    (rows) => { captured = rows; },
+    { bid: "본공고", plan: "발주계획", pre: "사전공고" },
+    (files) => (Array.isArray(files) ? files : []),
+    (row) => row.announcementNumber,
+  )();
+
+  const [header, ...rows] = captured;
+  assert.equal(header[header.length - 1], "나라장터 링크", "상세 링크를 담는 열이 없다");
+  for (const row of rows) assert.equal(row.length, header.length, `${row[0]} 행의 칸 수가 머리글과 다르다`);
+  const link = header.indexOf("나라장터 링크"), files = header.indexOf("첨부파일");
+  assert.equal(rows[0][link], "https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R25BK1&bidPbancOrd=000");
+  assert.equal(rows[1][link], "https://example.go.kr/plan/1");
+  // 발주계획에는 첨부 URL 자체가 없다. 예전에는 그 칸에 상세 링크를 넣어 열의 뜻이 모드마다 달랐다.
+  assert.equal(rows[1][files], "");
+  // 사전공고는 API가 상세 링크를 주지 않으므로 빈 칸이어야 한다(undefined가 아니라).
+  assert.equal(rows[2][link], "");
+});

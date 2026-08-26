@@ -13,6 +13,9 @@ const SERVICE_COLUMNS = {
   bid: [
     "bidNtceNo", "ntceKindNm", "bidNtceNm", "bidNtceDt", "bidClseDt", "rgstDt",
     "dminsttCd", "dminsttNm", "rlDminsttNm", "ntceInsttNm",
+    // 나라장터 상세화면 링크. 발주계획의 orderPlanDtlUrl과 같은 자리다. 원본에는 값이 같은
+    // bidNtceUrl도 있지만 512자짜리를 두 벌 저장할 이유가 없어 상세화면 쪽만 남긴다.
+    "bidNtceDtlUrl",
     ...SERIES("ntceSpecDocUrl", 10), ...SERIES("ntceSpecFileNm", 10),
   ],
   pre: [

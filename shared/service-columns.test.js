@@ -70,3 +70,10 @@ test("모드를 직접 지정하면 그 목록으로 깎는다", () => {
   // 원본이 공고번호를 주지 않은 응답을 수집기가 모드와 함께 넘기는 경로다.
   assert.deepEqual(project({ bidNtceNm: "서버", 낙찰방법: "x" }, "bid"), { bidNtceNm: "서버" });
 });
+
+test("본공고는 나라장터 상세화면 링크 컬럼을 남긴다", () => {
+  // 발주계획의 orderPlanDtlUrl과 같은 자리다. 이게 빠지면 조회 화면이 공고를
+  // 나라장터에서 열 방법이 없다 — 사전공고 API에는 아예 없는 필드다.
+  const bid = project({ bidNtceNo: "1", bidNtceDtlUrl: "https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R25BK00932003&bidPbancOrd=000" });
+  assert.ok("bidNtceDtlUrl" in bid);
+});

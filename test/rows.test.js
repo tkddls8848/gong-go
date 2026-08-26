@@ -217,3 +217,20 @@ test("CSV fetch는 갱신 직후 조건부 재검증 옵션을 전달한다", as
     globalThis.fetch = originalFetch;
   }
 });
+
+test("본공고 행에 나라장터 상세 링크가 실린다", () => {
+  const row = onlyRow([{ ...BID, bidNtceDtlUrl: "https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R25BK00932003&bidPbancOrd=000" }], "bid");
+  assert.equal(row.detailUrl, "https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R25BK00932003&bidPbancOrd=000");
+});
+
+// 저장 파일에는 bidNtceDtlUrl만 담지만, /api/live가 보는 원본 응답에는 bidNtceUrl도 온다.
+// 상세 링크가 비어 있는 공고에서 그쪽으로 흘러가야 한다.
+test("상세 링크가 비면 입찰공고URL로 넘어간다", () => {
+  const rows = Rows.scanObjects([{ ...BID, bidNtceDtlUrl: "", bidNtceUrl: "https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R25BK1&bidPbancOrd=000" }], "bid", Rows.makeCriteria({}), false);
+  assert.equal(rows.matched[0].detailUrl, "https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R25BK1&bidPbancOrd=000");
+});
+
+test("사전공고에는 상세 링크가 없다", () => {
+  // 사전규격정보서비스 응답에는 규격문서파일 URL만 있고 상세화면 링크 필드가 없다.
+  assert.equal(onlyRow([PRE], "pre").detailUrl, undefined);
+});
