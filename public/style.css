@@ -199,9 +199,10 @@ tbody tr:hover { background: var(--bg-hover); }
 .title-link { display: block; color: var(--text); font-size: 14px; font-weight: 500; line-height: 1.5; text-align: left; }
 .title-link:hover { color: var(--link); }
 /* 첨부·ECR은 배지가 아니라 옅은 표식이다. 사업명 아래에서 눈에 걸리기만 하면 된다. */
-.file-badge, .ecr-badge { display: inline-block; margin: 6px 5px 0 0; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); font-size: 11px; }
+.file-badge, .ecr-badge, .live-badge { display: inline-block; margin: 6px 5px 0 0; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); font-size: 11px; }
 .file-badge.empty { color: var(--faint); }
 .ecr-badge { border-color: var(--ok-line); color: var(--ok); } .ecr-badge.warning { border-color: var(--warn-line); color: var(--warn); }
+.live-badge { border-color: var(--blue-line); color: var(--blue-text); }
 .today-badge { display: inline-block; margin-left: 5px; padding: 1px 5px; border-radius: 4px; background: var(--today-bg); color: var(--today-text); font-size: 11px; font-weight: 600; }
 /* 빈 행은 colspan으로 표 전체를 덮는다. table-layout:fixed는 첫 줄의 칸 폭으로 표 폭을
    정하므로, 공고번호 열에 걸어 둔 132px과 고정폭 글꼴을 여기서 되돌려야 한다. */

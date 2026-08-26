@@ -55,6 +55,14 @@ test("본공고 행을 화면 모델로 옮긴다", () => {
   assert.equal(row.closeAt, "2026-01-20 18:00:00");
 });
 
+test("공공 API 객체도 CSV와 같은 필터와 화면 모델을 쓴다", () => {
+  const criteria = Rows.makeCriteria({ q: "서버", type: "물품", from: "20260101", to: "20260131" });
+  const live = Rows.scanObjects([BID, { ...BID, bidNtceNo: "다른번호", bidNtceNm: "청소 용역" }], "bid", criteria, true);
+  const csv = scan([BID], "bid", { q: "서버", type: "물품", from: "20260101", to: "20260131" }, true);
+  assert.equal(live.scanned, 2);
+  assert.deepEqual(live.matched, csv.matched);
+});
+
 test("첨부는 URL이 있는 슬롯만 남고 이름이 없으면 URL에서 찾는다", () => {
   const files = onlyRow([BID], "bid").files;
   assert.deepEqual(files.map((file) => file.name), ["규격서.hwp", "과업지시서.hwp"]);

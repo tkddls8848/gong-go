@@ -12,6 +12,7 @@ const ORIGIN = "https://gong-go.example.workers.dev";
 const PASSWORD = "열려라-참깨";
 const RELAY_TOKEN = "0123456789abcdef0123456789abcdef";
 const RELAY_PATH = "/api/relay/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch";
+const LIVE_PATH = "/api/live?mode=bid&businessType=%EB%AC%BC%ED%92%88&begin=2026-08-16&end=2026-08-17&pageNo=2";
 // UTC로는 8월 16일이지만 KST로는 17일 아침이다. 수집 범위가 KST로 계산되는지 여기서 갈린다.
 const NOW = Date.parse("2026-08-16T23:00:00Z");
 
@@ -134,6 +135,37 @@ test("상류로 나가지 못하면 502에 사유를 실어 준다", async (t) =
   const response = await worker.fetch(request(RELAY_PATH, { headers: { Authorization: `Bearer ${RELAY_TOKEN}` } }), { RELAY_TOKEN });
   assert.equal(response.status, 502);
   assert.match((await json(response)).message, /connect ETIMEDOUT/);
+});
+
+// ── 저장 결과 위에 합치는 최신 조회 ─────────────────────────────────────────
+
+test("최신 조회는 게이트 뒤에서 키를 붙이고 원문 응답을 전달한다", async (t) => {
+  const calls = stubFetch(t, () => new Response('{"response":{"body":{"items":[]}}}', {
+    headers: { "Content-Type": "application/json", "Retry-After": "7" },
+  }));
+  const response = await authed(LIVE_PATH, {}, envOf({ SERVICE_KEY: "decoded+/key" }));
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), '{"response":{"body":{"items":[]}}}');
+  const target = new URL(calls[0].url);
+  assert.equal(target.pathname, "/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch");
+  assert.equal(target.searchParams.get("ServiceKey"), "decoded+/key");
+  assert.equal(target.searchParams.get("numOfRows"), "100");
+  assert.equal(target.searchParams.get("pageNo"), "2");
+  assert.equal(target.searchParams.get("inqryBgnDt"), "202608160000");
+  assert.equal(target.searchParams.get("inqryEndDt"), "202608172359");
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.equal(response.headers.get("Retry-After"), "7");
+  assert.match(response.headers.get("Server-Timing") || "", /^upstream;dur=/);
+});
+
+test("최신 조회는 인증·시크릿·입력 범위를 검사한 뒤에만 상류를 부른다", async (t) => {
+  const calls = stubFetch(t);
+  assert.equal((await worker.fetch(request(LIVE_PATH), envOf({ SERVICE_KEY: "key" }))).status, 401);
+  assert.equal((await authed(LIVE_PATH)).status, 501);
+  assert.equal((await authed("/api/live?mode=bid&businessType=물품&begin=2026-08-14&end=2026-08-17", {}, envOf({ SERVICE_KEY: "key" }))).status, 400);
+  assert.equal((await authed("/api/live?mode=wrong&businessType=물품&begin=2026-08-17&end=2026-08-17", {}, envOf({ SERVICE_KEY: "key" }))).status, 400);
+  assert.equal((await authed(LIVE_PATH, { method: "POST" }, envOf({ SERVICE_KEY: "key" }))).status, 405);
+  assert.equal(calls.length, 0);
 });
 
 // ── 비밀번호 게이트 ─────────────────────────────────────────────────────────

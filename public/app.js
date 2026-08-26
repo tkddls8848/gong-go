@@ -1,10 +1,11 @@
 // 배포본은 Worker가 R2를 중계하고, 로컬은 devserver가 저장소의 data/를 제공한다.
-const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", ASK_API = "/api/ask", POLL_SLOW_MS = 5000, POLL_FAST_MS = 2000, MAX_ROWS = 200000;
+const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", ASK_API = "/api/ask", LIVE_API = "/api/live", POLL_SLOW_MS = 5000, POLL_FAST_MS = 2000, MAX_ROWS = 200000;
 // dispatch는 받아들여졌는데 실행이 끝내 목록에 뜨지 않는 경우의 한도. 이게 없으면 영원히 폴링한다.
 const REFRESH_WAIT_LIMIT_MS = 120000;
 // CSV 스캔은 search-worker.js가 맡는다. 여기서는 워커를 몇 개 띄우고 각자 몇 개씩
 // 동시에 받게 할지만 정한다(둘을 곱한 값이 예전 LOAD_CONCURRENCY 자리다).
 const POOL_SIZE = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)), FETCH_CONCURRENCY = 12;
+const LIVE_TYPES = ["물품", "외자", "용역", "공사"], LIVE_CONCURRENCY = 4, LIVE_MAX_PAGE = 200;
 // 결과가 쌓이는 동안에도 첫 페이지를 미리 그린다. 다만 건수가 커지면 미리보기마다
 // 정렬 비용이 붙으므로 이 한도를 넘으면 진행률만 갱신한다.
 const PREVIEW_LIMIT = 30000, PREVIEW_MS = 700;
@@ -25,7 +26,7 @@ const INDEX_STORAGE_KEY = "gong-go:index-updated-at";
 const DEFAULT_PRESET = "기본";
 // activePreset이 null이면 고급검색이 만든 임시 목록이다. 이때는 저장하지 않는다 — 자연어 질의가
 // 사용자가 공들여 만든 프리셋을 조용히 덮어쓰면 되돌릴 방법이 없다.
-let presets = [], activePreset = DEFAULT_PRESET, institutionList = [], searchTimer = null, refreshRunId = null, refreshRange = null, refreshSince = null;
+let presets = [], activePreset = DEFAULT_PRESET, institutionList = [], searchTimer = null, refreshRunId = null, refreshRange = null, refreshSince = null, liveController = null;
 function cleanInstitutions(list) { return Array.isArray(list) ? list.map((inst) => ({ name: String(inst?.name || ""), code: String(inst?.code || "") })).filter((inst) => inst.name || inst.code) : []; }
 function normalizePresets(list) { return Array.isArray(list) ? list.map((preset) => ({ name: String(preset?.name || "").trim(), institutions: cleanInstitutions(preset?.institutions) })).filter((preset) => preset.name) : []; }
 // 구 형식(단일 목록)이 남아 있으면 "기본" 프리셋으로 옮긴다. 기존 사용자의 칩이 그대로 살아난다.
@@ -242,6 +243,7 @@ function byPublishedDesc(a, b) { const x = a.publishedAt, y = b.publishedAt; ret
 async function applyFilters({ revalidateRecent = false } = {}) {
   const version = ++searchVersion;
   abortScan();
+  if (liveController) liveController.abort();
   const mode = viewMode;
   const begin = $("#begin").value || "0000-01-01", end = $("#end").value || "9999-12-31";
   // 지금 보고 있는 모드의 파일만 받는다. 예전에는 날짜만 보고 골라 사전공고·본공고·발주계획을
@@ -278,8 +280,111 @@ async function applyFilters({ revalidateRecent = false } = {}) {
   if (criteria.from === criteria.to && criteria.from === todayKey() && !todayFile(mode)) parts.push(`오늘(${today()}) ${MODE_NAMES[mode]} 데이터가 아직 없습니다. 수집은 09~18시 매시(KST)에 돕니다.`);
   if (state.capped) parts.push(`표시 한도 ${format(MAX_ROWS)}건에 도달해 나머지 파일은 읽지 않았습니다. 기간을 좁히거나 관심 기관을 지정하세요.`);
   if (state.failures) parts.push(`${format(state.failures)}개 파일을 읽지 못했습니다.`);
-  $("#status").textContent = parts.join(" ");
+  const storedStatus = parts.join(" ");
+  $("#status").textContent = storedStatus;
   renderRows(filtered);
+  // 저장 데이터는 여기까지 기다린 즉시 확정해서 보여 준다. 최신 조회는 별도 요청으로 흘려
+  // 보내므로 나라장터가 느리거나 실패해도 이미 보이는 결과를 지우거나 막지 않는다.
+  void mergeLiveResults({ mode, begin, end, criteria, version, storedRows: filtered.slice(), storedStatus });
+}
+
+function recentLiveSpan(begin, end) {
+  const now = new Date(), yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const first = begin > localDate(yesterday) ? begin : localDate(yesterday);
+  const last = end < localDate(now) ? end : localDate(now);
+  return first <= last ? { begin: first, end: last } : null;
+}
+
+function liveItems(data) {
+  const body = data?.response?.body;
+  if (!body) throw new Error(data?.response?.header?.resultMsg || "공공 API 응답에 본문이 없습니다.");
+  const value = body.items;
+  const items = Array.isArray(value) ? value : Array.isArray(value?.item) ? value.item : value?.item ? [value.item] : [];
+  const size = Math.max(1, Number(body.numOfRows) || 100);
+  return { items, totalPages: Math.min(LIVE_MAX_PAGE, Math.max(1, Math.ceil((Number(body.totalCount) || 0) / size))) };
+}
+
+async function fetchLivePage(mode, businessType, span, pageNo, signal) {
+  const params = new URLSearchParams({ mode, businessType, begin: span.begin, end: span.end, pageNo: String(pageNo) });
+  const response = await fetch(`${LIVE_API}?${params}`, { signal });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || `최신 정보 응답 오류 (${response.status})`);
+  return liveItems(data);
+}
+
+function mergeRows(storedRows, liveRows) {
+  const rows = new Map(storedRows.map((row) => [`${row.mode}:${numberOf(row)}`, row]));
+  for (const row of liveRows) rows.set(`${row.mode}:${numberOf(row)}`, { ...row, live: true });
+  return [...rows.values()].sort(byPublishedDesc);
+}
+
+async function mergeLiveResults({ mode, begin, end, criteria, version, storedRows, storedStatus }) {
+  const span = recentLiveSpan(begin, end);
+  if (!span) return;
+  const controller = new AbortController();
+  liveController = controller;
+  const parsed = Rows.makeCriteria(criteria);
+  const types = criteria.type ? [criteria.type] : LIVE_TYPES;
+  const liveRows = [];
+  let pagesDone = 0, pagesTotal = types.length, failures = 0, scanned = 0, firstError = "";
+
+  const paint = () => {
+    if (version !== searchVersion || controller.signal.aborted) return;
+    filtered = mergeRows(storedRows, liveRows);
+    $("#status").textContent = `${storedStatus} 저장 결과를 먼저 표시했습니다. 최신 정보 확인 중 ${format(pagesDone)}/${format(pagesTotal)}페이지…`;
+    renderRows(filtered);
+  };
+  paint();
+
+  const first = await Promise.all(types.map(async (businessType) => {
+    try {
+      const result = await fetchLivePage(mode, businessType, span, 1, controller.signal);
+      const found = Rows.scanObjects(result.items, mode, parsed, true);
+      scanned += found.scanned;
+      for (const row of found.matched) liveRows.push(row);
+      pagesDone += 1;
+      pagesTotal += result.totalPages - 1;
+      paint();
+      return Array.from({ length: result.totalPages - 1 }, (_, index) => ({ businessType, pageNo: index + 2 }));
+    } catch (error) {
+      if (error.name === "AbortError") return [];
+      if (!firstError) firstError = error.message;
+      failures += 1; pagesDone += 1; paint();
+      return [];
+    }
+  }));
+
+  const pending = first.flat();
+  let cursor = 0;
+  const scan = async () => {
+    while (cursor < pending.length && !controller.signal.aborted) {
+      const task = pending[cursor++];
+      try {
+        const result = await fetchLivePage(mode, task.businessType, span, task.pageNo, controller.signal);
+        const found = Rows.scanObjects(result.items, mode, parsed, true);
+        scanned += found.scanned;
+        for (const row of found.matched) liveRows.push(row);
+      } catch (error) {
+        if (error.name === "AbortError") return;
+        if (!firstError) firstError = error.message;
+        failures += 1;
+      }
+      pagesDone += 1; paint();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(LIVE_CONCURRENCY, pending.length || 1) }, scan));
+  if (version !== searchVersion || controller.signal.aborted) return;
+  filtered = mergeRows(storedRows, liveRows);
+  const storedIds = new Set(storedRows.map((row) => `${row.mode}:${numberOf(row)}`));
+  const liveIds = new Set(liveRows.map((row) => `${row.mode}:${numberOf(row)}`));
+  const added = [...liveIds].filter((id) => !storedIds.has(id)).length;
+  const note = failures
+    ? `최신 정보 일부만 반영 · 새 공고 ${format(added)}건, 실패 ${format(failures)}페이지 (${firstError}).`
+    : `최신 정보 확인 완료 · ${format(scanned)}건 확인, 조건 일치 ${format(liveIds.size)}건 중 새 공고 ${format(added)}건.`;
+  $("#status").textContent = `${storedStatus} ${note}`;
+  renderRows(filtered);
+  if (liveController === controller) liveController = null;
 }
 
 // 워커는 처음 검색할 때 만들어 두고 계속 쓴다. 만들지 못하는 환경에서는 빈 배열이 되고
@@ -461,7 +566,7 @@ function applyNlFilter(state) {
   if (!fileIndex.some((file) => modeOf(file) === viewMode && file.end >= $("#begin").value && file.begin <= $("#end").value)) notes.push(`${MODE_NAMES[viewMode]}에는 이 기간의 보유 데이터가 없습니다.`);
   setNl(false, [`해석: ${state.explain || "-"}`, ...notes].join(" · "), "done");
 }
-function renderRows(rows) { const pages = Math.max(1, Math.ceil(rows.length / pageSize)); page = Math.min(page, pages); const visible = rows.slice((page - 1) * pageSize, page * pageSize); $("#result-summary").textContent = `${format(rows.length)}건`; $("#page-label").textContent = `${page} / ${pages}`; $("#previous").disabled = page === 1; $("#next").disabled = page === pages; $("#download-btn").disabled = !rows.length; $("#download-ecr-btn").disabled = !analyses.size; $("#results").innerHTML = visible.length ? visible.map((row, i) => { const files = normalizeFiles(row.files), analysis = analyses.get(numberOf(row)); return `<tr><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(사업명 없음)")}</button>${fileBadge(row, files)}${analysis ? `<span class="ecr-badge ${analysis.verified ? "" : "warning"}">ECR ${analysis.ecrCount}${analysis.verified ? "" : " · 확인 필요"}</span>` : ""}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">오늘</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`; }).join("") : $("#empty-row").innerHTML; document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)])); wireEmptyRefresh(); }
+function renderRows(rows) { const pages = Math.max(1, Math.ceil(rows.length / pageSize)); page = Math.min(page, pages); const visible = rows.slice((page - 1) * pageSize, page * pageSize); $("#result-summary").textContent = `${format(rows.length)}건`; $("#page-label").textContent = `${page} / ${pages}`; $("#previous").disabled = page === 1; $("#next").disabled = page === pages; $("#download-btn").disabled = !rows.length; $("#download-ecr-btn").disabled = !analyses.size; $("#results").innerHTML = visible.length ? visible.map((row, i) => { const files = normalizeFiles(row.files), analysis = analyses.get(numberOf(row)); return `<tr><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(사업명 없음)")}</button>${row.live ? '<span class="live-badge">최신 확인</span>' : ""}${fileBadge(row, files)}${analysis ? `<span class="ecr-badge ${analysis.verified ? "" : "warning"}">ECR ${analysis.ecrCount}${analysis.verified ? "" : " · 확인 필요"}</span>` : ""}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">오늘</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`; }).join("") : $("#empty-row").innerHTML; document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)])); wireEmptyRefresh(); }
 // 빈 결과 안내에도 갱신 버튼이 있다. 템플릿을 통째로 다시 그리므로 매번 다시 걸고, 지금
 // 갱신이 도는 중이면 레일의 버튼과 같이 잠가 둔다 — 둘을 눌러 두 번 dispatch되면 안 된다.
 function wireEmptyRefresh() { document.querySelectorAll(".empty-refresh").forEach((button) => { button.onclick = startRefresh; button.disabled = $("#refresh-btn").disabled; button.textContent = $("#refresh-btn").textContent; }); }

@@ -10,6 +10,9 @@ const LOGOUT_PATH = "/__gate/logout";
 const DATA_PREFIX = "/data/";
 const REFRESH_PATH = "/api/refresh";
 const ASK_PATH = "/api/ask";
+const LIVE_PATH = "/api/live";
+const LIVE_PAGE_SIZE = 100;
+const LIVE_MAX_PAGE = 200;
 // JSON schema 모드를 지원하면서 한국어 파싱이 가장 나은 축이다. 실패하면 규칙 파서로 내려간다 —
 // 8B를 중간에 두지 않은 이유는 한국어에서 기관명을 뭉개 조용히 틀린 답을 내기 때문이다.
 const ASK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
@@ -21,6 +24,21 @@ const RELAY_PREFIX = "/api/relay/";
 // 이 Worker가 그대로 공개 프록시가 된다. 수집기가 쓰는 세 서비스만 적는다.
 const RELAY_ALLOW = /^\/1230000\/(ao\/HrcspSsstndrdInfoService|ad\/BidPublicInfoService|ao\/OrderPlanSttusService)\/[A-Za-z]{1,60}$/;
 const RELAY_ORIGIN = "https://apis.data.go.kr";
+const LIVE_SERVICES = {
+  pre: {
+    base: "/1230000/ao/HrcspSsstndrdInfoService",
+    ops: { "물품": "getPublicPrcureThngInfoThngPPSSrch", "외자": "getPublicPrcureThngInfoFrgcptPPSSrch", "용역": "getPublicPrcureThngInfoServcPPSSrch", "공사": "getPublicPrcureThngInfoCnstwkPPSSrch" },
+  },
+  bid: {
+    base: "/1230000/ad/BidPublicInfoService",
+    ops: { "물품": "getBidPblancListInfoThngPPSSrch", "외자": "getBidPblancListInfoFrgcptPPSSrch", "용역": "getBidPblancListInfoServcPPSSrch", "공사": "getBidPblancListInfoCnstwkPPSSrch" },
+  },
+  plan: {
+    base: "/1230000/ao/OrderPlanSttusService",
+    ops: { "물품": "getOrderPlanSttusListThngPPSSrch", "외자": "getOrderPlanSttusListFrgcptPPSSrch", "용역": "getOrderPlanSttusListServcPPSSrch", "공사": "getOrderPlanSttusListCnstwkPPSSrch" },
+    snapshot: true,
+  },
+};
 const KEY = /^(index\.json|analysis-index\.json|(pre|bid|plan)\/\d{4}\/\d{2}(\/\d{2})?\.csv\.gz|analysis\/bid\/[^/]{1,160}\.json)$/;
 const RECENT_DAYS = 40;
 const GITHUB_API = "https://api.github.com/repos/tkddls8848/gong-go";
@@ -137,6 +155,7 @@ async function runningCollect(env) {
 async function routeRequest(request, env) {
   const url = new URL(request.url);
   if (url.pathname === REFRESH_PATH) return handleRefresh(request, env, url);
+  if (url.pathname === LIVE_PATH) return handleLive(request, env, url);
   // 게이트를 통과한 요청만 여기 온다. 인증 앞에 두면 남이 계정 요금을 태울 수 있다.
   if (url.pathname === ASK_PATH) return handleAsk(request, env);
   if (url.pathname.startsWith(DATA_PREFIX)) {
@@ -146,6 +165,53 @@ async function routeRequest(request, env) {
     return serveData(request, env, url.pathname.slice(DATA_PREFIX.length));
   }
   return env.ASSETS.fetch(request);
+}
+
+// 저장된 결과를 먼저 보여 준 뒤 최근 결과만 덧붙이는 조회 경로. Worker는 큰 JSON을 파싱하지
+// 않고 그대로 흘려보낸다. 무료 플랜의 CPU는 아끼고 인증키도 브라우저에 노출하지 않는다.
+async function handleLive(request, env, url) {
+  if (request.method !== "GET") return jsonResponse({ message: "GET만 지원합니다." }, 405, { Allow: "GET" });
+  if (!env.SERVICE_KEY) return jsonResponse({ message: "SERVICE_KEY 시크릿이 설정되지 않았습니다." }, 501);
+
+  const mode = url.searchParams.get("mode") || "";
+  const businessType = url.searchParams.get("businessType") || "";
+  const begin = url.searchParams.get("begin") || "";
+  const end = url.searchParams.get("end") || "";
+  const pageNo = Number(url.searchParams.get("pageNo") || "1");
+  const service = LIVE_SERVICES[mode];
+  if (!service || !service.ops[businessType]) return jsonResponse({ message: "공고 유형 또는 업무구분이 올바르지 않습니다." }, 400);
+  if (!validLiveRange(begin, end)) return jsonResponse({ message: "실시간 조회 기간은 YYYY-MM-DD 형식의 연속 2일까지 지원합니다." }, 400);
+  if (!Number.isInteger(pageNo) || pageNo < 1 || pageNo > LIVE_MAX_PAGE) return jsonResponse({ message: `pageNo는 1~${LIVE_MAX_PAGE}만 지원합니다.` }, 400);
+
+  const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(LIVE_PAGE_SIZE), inqryDiv: "1", ServiceKey: env.SERVICE_KEY });
+  if (service.snapshot) {
+    params.set("orderBgnYm", begin.slice(0, 7).replace("-", ""));
+    params.set("orderEndYm", end.slice(0, 7).replace("-", ""));
+  } else {
+    params.set("inqryBgnDt", `${begin.replaceAll("-", "")}0000`);
+    params.set("inqryEndDt", `${end.replaceAll("-", "")}2359`);
+  }
+
+  const started = performance.now();
+  let upstream;
+  try {
+    upstream = await fetch(`${RELAY_ORIGIN}${service.base}/${service.ops[businessType]}?${params}`, { headers: { Accept: "application/json" } });
+  } catch (error) {
+    return jsonResponse({ message: `최신 정보 조회에 실패했습니다: ${error.message}` }, 502, { "Server-Timing": `upstream;dur=${(performance.now() - started).toFixed(1)}` });
+  }
+  const headers = new Headers({
+    "Content-Type": upstream.headers.get("Content-Type") || "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Server-Timing": `upstream;dur=${(performance.now() - started).toFixed(1)}`,
+  });
+  if (upstream.headers.has("Retry-After")) headers.set("Retry-After", upstream.headers.get("Retry-After"));
+  return new Response(upstream.body, { status: upstream.status, headers });
+}
+
+function validLiveRange(begin, end) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(begin) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return false;
+  const first = Date.parse(`${begin}T00:00:00Z`), last = Date.parse(`${end}T00:00:00Z`);
+  return !Number.isNaN(first) && !Number.isNaN(last) && first <= last && last - first <= DAY_MS;
 }
 
 async function handleRefresh(request, env, url) {

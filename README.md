@@ -132,14 +132,15 @@ node uploader/upload.js --commit  # 확인한 내용을 실제 R2에 반영
 npx wrangler secret put GATE_PASSWORD
 npx wrangler secret put GITHUB_TOKEN
 npx wrangler secret put RELAY_TOKEN     # 이름이 정확해야 한다 — 아래 주의 참고
+npx wrangler secret put SERVICE_KEY     # 저장 결과 위에 최신 공고를 합치는 /api/live용
 npm run deploy
 ```
 
 > 시크릿 이름은 코드가 읽는 것과 **정확히** 같아야 합니다. Worker는 `env.RELAY_TOKEN`을
 > 읽으므로 `RELAY` 같은 다른 이름으로 등록하면 값이 들어 있어도 중계가 501을 반환합니다.
-> 세 개 모두 비대화형 셸에서 등록하지 마세요(아래 [토큰 등록](#토큰-등록) 경고 참고).
+> 네 개 모두 비대화형 셸에서 등록하지 마세요(아래 [토큰 등록](#토큰-등록) 경고 참고).
 
-Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN` 세 개입니다. `GITHUB_TOKEN`이 없으면 배포 화면의 갱신 API가, `RELAY_TOKEN`이 없으면 중계가 501을 반환합니다. GitHub 저장소에는 Actions용 `SERVICE_KEY`, `API_BASE`, `RELAY_TOKEN`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다.
+Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN`, `SERVICE_KEY` 네 개입니다. `GITHUB_TOKEN`이 없으면 배포 화면의 갱신 API가, `RELAY_TOKEN`이 없으면 수집 중계가, `SERVICE_KEY`가 없으면 최신 공고 합치기가 501을 반환합니다. GitHub 저장소에도 Actions용 `SERVICE_KEY`, `API_BASE`, `RELAY_TOKEN`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다.
 
 수집은 `.github/workflows/collect.yml` 하나가 다 하고, 그것을 **거는 경로가 셋**입니다.
 
@@ -190,6 +191,17 @@ Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN` 세 개�
 붙는 것은 나라장터 API를 한 번도 더 부르지 않으므로 **하루 한도와 쿨다운을 세지 않습니다.** 다만 그 둘은 이 조회보다 **먼저** 봅니다. 한도를 넘긴 요청은 GitHub에 아무것도 묻지 않는다는 성질을 그대로 두기 위해서입니다. 조회 자체가 실패하면 막지 않고 예전처럼 그냥 dispatch합니다 — 최악이라도 지금까지처럼 큐에서 기다릴 뿐입니다.
 
 ## 조회 화면이 긴 구간을 다루는 방법
+
+검색은 **저장 결과 우선, 최신 결과 후속 반영** 순서로 동작한다. 먼저 R2의 CSV 검색 결과를
+표에 확정해 사용자가 나라장터 응답을 빈 화면으로 기다리지 않게 한다. 조회 기간이 어제~오늘과
+겹치면 인증된 `/api/live`가 그 겹치는 구간만 공공 API에서 확인하고, 브라우저가 같은 필터를
+적용해 공고번호 기준으로 기존 행을 교체하거나 새 행을 추가한다. 이 행에는 `최신 확인` 배지가
+붙는다. 공공 API가 실패해도 먼저 표시한 저장 결과는 그대로 남는다.
+
+실시간 쪽은 한 페이지 100건으로 먼저 응답하고 나머지 페이지를 최대 4개씩 받는다. Worker는
+큰 JSON을 파싱하지 않고 서비스 키를 붙인 원문 응답만 `no-store`로 전달한다. 검색 기간 중
+과거 구간은 이미 저장된 CSV만 사용하며, 전체 정합성·소급 수정 반영은 기존 매시/새벽 수집이
+계속 책임진다. 로컬 `npm run serve`도 `.env`의 `SERVICE_KEY`로 같은 경로를 제공한다.
 
 조회는 인덱스에서 고른 `.csv.gz`를 브라우저가 직접 받아 훑는 방식이다. 구간이 길어지면 파일 수가 그대로 일거리가 되므로 네 가지로 줄인다.
 

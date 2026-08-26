@@ -2,12 +2,21 @@
 // 배포본의 같은 API는 Worker가 GitHub Actions를 실행한다.
 const http = require("node:http");
 const { spawn } = require("node:child_process");
-const { ROOT, DATA_DIR, fs, path, readJson } = require("../shared/pipeline-utils");
+const { ROOT, DATA_DIR, fs, path, loadEnv, readJson } = require("../shared/pipeline-utils");
 const { kstToday, normalizeAsk, ruleParse } = require("../shared/nl-filter");
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.PORT) || 8788;
 const LOG_LIMIT = 60;
+const DAY_MS = 86400000;
+const LIVE_PAGE_SIZE = 100;
+const LIVE_MAX_PAGE = 200;
+const LIVE_SERVICES = {
+  pre: { base: "/1230000/ao/HrcspSsstndrdInfoService", ops: { "물품": "getPublicPrcureThngInfoThngPPSSrch", "외자": "getPublicPrcureThngInfoFrgcptPPSSrch", "용역": "getPublicPrcureThngInfoServcPPSSrch", "공사": "getPublicPrcureThngInfoCnstwkPPSSrch" } },
+  bid: { base: "/1230000/ad/BidPublicInfoService", ops: { "물품": "getBidPblancListInfoThngPPSSrch", "외자": "getBidPblancListInfoFrgcptPPSSrch", "용역": "getBidPblancListInfoServcPPSSrch", "공사": "getBidPblancListInfoCnstwkPPSSrch" } },
+  plan: { base: "/1230000/ao/OrderPlanSttusService", ops: { "물품": "getOrderPlanSttusListThngPPSSrch", "외자": "getOrderPlanSttusListFrgcptPPSSrch", "용역": "getOrderPlanSttusListServcPPSSrch", "공사": "getOrderPlanSttusListCnstwkPPSSrch" }, snapshot: true },
+};
+loadEnv(path.join(ROOT, ".env"));
 // 정적 서빙을 여는 디렉터리. 조회 화면은 /public/의 자산과 /data/의 CSV·인덱스만 읽는다.
 const SERVE_ROOTS = ["public", "data"].map((name) => path.resolve(ROOT, name));
 const TYPES = {
@@ -25,6 +34,7 @@ if (require.main === module) {
     try {
       if (url.pathname === "/api/refresh") return await handleRefresh(request, response);
       if (url.pathname === "/api/ask") return await handleAsk(request, response);
+      if (url.pathname === "/api/live") return await handleLive(request, response, url);
       await serveStatic(url.pathname, response);
     } catch (error) {
       send(response, 500, { message: error.message });
@@ -33,6 +43,44 @@ if (require.main === module) {
     console.log(`로컬 서버: http://${HOST}:${PORT}/public/`);
     console.log(`수집기 실행: POST http://${HOST}:${PORT}/api/refresh`);
   });
+}
+
+async function handleLive(request, response, url) {
+  if (request.method !== "GET") return send(response, 405, { message: "GET만 지원합니다." }, { Allow: "GET" });
+  if (!process.env.SERVICE_KEY) return send(response, 501, { message: "SERVICE_KEY가 .env에 설정되지 않았습니다." });
+  let target;
+  try { target = liveTarget(url, process.env.SERVICE_KEY); }
+  catch (error) { return send(response, 400, { message: error.message }); }
+  let upstream;
+  try { upstream = await fetch(target, { headers: { Accept: "application/json" } }); }
+  catch (error) { return send(response, 502, { message: `최신 정보 조회에 실패했습니다: ${error.message}` }); }
+  const body = Buffer.from(await upstream.arrayBuffer());
+  const headers = { "Content-Type": upstream.headers.get("Content-Type") || "application/json; charset=utf-8", "Cache-Control": "no-store" };
+  if (upstream.headers.has("Retry-After")) headers["Retry-After"] = upstream.headers.get("Retry-After");
+  response.writeHead(upstream.status, headers);
+  response.end(body);
+}
+
+function liveTarget(url, serviceKey) {
+  const mode = url.searchParams.get("mode") || "", businessType = url.searchParams.get("businessType") || "";
+  const begin = url.searchParams.get("begin") || "", end = url.searchParams.get("end") || "";
+  const pageNo = Number(url.searchParams.get("pageNo") || "1"), service = LIVE_SERVICES[mode];
+  if (!service || !service.ops[businessType]) throw new Error("공고 유형 또는 업무구분이 올바르지 않습니다.");
+  if (!validLiveRange(begin, end)) throw new Error("실시간 조회 기간은 YYYY-MM-DD 형식의 연속 2일까지 지원합니다.");
+  if (!Number.isInteger(pageNo) || pageNo < 1 || pageNo > LIVE_MAX_PAGE) throw new Error(`pageNo는 1~${LIVE_MAX_PAGE}만 지원합니다.`);
+  const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(LIVE_PAGE_SIZE), inqryDiv: "1", ServiceKey: serviceKey });
+  if (service.snapshot) {
+    params.set("orderBgnYm", begin.slice(0, 7).replace("-", "")); params.set("orderEndYm", end.slice(0, 7).replace("-", ""));
+  } else {
+    params.set("inqryBgnDt", `${begin.replaceAll("-", "")}0000`); params.set("inqryEndDt", `${end.replaceAll("-", "")}2359`);
+  }
+  return `https://apis.data.go.kr${service.base}/${service.ops[businessType]}?${params}`;
+}
+
+function validLiveRange(begin, end) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(begin) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return false;
+  const first = Date.parse(`${begin}T00:00:00Z`), last = Date.parse(`${end}T00:00:00Z`);
+  return !Number.isNaN(first) && !Number.isNaN(last) && first <= last && last - first <= DAY_MS;
 }
 
 async function handleRefresh(request, response) {
@@ -136,11 +184,11 @@ function redirect(response, location) {
   response.end();
 }
 
-function send(response, code, value) {
-  response.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+function send(response, code, value, extraHeaders = {}) {
+  response.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...extraHeaders });
   response.end(JSON.stringify(value));
 }
 
 function today() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; }
 
-module.exports = { resolveStatic, SERVE_ROOTS, TYPES };
+module.exports = { resolveStatic, liveTarget, SERVE_ROOTS, TYPES };

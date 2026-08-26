@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
-const { resolveStatic, SERVE_ROOTS, TYPES } = require("./server");
+const { resolveStatic, liveTarget, SERVE_ROOTS, TYPES } = require("./server");
 
 const ROOT = path.resolve(__dirname, "..");
 const inside = (...parts) => path.join(ROOT, ...parts);
@@ -58,4 +58,14 @@ test("gz는 Content-Encoding이 아니라 gzip 본문으로 나간다", () => {
   // 헤더를 붙이면 브라우저가 먼저 풀어 프런트의 DecompressionStream과 이중 처리로 깨진다.
   assert.equal(TYPES[".gz"], "application/gzip");
   assert.equal(TYPES[".json"], "application/json; charset=utf-8");
+});
+
+test("로컬 최신 조회도 배포 Worker와 같은 제한으로 공공 API 주소를 만든다", () => {
+  const url = new URL("http://localhost/api/live?mode=pre&businessType=용역&begin=2026-08-16&end=2026-08-17&pageNo=3");
+  const target = new URL(liveTarget(url, "decoded+/key"));
+  assert.equal(target.pathname, "/1230000/ao/HrcspSsstndrdInfoService/getPublicPrcureThngInfoServcPPSSrch");
+  assert.equal(target.searchParams.get("ServiceKey"), "decoded+/key");
+  assert.equal(target.searchParams.get("pageNo"), "3");
+  assert.equal(target.searchParams.get("inqryBgnDt"), "202608160000");
+  assert.throws(() => liveTarget(new URL("http://localhost/api/live?mode=pre&businessType=용역&begin=2026-08-01&end=2026-08-17"), "key"), /연속 2일/);
 });

@@ -207,11 +207,25 @@
     return { matched, scanned: table.rows.length };
   }
 
+  // 실시간 조회는 CSV가 아니라 공공 API의 객체 배열을 받는다. 화면 모델과 필터 규칙을
+  // 두 벌로 만들지 않도록 객체의 키를 임시 헤더로 보고 위의 같은 accepts/buildRow를 쓴다.
+  function scanObjects(records, mode, criteria, checkDate = true) {
+    if (!Array.isArray(records) || !records.length) return { matched: [], scanned: 0 };
+    const header = [...new Set(records.flatMap((record) => Object.keys(record || {})))];
+    const columns = columnsFor(header, mode);
+    const matched = [];
+    for (const record of records) {
+      const cells = header.map((name) => String(record?.[name] ?? ""));
+      if (accepts(criteria, cells, columns, checkDate)) matched.push(buildRow(cells, columns));
+    }
+    return { matched, scanned: records.length };
+  }
+
   async function fetchCsvText(url, init) {
     const response = await fetch(url, init);
     if (!response.ok || !response.body) throw new Error(`${url} 응답 오류 (${response.status})`);
     return new Response(response.body.pipeThrough(new DecompressionStream("gzip"))).text();
   }
 
-  scope.GongRows = { parseTable, columnsFor, first, makeCriteria, accepts, buildRow, scanText, fetchCsvText, norm, dateKey, typeMatches };
+  scope.GongRows = { parseTable, columnsFor, first, makeCriteria, accepts, buildRow, scanText, scanObjects, fetchCsvText, norm, dateKey, typeMatches };
 })(typeof self === "undefined" ? globalThis : self);
