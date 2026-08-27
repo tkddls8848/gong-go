@@ -7,9 +7,11 @@
 // 크론 러너는 최근 며칠치만 로컬에 갖고 있다. 그래서 "로컬에 없으면 지운다" 같은 규칙은
 // 절대 쓰지 않는다 — 삭제 판정은 버킷 안 정보(또는 SYNC_BEGIN/END로 명시된 구간)로만 한다.
 //
-// 사용: node uploader/upload.js [--commit]
+// 사용: node uploader/upload.js [--commit] [--put-only|--index-only]
 //   기본값     올릴/지울 대상만 출력한다(dry-run)
 //   --commit   실제 업로드·삭제를 수행한다
+//   --put-only 로컬 파일만 PUT한다. 과거 백필처럼 운영 인덱스·삭제 판정과 격리할 때 쓴다.
+//   --index-only 파일·삭제는 건드리지 않고 R2 목록과 기존 인덱스를 합쳐 index.json만 갱신한다.
 //
 // 자격증명(.env 또는 환경변수): R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
 const crypto = require("node:crypto");
@@ -27,12 +29,13 @@ const DAILY_KEY = /^(pre|bid|plan)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/;
 // 전제가 이 모드에서만 성립한다 — plan은 API가 최근 며칠치만 주므로(collector.js의 snapshot)
 // 로컬에 없다는 것이 "그날 0건이 됐다"는 뜻이 아니라 "애초에 받을 수 없다"는 뜻이다.
 const RANGED_DAILY_KEY = /^(pre|bid)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/;
+const RANGED_RAW_DAILY_KEY = /^raw\/(pre|bid)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/;
 const MODES = ["pre", "bid", "plan"];
 
 if (require.main === module) main().catch((error) => { console.error(`업로드 실패: ${error.message}`); process.exitCode = 1; });
 
 async function main() {
-  const { dryRun } = parseUploadArgs(process.argv.slice(2));
+  const { dryRun, putOnly, indexOnly } = parseUploadArgs(process.argv.slice(2));
   const client = makeClient();
   const remote = await listAll(client);
   const local = await localFiles();
@@ -43,27 +46,27 @@ async function main() {
   // 이유는 삭제(③)가 업로드(①)보다 뒤이고, 업로드가 하나라도 실패하면 mapPool이 예외를
   // 던져 ③에 닿지 못하기 때문이다. 즉 ③에 도달한 시점에는 present가 곧 버킷의 내용이다.
   const present = new Set([...remote.keys(), ...local.map((entry) => entry.key)]);
-  const removing = [...new Set([...supersededDaily(present), ...vanishedDaily(present, local)])];
+  const removing = putOnly || indexOnly ? [] : [...new Set([...supersededDaily(present), ...vanishedDaily(present, local)])];
   const plan = {
-    csv: local.filter((entry) => entry.key.endsWith(".csv.gz")),
-    analysis: local.filter((entry) => entry.key.startsWith("analysis/")),
-    analysisIndex: local.filter((entry) => entry.key === ANALYSIS_INDEX_KEY),
+    csv: indexOnly ? [] : local.filter((entry) => entry.key.endsWith(".csv.gz")),
+    analysis: indexOnly ? [] : local.filter((entry) => entry.key.startsWith("analysis/")),
+    analysisIndex: indexOnly ? [] : local.filter((entry) => entry.key === ANALYSIS_INDEX_KEY),
     removing,
   };
 
-  const index = await mergedIndex(client, present, new Set(removing));
-  if (dryRun) return report(plan, index, remote);
+  const index = putOnly ? null : await mergedIndex(client, present, new Set(removing));
+  if (dryRun) return report(plan, index, remote, putOnly);
 
   // 순서가 유일한 방어다. R2에는 트랜잭션이 없다.
   // ① 파일이 인덱스보다 먼저 있어야 프런트가 아직 없는 파일을 요청하지 않는다.
   // ② 인덱스가 바뀐 뒤에 지워야 구 인덱스를 캐시한 브라우저가 사라진 키에서 404를 만나지 않는다.
   // ③ 목록(analysis-index.json)은 그 목록이 가리키는 파일보다 뒤에 올린다.
   const uploaded = await putAll(client, plan.csv, remote);
-  await putJson(client, INDEX_KEY, index);
-  const deleted = await deleteAll(client, plan.removing);
+  if (index) await putJson(client, INDEX_KEY, index);
+  const deleted = putOnly ? 0 : await deleteAll(client, plan.removing);
   const analyses = await putAll(client, [...plan.analysis, ...plan.analysisIndex], remote);
 
-  console.log(`완료: ${uploaded.count + analyses.count}건 업로드(${mb(uploaded.bytes + analyses.bytes)}), ${deleted}건 삭제, 인덱스 ${index.files.length}항목`);
+  console.log(`완료: ${uploaded.count + analyses.count}건 업로드(${mb(uploaded.bytes + analyses.bytes)}), ${deleted}건 삭제${index ? `, 인덱스 ${index.files.length}항목` : ", 인덱스 유지(PUT 전용)"}`);
 }
 
 // 봉인으로 대체된 일별 키를 지운다. 조건은 하나뿐이다 —
@@ -80,7 +83,7 @@ function supersededDaily(present) {
 function vanishedDaily(present, local, begin = process.env.SYNC_BEGIN, end = process.env.SYNC_END || today()) {
   if (!begin) return [];
   const kept = new Set(local.map((entry) => entry.key));
-  return [...present].filter((key) => RANGED_DAILY_KEY.test(key) && !kept.has(key) && dateOf(key) >= begin && dateOf(key) <= end);
+  return [...present].filter((key) => (RANGED_DAILY_KEY.test(key) || RANGED_RAW_DAILY_KEY.test(key)) && !kept.has(key) && dateOf(key) >= begin && dateOf(key) <= end);
 }
 
 // 인덱스는 "이번 실행 뒤 버킷에 남는 키"의 투영이다. 건수는 로컬 인덱스를 우선하고,
@@ -89,7 +92,11 @@ function vanishedDaily(present, local, begin = process.env.SYNC_BEGIN, end = pro
 async function mergedIndex(client, present, removing) {
   const localIndex = await readJson(path.join(DATA_DIR, "index.json"), { files: [] });
   const remoteIndex = (await getJson(client, INDEX_KEY)) || { files: [] };
-  return { updatedAt: localIndex.updatedAt || new Date().toISOString(), files: indexFiles(present, removing, localIndex.files, remoteIndex.files) };
+  return {
+    updatedAt: localIndex.updatedAt || new Date().toISOString(),
+    schemaVersion: process.env.DATA_SCHEMA_VERSION || remoteIndex.schemaVersion || localIndex.schemaVersion || "",
+    files: indexFiles(present, removing, localIndex.files, remoteIndex.files),
+  };
 }
 
 function indexFiles(present, removing, localFiles, remoteFiles) {
@@ -107,13 +114,15 @@ function indexFiles(present, removing, localFiles, remoteFiles) {
   return buildIndexEntries(counts);
 }
 
-// 올릴 대상: 일별·월별 .csv.gz 전부와 분석 산출물. data/raw, data/files, data/text,
-// sync-state.json, sync-errors.json 등은 대상이 아니다(뷰어가 읽지 않거나 러너 전용이다).
+// 올릴 대상: 서비스용 일별·월별 CSV, 원본 일별 CSV와 분석 산출물. raw는 화면에 직접
+// 노출하지 않지만 새 기능에 컬럼이 필요할 때 재수집 없이 복원하는 R2 원본 백업이다.
+// data/files, data/text, sync-state.json, sync-errors.json 등은 대상이 아니다.
 // index.json은 여기에 넣지 않는다 — 로컬 인덱스를 그대로 올리면 최근 며칠치만 가진 크론
 // 러너가 과거 항목을 지워 버린다. mergedIndex가 버킷 상태와 합쳐 따로 올린다.
 async function localFiles() {
   const result = [];
   for (const mode of MODES) await collectGz(path.join(DATA_DIR, mode), mode, result);
+  for (const mode of MODES) await collectGz(path.join(DATA_DIR, "raw", mode), `raw/${mode}`, result);
   if (await exists(path.join(DATA_DIR, ANALYSIS_INDEX_KEY))) result.push({ key: ANALYSIS_INDEX_KEY, file: path.join(DATA_DIR, ANALYSIS_INDEX_KEY) });
   const analysisDir = path.join(DATA_DIR, "analysis", "bid");
   for (const entry of await readdir(analysisDir)) if (entry.isFile() && entry.name.endsWith(".json")) result.push({ key: `analysis/bid/${entry.name}`, file: path.join(analysisDir, entry.name) });
@@ -146,7 +155,7 @@ async function deleteAll(client, keys) {
   return keys.length;
 }
 
-async function report(plan, index, remote) {
+async function report(plan, index, remote, putOnly = false) {
   const sized = await mapPool([...plan.csv, ...plan.analysis, ...plan.analysisIndex], CONCURRENCY, async (entry) => {
     const body = await fs.readFile(entry.file);
     return remote.get(entry.key) === md5(body) ? 0 : body.length;
@@ -154,7 +163,8 @@ async function report(plan, index, remote) {
   const changed = sized.filter(Boolean);
   console.log(`업로드 대상 ${changed.length}건 · ${mb(changed.reduce((sum, size) => sum + size, 0))}`);
   console.log(`삭제 예정 ${plan.removing.length}건${plan.removing.length ? ` (예: ${plan.removing[0]})` : ""}`);
-  console.log(`인덱스 ${index.files.length}항목 · ${index.files.reduce((sum, file) => sum + file.count, 0).toLocaleString("ko-KR")}건 (dry-run)`);
+  if (index) console.log(`인덱스 ${index.files.length}항목 · ${index.files.reduce((sum, file) => sum + file.count, 0).toLocaleString("ko-KR")}건 (dry-run)`);
+  else if (putOnly) console.log("인덱스와 원격 삭제는 건드리지 않음 (PUT 전용 dry-run)");
 }
 
 function makeClient() {
@@ -205,15 +215,16 @@ function contentType(key) { return key.endsWith(".csv.gz") ? "application/gzip" 
 function md5(buffer) { return crypto.createHash("md5").update(buffer).digest("hex"); }
 // 일별 키(mode/YYYY/MM/DD.csv.gz)와 월별 키(mode/YYYY/MM.csv.gz)를 같은 월 식별자로 모은다.
 function monthOf(key) { const [mode, year, month] = key.split("/"); return `${mode}/${year}/${month.slice(0, 2)}`; }
-function dateOf(key) { const [, year, month, name] = key.split("/"); return `${year}-${month}-${name.slice(0, 2)}`; }
+function dateOf(key) { const parts = key.split("/"); const offset = parts[0] === "raw" ? 1 : 0; return `${parts[offset + 1]}-${parts[offset + 2]}-${parts[offset + 3].slice(0, 2)}`; }
 function required(name) { const value = process.env[name]; if (!value) throw new Error(`${name}을 .env 또는 환경변수로 설정하세요.`); return value; }
 function mb(bytes) { return `${(bytes / 1024 / 1024).toFixed(1)}MB`; }
 function today() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; }
 function parseUploadArgs(args) {
-  const unknown = args.filter((arg) => arg !== "--dry-run" && arg !== "--commit");
+  const unknown = args.filter((arg) => arg !== "--dry-run" && arg !== "--commit" && arg !== "--put-only" && arg !== "--index-only");
   if (unknown.length) throw new Error(`알 수 없는 인자: ${unknown.join(", ")}`);
   if (args.includes("--dry-run") && args.includes("--commit")) throw new Error("--dry-run과 --commit을 함께 쓸 수 없습니다.");
-  return { dryRun: !args.includes("--commit") };
+  if (args.includes("--put-only") && args.includes("--index-only")) throw new Error("--put-only와 --index-only를 함께 쓸 수 없습니다.");
+  return { dryRun: !args.includes("--commit"), putOnly: args.includes("--put-only"), indexOnly: args.includes("--index-only") };
 }
 async function exists(file) { try { await fs.access(file); return true; } catch { return false; } }
 async function readdir(dir) { try { return await fs.readdir(dir, { withFileTypes: true }); } catch (error) { if (error.code === "ENOENT") return []; throw error; } }

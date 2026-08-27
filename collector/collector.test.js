@@ -10,7 +10,16 @@ const {
   sourceEndpoint,
   serverTimingDuration,
   isRetryable,
+  parseArgs,
 } = require("./collector");
+
+test("백필은 CLI에서 사전공고와 본공고만 선택할 수 있다", () => {
+  assert.deepEqual(parseArgs(["--begin=2020-01-01", "--end=2020-03-31", "--no-resume", "--modes=pre,bid,bid"]), {
+    begin: "2020-01-01", end: "2020-03-31", resume: false, modes: ["pre", "bid"],
+  });
+  assert.throws(() => parseArgs(["--modes=pre,unknown"]), /지원하지 않는 수집 모드/);
+  assert.throws(() => parseArgs(["--bogus"]), /알 수 없는 인자/);
+});
 
 test("체크포인트는 flush 시작 뒤 완료된 작업을 포함하지 않는다", () => {
   const state = { completedJobs: ["job-1", "job-1", "job-2"] };

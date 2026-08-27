@@ -29,14 +29,16 @@ test("증분 병합이 쓰는 컬럼은 반드시 남는다", () => {
 
 test("화면과 파이프라인이 읽는 컬럼을 남긴다", () => {
   const bid = project({
-    bidNtceNo: "1", ntceKindNm: "물품", bidNtceNm: "서버", bidClseDt: "2026-08-20 18:00:00",
+    bidNtceNo: "1", ntceKindNm: "물품", bidNtceNm: "서버", bidQlfctRgstDt: "2026-08-19 18:00:00",
+    cmmnSpldmdAgrmntClseDt: "2026-08-19 18:00:00", bidBeginDt: "2026-08-20 09:00:00",
+    bidClseDt: "2026-08-20 18:00:00", opengDt: "2026-08-21 10:00:00",
     dminsttCd: "B550001", dminsttNm: "기관", rlDminsttNm: "실수요기관", ntceInsttNm: "공고기관",
     ntceSpecDocUrl1: "https://example.go.kr/1", ntceSpecFileNm1: "규격서.hwp",
     ntceSpecDocUrl10: "https://example.go.kr/10", ntceSpecFileNm10: "붙임10.hwp",
     // 아래는 조회 UI·downloader·converter·analyzer 어디서도 참조하지 않는다.
     sucsfbidMthdNm: "적격심사", ntceInsttOfclTelNo: "02-0000-0000", presmptPrce: "1000000",
   });
-  for (const key of ["ntceKindNm", "bidNtceNm", "bidClseDt", "dminsttCd", "rlDminsttNm", "ntceSpecDocUrl1", "ntceSpecFileNm10"]) {
+  for (const key of ["ntceKindNm", "bidNtceNm", "bidQlfctRgstDt", "cmmnSpldmdAgrmntClseDt", "bidBeginDt", "bidClseDt", "opengDt", "dminsttCd", "rlDminsttNm", "ntceSpecDocUrl1", "ntceSpecFileNm10"]) {
     assert.ok(key in bid, key);
   }
   for (const key of ["sucsfbidMthdNm", "ntceInsttOfclTelNo", "presmptPrce"]) assert.ok(!(key in bid), key);

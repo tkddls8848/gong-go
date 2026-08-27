@@ -1,0 +1,112 @@
+name: historical-backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      begin:
+        description: "백필 시작일(YYYY-MM-DD)"
+        required: true
+        default: "2020-01-01"
+      end:
+        description: "백필 종료일(YYYY-MM-DD)"
+        required: true
+        default: "2026-03-31"
+      months_per_job:
+        description: "작업 하나가 처리할 개월 수(1~12)"
+        required: true
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: 백필 작업 분할
+        id: plan
+        env:
+          BACKFILL_BEGIN: ${{ inputs.begin }}
+          BACKFILL_END: ${{ inputs.end }}
+          MONTHS_PER_JOB: ${{ inputs.months_per_job }}
+        run: |
+          MATRIX=$(node collector/backfill-plan.js --begin="$BACKFILL_BEGIN" --end="$BACKFILL_END" --months="$MONTHS_PER_JOB")
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "$MATRIX"
+
+  backfill:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+      API_BASE: ${{ secrets.API_BASE }}
+      RELAY_TOKEN: ${{ secrets.RELAY_TOKEN }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      SYNC_BEGIN: ${{ matrix.begin }}
+      SYNC_END: ${{ matrix.end }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # 발주계획 API는 과거 범위 조회를 지원하지 않는다. 소급 가능한 사전·본공고만 받는다.
+      - name: 사전공고·본공고 원본 재수집
+        run: node collector/collector.js --no-resume --modes=pre,bid
+
+      - name: 수집 실패 확인
+        run: |
+          COUNT=$(node -p "try{require('./data/sync-errors.json').length}catch{0}")
+          echo "실패 작업 $COUNT건"
+          [ "$COUNT" = "0" ] || { node -p "JSON.stringify(require('./data/sync-errors.json').slice(0,10),null,2)"; exit 1; }
+
+      - name: 과거 서비스 CSV 월별 봉인
+        run: node collector/compact.js --reseal --prune --lag=0
+
+      - name: 업로더 의존성 설치
+        run: npm ci --omit=dev --no-audit --fund=false
+
+      # 고정된 과거 월 파일과 raw만 PUT한다. 운영 index.json과 원격 삭제는 일반 수집만 맡는다.
+      - name: 서비스 CSV와 raw를 R2에 백필
+        run: node uploader/upload.js --commit --put-only
+
+      - name: 오류 로그 보관
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backfill-errors-${{ matrix.label }}
+          path: data/sync-errors.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish-schema:
+    needs: backfill
+    runs-on: ubuntu-latest
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      # 모든 구간이 성공한 뒤에만 이 값이 index.json에 들어간다. 브라우저의 과거 immutable
+      # CSV 캐시를 새 URL로 한 번 교체하는 버전이므로, 부분 성공 상태에서는 올리면 안 된다.
+      DATA_SCHEMA_VERSION: "bid-schedule-2026-08"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - run: npm ci --omit=dev --no-audit --fund=false
+      - name: 백필 완료 스키마 공개
+        run: node uploader/upload.js --commit --index-only

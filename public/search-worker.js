@@ -13,7 +13,7 @@ self.onmessage = (event) => {
   if (message.type === "search") { active = message.version; run(message); }
 };
 
-async function run({ version, base, files, criteria, span, concurrency }) {
+async function run({ version, base, dataSchemaVersion, files, criteria, span, concurrency }) {
   const parsed = Rows.makeCriteria(criteria);
   let cursor = 0, rows = [], done = 0, scanned = 0, failures = 0;
 
@@ -29,7 +29,8 @@ async function run({ version, base, files, criteria, span, concurrency }) {
       if (active !== version) return;
       const file = files[cursor++];
       try {
-        const text = await Rows.fetchCsvText(`${base}/${file.path}`, file.revalidate ? { cache: "no-cache" } : undefined);
+        const suffix = dataSchemaVersion ? `?v=${encodeURIComponent(dataSchemaVersion)}` : "";
+        const text = await Rows.fetchCsvText(`${base}/${file.path}${suffix}`, file.revalidate ? { cache: "no-cache" } : undefined);
         if (active !== version) return;
         // 파일 구간이 조회 구간 안에 통째로 들어오면 행마다 날짜를 볼 필요가 없다.
         // 월별 봉인 파일이 구간 끝에 걸릴 때만 행 단위 검사가 남는다.

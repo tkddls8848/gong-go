@@ -11,7 +11,10 @@ const SERVICE_COLUMNS = {
   // rgstDt/bidNtceDt는 collector의 recordDate가, bidNtceNo/bfSpecRgstNo는 recordKey가 쓴다.
   // 이 둘이 빠지면 증분 병합이 깨지므로 반드시 유지한다.
   bid: [
-    "bidNtceNo", "ntceKindNm", "bidNtceNm", "bidNtceDt", "bidClseDt", "rgstDt",
+    "bidNtceNo", "ntceKindNm", "bidNtceNm", "bidNtceDt", "rgstDt",
+    // 입찰공고정보서비스의 *PPSSrch 응답에 이미 포함되는 진행 일정이다.
+    // 별도 상세 API를 다시 호출하지 않고 수집 시 함께 보관해 모달을 즉시 연다.
+    "bidQlfctRgstDt", "cmmnSpldmdAgrmntClseDt", "bidBeginDt", "bidClseDt", "opengDt",
     "dminsttCd", "dminsttNm", "rlDminsttNm", "ntceInsttNm",
     // 나라장터 상세화면 링크. 발주계획의 orderPlanDtlUrl과 같은 자리다. 원본에는 값이 같은
     // bidNtceUrl도 있지만 512자짜리를 두 벌 저장할 이유가 없어 상세화면 쪽만 남긴다.

@@ -69,6 +69,7 @@
     bid: { number: ["bidNtceNo"], institution: ["rlDminsttNm", "dminsttNm"], code: ["dminsttCd"], type: ["ntceKindNm"], title: ["prdctClsfcNoNm", "bidNtceNm"], published: ["rgstDt", "bidNtceDt"], close: ["opninRgstClseDt", "bidClseDt"], detail: ["bidNtceDtlUrl", "bidNtceUrl"] },
     plan: { number: ["orderPlanUntyNo"], institution: ["orderInsttNm", "totlmngInsttNm"], code: ["orderInsttCd"], type: ["bsnsDivNm"], title: ["bizNm", "prdctClsfcNoNm"], published: ["nticeDt"], close: [] },
   };
+  const BID_SCHEDULE = ["bidNtceDt", "bidQlfctRgstDt", "cmmnSpldmdAgrmntClseDt", "bidBeginDt", "bidClseDt", "opengDt"];
   // 첨부 URL·이름 컬럼은 번호가 붙은 계열이다. 발주계획에는 아예 없다(상세 링크만 준다).
   const FILE_SERIES = { pre: { url: "specDocFileUrl", name: "specDocFileNm", count: 5 }, bid: { url: "ntceSpecDocUrl", name: "ntceSpecFileNm", count: 10 } };
   const PLAN_EXTRA = ["orderYear", "orderMnth", "sumOrderAmt", "cntrctMthdNm", "prcrmntMethd", "orderPlanDtlUrl", "atchFileExistnceYn", "bidNtceNoList"];
@@ -79,7 +80,7 @@
     for (let i = 0; i < header.length; i += 1) if (!at.has(header[i])) at.set(header[i], i);
     const pick = (names) => (names || []).map((name) => at.get(name)).filter((index) => index !== undefined);
     const fields = FIELDS[mode] || FIELDS.bid;
-    const columns = { mode, number: pick(fields.number), institution: pick(fields.institution), code: pick(fields.code), type: pick(fields.type), title: pick(fields.title), published: pick(fields.published), close: pick(fields.close), detail: pick(fields.detail), files: [], extra: {} };
+    const columns = { mode, number: pick(fields.number), institution: pick(fields.institution), code: pick(fields.code), type: pick(fields.type), title: pick(fields.title), published: pick(fields.published), close: pick(fields.close), detail: pick(fields.detail), files: [], schedule: {}, extra: {} };
     const series = FILE_SERIES[mode];
     if (series) {
       for (let i = 1; i <= series.count; i += 1) {
@@ -87,6 +88,7 @@
         if (url !== undefined) columns.files.push({ url, name: at.get(`${series.name}${i}`), slot: i - 1 });
       }
     }
+    if (mode === "bid") for (const name of BID_SCHEDULE) columns.schedule[name] = at.get(name);
     if (mode === "plan") for (const name of PLAN_EXTRA) columns.extra[name] = at.get(name);
     return columns;
   }
@@ -188,6 +190,15 @@
       // 없다. 빈 문자열을 20만 행에 싣지 않도록 값이 있을 때만 붙인다.
       const detail = first(cells, columns.detail);
       if (detail) row.detailUrl = detail;
+      if (columns.mode === "bid") {
+        const schedule = {};
+        for (const name of BID_SCHEDULE) {
+          const index = columns.schedule[name];
+          if (index !== undefined && cells[index]) schedule[name] = cells[index];
+        }
+        // 예전에 수집한 CSV도 공고·마감 시각은 갖고 있어 최소 일정은 바로 표시된다.
+        if (Object.keys(schedule).length) row.bidSchedule = schedule;
+      }
       row.files = filesOf(cells, columns);
       return row;
     }

@@ -261,6 +261,13 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
 .file-list a { flex: 1 1 auto; min-width: 0; color: var(--text); font-size: 14px; overflow-wrap: anywhere; }
 .file-list a:hover { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
 .empty-msg { color: var(--muted); font-size: 13px; line-height: 1.7; }
+.schedule-list { margin: 8px 0 0; padding: 8px 2px 0; list-style: none; }
+.schedule-item { position: relative; display: grid; grid-template-columns: 18px minmax(150px, 1fr) auto; align-items: center; gap: 9px; min-height: 46px; }
+.schedule-item:not(:last-child)::after { content: ""; position: absolute; top: 28px; bottom: -18px; left: 5px; width: 1px; background: var(--line); }
+.schedule-dot { z-index: 1; width: 11px; height: 11px; border: 2px solid var(--blue); border-radius: 50%; background: var(--bg-raised); }
+.schedule-label { color: var(--text-2); font-size: 13px; }
+.schedule-time { color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; white-space: nowrap; }
+.schedule-note, .schedule-empty { margin: 16px 0 0; padding: 11px 13px; border-radius: 9px; background: var(--bg-input); color: var(--muted); font-size: 12px; line-height: 1.7; }
 .modal-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; }
 .modal-footer .hint { margin: 0; }
 .modal-disclaimer { margin: 20px 0 0; padding-top: 13px; border-top: 1px solid var(--line-weak); color: var(--muted); font-size: 12px; }
@@ -299,6 +306,8 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
   .filter-actions .primary-btn { flex: 1 1 0; justify-content: center; }
 }
 @media (max-width: 700px) {
+  .schedule-item { grid-template-columns: 18px 1fr; padding: 7px 0; }
+  .schedule-time { grid-column: 2; white-space: normal; }
   /* 네이티브 날짜 입력은 제 폭 아래로 줄지 않는다(둘이면 이미 270px이 넘는다). 게시일 칸이
      통째로 화면 밖으로 나가 본문이 가로로 흐르던 자리다. 여기서는 칸 안에서 접히게 둔다. */
   .filter-date { flex-wrap: wrap; height: auto; padding: 7px 10px; row-gap: 4px; }

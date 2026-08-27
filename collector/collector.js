@@ -79,7 +79,7 @@ async function main() {
   const begin = parseDate(args.begin || process.env.SYNC_BEGIN || config.begin);
   const end = parseDate(args.end || process.env.SYNC_END || config.end || today());
   if (!begin || !end || begin > end) throw new Error("수집 기간을 확인하세요(sync.config.json 또는 --begin/--end).");
-  const modes = config.modes.map((mode) => MODE_ALIASES[mode]).filter((mode) => MODES[mode]);
+  const modes = args.modes || config.modes.map((mode) => MODE_ALIASES[mode]).filter((mode) => MODES[mode]);
   const types = config.businessTypes.filter((type) => TYPES.includes(type));
   const jobs = [];
   // 스냅샷 모드(plan)는 범위를 나눠 봐야 매번 같은 응답이 온다. 업무구분당 한 번만 부른다.
@@ -503,7 +503,23 @@ function recordsForWrite(bucket) {
 }
 async function readConfig() { try { return JSON.parse(await fs.readFile(CONFIG_FILE, "utf8")); } catch (error) { if (error.code === "ENOENT") throw new Error("collector/sync.config.json을 찾지 못했습니다."); throw error; } }
 function chunks(begin, end) { const result = []; for (let cursor = new Date(begin); cursor <= end;) { const finish = new Date(Math.min(addDays(cursor, RANGE_DAYS - 1), end)); result.push({ begin: iso(cursor), end: iso(finish) }); cursor = addDays(finish, 1); } return result; }
-function parseArgs() { const args = {}; for (const arg of process.argv.slice(2)) { if (arg === "--no-resume") { args.resume = false; continue; } const match = arg.match(/^--(begin|end)=(\d{4}-\d{2}-\d{2})$/); if (match) args[match[1]] = match[2]; } return args; }
+function parseArgs(values = process.argv.slice(2)) {
+  const args = {};
+  for (const arg of values) {
+    if (arg === "--no-resume") { args.resume = false; continue; }
+    const date = arg.match(/^--(begin|end)=(\d{4}-\d{2}-\d{2})$/);
+    if (date) { args[date[1]] = date[2]; continue; }
+    const modes = arg.match(/^--modes=([a-z,]+)$/);
+    if (modes) {
+      args.modes = [...new Set(modes[1].split(","))];
+      const invalid = args.modes.filter((mode) => !MODES[mode]);
+      if (invalid.length) throw new Error(`지원하지 않는 수집 모드: ${invalid.join(", ")}`);
+      continue;
+    }
+    throw new Error(`알 수 없는 인자: ${arg}`);
+  }
+  return args;
+}
 function parseDate(value) { const result = new Date(`${value}T00:00:00`); return Number.isNaN(result.valueOf()) ? null : result; }
 function addDays(value, days) { const result = new Date(value); result.setDate(result.getDate() + days); return result; }
 function iso(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
@@ -511,4 +527,4 @@ function ymd(value) { return String(value).replaceAll("-", ""); }
 function ym(value) { return ymd(value).slice(0, 6); }
 function today() { return iso(new Date()); }
 
-module.exports = { applyItems, checkpointState, clearJobRange, clearLegacySources, recordsForWrite, sourceEndpoint, serverTimingDuration, isRetryable };
+module.exports = { applyItems, checkpointState, clearJobRange, clearLegacySources, recordsForWrite, sourceEndpoint, serverTimingDuration, isRetryable, parseArgs };

@@ -6,7 +6,7 @@
 
 - `collector/`: 공공데이터 API 수집, 일별 gzip CSV 저장, 지난 월 봉인
 - `downloader/` → `converter/` → `analyzer/`: 첨부 다운로드, HWPX/Markdown 변환, ECR 분석
-- `uploader/`: 변경된 데이터만 R2 업로드
+- `uploader/`: 변경된 서비스 CSV·raw 원본·분석 결과만 R2 업로드
 - `public/`: 조회 화면. `app.js`가 화면을, `search-worker.js`가 CSV 스캔을, `rows.js`가 둘이 공유하는 파서와 행 모델을 맡는다
 - `src/worker.js`: 비밀번호 인증, 정적 자산/R2 제공, 원격 갱신 실행, 공공데이터 API 중계, 고급검색 해석
 - `shared/`: CSV와 파이프라인 공용 함수. `nl-filter.js`는 Worker와 로컬 서버가 함께 쓰는 자연어 해석 순수 함수다
@@ -136,6 +136,19 @@ npx wrangler secret put SERVICE_KEY     # 저장 결과 위에 최신 공고를 
 npm run deploy
 ```
 
+수집기가 만드는 `data/raw/{pre,bid,plan}/YYYY/MM/DD.csv.gz`도 같은 구조의
+`raw/{pre,bid,plan}/YYYY/MM/DD.csv.gz` R2 객체로 업로드한다. Worker의 공개 데이터 경로에는
+raw 프리픽스를 허용하지 않으므로 사이트 방문자가 원본 백업을 직접 내려받지는 못한다.
+명시한 재수집 구간에서 공고가 사라지면 서비스 일별 파일과 대응 raw 객체를 함께 정리한다.
+
+과거 데이터에 새 컬럼을 소급할 때는 GitHub Actions의 `historical-backfill`을 실행한다. 기본 범위는
+`2020-01-01 ~ 2026-03-31`이며 3개월씩 순차 처리한다. 과거 조회가 가능한 사전공고와 본공고를
+다시 받아 현재 컬럼으로 만든 월별 서비스 CSV와 전체 컬럼 raw 일별 CSV를 함께 R2에 넣는다.
+개별 백필 작업은 `--put-only` 업로드라 운영 `index.json`과 원격 삭제를 건드리지 않는다.
+모든 작업이 성공한 뒤에만 최종 작업이 `index.json.schemaVersion`을 올린다. 화면은 이 값을
+CSV URL에 붙여 기존 1년 immutable 캐시를 새 데이터로 한 번 교체한다. 발주계획 API는 과거
+범위 조회를 지원하지 않아 역사 백필 대상에서 제외된다.
+
 > 시크릿 이름은 코드가 읽는 것과 **정확히** 같아야 합니다. Worker는 `env.RELAY_TOKEN`을
 > 읽으므로 `RELAY` 같은 다른 이름으로 등록하면 값이 들어 있어도 중계가 501을 반환합니다.
 > 네 개 모두 비대화형 셸에서 등록하지 마세요(아래 [토큰 등록](#토큰-등록) 경고 참고).
@@ -229,6 +242,25 @@ Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN`, `SERVICE
 본공고의 `bidNtceDtlUrl`은 나중에 `shared/service-columns.js`에 추가한 컬럼이라, **그 전에 모아
 둔 파일에는 없다.** 옛 파일의 행은 링크 없이 그려지고, 그 구간을 다시 수집하면 채워진다.
 `/api/live`가 합친 최신 행은 원본 응답을 그대로 보므로 저장 컬럼과 무관하게 링크가 붙는다.
+
+### 본공고 입찰 일정
+
+본공고 상세창의 `입찰 일정` 탭은 기존 수집 요청인
+`getBidPblancListInfo{Cnstwk|Servc|Frgcpt|Thng}PPSSrch` 응답을 그대로 사용한다. 일정 때문에
+별도 상세 API를 호출하지 않으므로 모달을 열 때 추가 대기 시간이나 공공 API 호출량이 생기지 않는다.
+
+| 표시 | 공공 API 필드 |
+| --- | --- |
+| 공고 게시 | `bidNtceDt` |
+| 입찰참가자격 등록 마감 | `bidQlfctRgstDt` |
+| 공동수급협정 마감 | `cmmnSpldmdAgrmntClseDt` |
+| 입찰서 제출 시작 | `bidBeginDt` |
+| 입찰서 제출 마감 | `bidClseDt` |
+| 개찰 예정 | `opengDt` |
+
+명세상 `opengDt`는 실제 개찰 처리 시각이 아니라 담당자가 개찰을 시작할 수 있는 최초 시각이다.
+값이 없는 선택 일정은 목록에서 생략한다. 기존 저장 파일에는 원래 보관하던 공고 게시·입찰 마감만
+표시될 수 있고, 새로 수집하거나 실시간 조회한 공고부터 나머지 일정도 함께 표시된다.
 
 ## 관심 기관 프리셋
 

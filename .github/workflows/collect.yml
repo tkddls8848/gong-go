@@ -100,7 +100,8 @@ jobs:
       - name: 업로더 의존성 설치
         run: npm ci --omit=dev --no-audit --fund=false
 
-      - name: 업로드
+      # 서비스 CSV뿐 아니라 collector가 같은 날짜에 만든 data/raw 원본도 함께 보관한다.
+      - name: 서비스 CSV·raw 업로드
         env:
           SYNC_BEGIN: ${{ steps.range.outputs.begin }}
           SYNC_END: ${{ steps.range.outputs.end }}

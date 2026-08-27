@@ -3,9 +3,12 @@ const assert = require("node:assert/strict");
 const { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf, endpoint, parseUploadArgs } = require("./upload");
 
 test("업로더는 기본 dry-run이고 --commit이 있을 때만 실제 실행한다", () => {
-  assert.deepEqual(parseUploadArgs([]), { dryRun: true });
-  assert.deepEqual(parseUploadArgs(["--dry-run"]), { dryRun: true });
-  assert.deepEqual(parseUploadArgs(["--commit"]), { dryRun: false });
+  assert.deepEqual(parseUploadArgs([]), { dryRun: true, putOnly: false, indexOnly: false });
+  assert.deepEqual(parseUploadArgs(["--dry-run"]), { dryRun: true, putOnly: false, indexOnly: false });
+  assert.deepEqual(parseUploadArgs(["--commit"]), { dryRun: false, putOnly: false, indexOnly: false });
+  assert.deepEqual(parseUploadArgs(["--commit", "--put-only"]), { dryRun: false, putOnly: true, indexOnly: false });
+  assert.deepEqual(parseUploadArgs(["--commit", "--index-only"]), { dryRun: false, putOnly: false, indexOnly: true });
+  assert.throws(() => parseUploadArgs(["--put-only", "--index-only"]), /함께 쓸 수 없습니다/);
   assert.throws(() => parseUploadArgs(["--commit", "--dry-run"]), /함께 쓸 수 없습니다/);
   assert.throws(() => parseUploadArgs(["--comit"]), /알 수 없는 인자/);
 });
@@ -40,6 +43,7 @@ test("monthOf는 일별 키와 월별 키를 같은 월로 모은다", () => {
 
 test("dateOf는 일별 키에서 날짜를 뽑는다", () => {
   assert.equal(dateOf("pre/2026/07/03.csv.gz"), "2026-07-03");
+  assert.equal(dateOf("raw/bid/2026/07/03.csv.gz"), "2026-07-03");
 });
 
 test("월별 봉인 키가 버킷에 있을 때만 그 달 일별 키를 지운다", () => {
@@ -70,11 +74,11 @@ test("수집 구간이 없으면 사라진 일별 키를 지우지 않는다", (
 });
 
 test("수집 구간 안에서 로컬에 없어진 일별 키만 지운다", () => {
-  const present = new Set(["bid/2026/07/01.csv.gz", "bid/2026/07/02.csv.gz", "bid/2020/01/01.csv.gz"]);
-  const local = [{ key: "bid/2026/07/02.csv.gz" }];
+  const present = new Set(["bid/2026/07/01.csv.gz", "raw/bid/2026/07/01.csv.gz", "bid/2026/07/02.csv.gz", "raw/bid/2026/07/02.csv.gz", "bid/2020/01/01.csv.gz"]);
+  const local = [{ key: "bid/2026/07/02.csv.gz" }, { key: "raw/bid/2026/07/02.csv.gz" }];
   // 2026-07-01은 구간 안인데 로컬에 없다 → 그날 공고가 0건이 된 것이므로 지운다.
   // 2020-01-01은 구간 밖이라 러너가 받지 않았을 뿐이므로 건드리지 않는다.
-  assert.deepEqual(vanishedDaily(present, local, "2026-07-01", "2026-07-31"), ["bid/2026/07/01.csv.gz"]);
+  assert.deepEqual(vanishedDaily(present, local, "2026-07-01", "2026-07-31").sort(), ["bid/2026/07/01.csv.gz", "raw/bid/2026/07/01.csv.gz"]);
 });
 
 test("발주계획은 구간 안에서 로컬에 없어도 지우지 않는다", () => {

@@ -24,7 +24,9 @@ function onlyRow(records, mode) {
 
 const BID = {
   bidNtceNo: "20260105123-00", ntceKindNm: "물품", bidNtceNm: "서버 도입", bidNtceDt: "2026-01-05 09:00:00",
-  bidClseDt: "2026-01-20 18:00:00", rgstDt: "2026-01-05 08:30:00", dminsttCd: "B550001",
+  bidQlfctRgstDt: "2026-01-19 18:00:00", cmmnSpldmdAgrmntClseDt: "2026-01-19 18:00:00",
+  bidBeginDt: "2026-01-15 09:00:00", bidClseDt: "2026-01-20 18:00:00", opengDt: "2026-01-21 10:00:00",
+  rgstDt: "2026-01-05 08:30:00", dminsttCd: "B550001",
   dminsttNm: "국민건강보험공단", rlDminsttNm: "국민건강보험공단 일산병원",
   ntceSpecDocUrl1: "https://example.go.kr/get?fileNm=%EA%B7%9C%EA%B2%A9%EC%84%9C.hwp", ntceSpecFileNm1: "",
   ntceSpecDocUrl2: "https://example.go.kr/get?id=2", ntceSpecFileNm2: "과업지시서.hwp",
@@ -53,6 +55,14 @@ test("본공고 행을 화면 모델로 옮긴다", () => {
   assert.equal(row.title, "서버 도입");
   assert.equal(row.publishedAt, "2026-01-05 08:30:00");
   assert.equal(row.closeAt, "2026-01-20 18:00:00");
+  assert.deepEqual(row.bidSchedule, {
+    bidNtceDt: "2026-01-05 09:00:00",
+    bidQlfctRgstDt: "2026-01-19 18:00:00",
+    cmmnSpldmdAgrmntClseDt: "2026-01-19 18:00:00",
+    bidBeginDt: "2026-01-15 09:00:00",
+    bidClseDt: "2026-01-20 18:00:00",
+    opengDt: "2026-01-21 10:00:00",
+  });
 });
 
 test("공공 API 객체도 CSV와 같은 필터와 화면 모델을 쓴다", () => {

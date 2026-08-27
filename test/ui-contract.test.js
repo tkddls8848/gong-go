@@ -12,6 +12,7 @@ const read = (name) => fs.readFileSync(path.join(__dirname, "..", "public", name
 const APP = read("app.js");
 const HTML = read("index.html");
 const CSS = read("style.css");
+const SEARCH_WORKER = read("search-worker.js");
 
 const idsIn = (source) => new Set([...source.matchAll(/id="([\w-]+)"/g)].map((match) => match[1]));
 const lookupsIn = (source) => new Set([...source.matchAll(/\$\("#([\w-]+)"\)/g)].map((match) => match[1]));
@@ -162,6 +163,44 @@ test("첨부가 있는 공고에서도 상세 링크가 사라지지 않는다",
   // planLinks도 같은 링크를 그리면 발주계획 모달에 링크가 두 번 나온다.
   const plan = APP.slice(APP.indexOf("function planLinks("));
   assert.ok(!plan.slice(0, plan.indexOf("\n}")).includes("detailUrl"), "planLinks가 상세 링크를 중복해서 그린다");
+});
+
+test("본공고 모달은 공공 API의 입찰 진행 일정을 순서대로 표시한다", () => {
+  assert.match(HTML, /id="schedule-tab"[^>]*data-tab="schedule"/);
+  assert.match(HTML, /id="schedule-content"[^>]*hidden/);
+  const { scheduleItems, renderBidSchedule } = evaluate("scheduleItems", "renderBidSchedule", "html");
+  const row = {
+    closeAt: "2026-09-10 18:00:00",
+    bidSchedule: {
+      bidNtceDt: "2026-08-27 09:00:00",
+      bidBeginDt: "2026-09-08 09:00:00",
+      opengDt: "2026-09-11 10:00:00",
+    },
+  };
+  assert.deepEqual(scheduleItems(row), [
+    ["공고 게시", "2026-08-27 09:00:00"],
+    ["입찰서 제출 시작", "2026-09-08 09:00:00"],
+    ["입찰서 제출 마감", "2026-09-10 18:00:00"],
+    ["개찰 예정", "2026-09-11 10:00:00"],
+  ]);
+  const rendered = renderBidSchedule(row);
+  assert.match(rendered, /입찰서 제출 시작/);
+  assert.match(rendered, /2026-09-11 10:00:00/);
+  assert.match(rendered, /실제 개찰 처리 시각이 아니라/);
+});
+
+test("과거 백필 스키마 버전은 메인·검색 워커의 CSV 캐시 키에 함께 붙는다", () => {
+  assert.match(APP, /dataSchemaVersion = String\(index\.schemaVersion \|\| ""\)/);
+  assert.match(APP, /worker\.postMessage\(\{[^}]*dataSchemaVersion/);
+  assert.match(APP, /\?v=\$\{encodeURIComponent\(dataSchemaVersion\)\}/);
+  assert.match(SEARCH_WORKER, /\?v=\$\{encodeURIComponent\(dataSchemaVersion\)\}/);
+});
+
+test("입찰 일정 탭은 본공고에서만 보인다", () => {
+  const openModal = sourceOf("openModal");
+  assert.match(openModal, /\$\("#schedule-tab"\)\.disabled = row\.mode !== "bid"/);
+  const selectTab = sourceOf("selectTab");
+  assert.match(selectTab, /\$\("#schedule-content"\)\.hidden = tab !== "schedule"/);
 });
 
 test("내려받은 CSV는 머리글과 칸 수가 같다", () => {

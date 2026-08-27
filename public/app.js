@@ -58,7 +58,7 @@ function renderPresets() {
   select.innerHTML = `${transient ? '<option value="" selected>(고급검색)</option>' : ""}${presets.map((preset) => `<option value="${html(preset.name)}"${!transient && preset.name === activePreset ? " selected" : ""}>${html(preset.name)}</option>`).join("")}`;
   $("#preset-delete").disabled = transient || presets.length <= 1;
 }
-let filtered = [], fileIndex = [], page = 1, searchVersion = 0, currentRow = null, currentAnalysis = null, viewMode = "pre";
+let filtered = [], fileIndex = [], dataSchemaVersion = "", page = 1, searchVersion = 0, currentRow = null, currentAnalysis = null, viewMode = "pre";
 const analyses = new Map(), modal = $("#file-modal");
 const MODE_SUBTITLES = {
   pre: "로컬 CSV에 저장한 사전공고를 조회합니다.",
@@ -73,15 +73,14 @@ if (location.protocol === "file:") { $("#status").textContent = "CSV 조회는 �
 else { loadIndex(true).then(({ changed }) => applyFilters({ revalidateRecent: changed })).catch((error) => { $("#status").textContent = error.message; renderRows([]); }); resumeRefresh(); }
 
 // index.json은 갱신 직후에도 최신이어야 하므로 매번 캐시를 우회한다. 파일 1개라 호출량에
-// 영향이 없다. 반대로 .csv.gz에는 캐시 무효화 토큰을 붙이지 않는다 — 쿼리스트링은 브라우저
-// 캐시 키의 일부라, 수집이 끝날 때마다 모든 파일 URL이 새 URL이 되어 캐시가 통째로 날아간다.
-// 과거 파일이 굳지 않게 하는 일은 서버가 ETag와 날짜별 Cache-Control로 이미 하고 있다
-// (배포본은 src/worker.js, 로컬은 devserver가 no-store).
+// 영향이 없다. 일반 수집 시각은 CSV URL에 붙이지 않는다 — 매시 모든 과거 캐시가 날아간다.
+// 대신 과거 백필처럼 봉인 파일의 스키마 자체가 바뀐 때만 schemaVersion이 한 번 바뀐다.
 async function loadIndex(initial) {
   const [index, analysis] = await Promise.all([getJson(`${DATA_BASE}/index.json?t=${Date.now()}`), getJson(`${DATA_BASE}/analysis-index.json`).catch(() => ({ entries: [] }))]);
   let previous = "";
   try { previous = localStorage.getItem(INDEX_STORAGE_KEY) || ""; localStorage.setItem(INDEX_STORAGE_KEY, index.updatedAt || ""); } catch {}
   fileIndex = index.files || [];
+  dataSchemaVersion = String(index.schemaVersion || "");
   analyses.clear(); (analysis.entries || []).forEach((entry) => analyses.set(entry.notice, entry));
   renderDataStatus(index);
   if (initial) { defaultRange(); $("#status").textContent = `${fileIndex.length}개 CSV를 찾았습니다.`; }
@@ -425,7 +424,7 @@ function scanFiles(files, criteria, span, version, onProgress) {
         if (state.rows.length >= MAX_ROWS) { state.capped = true; onProgress(state); abortScan(); return; }
         onProgress(state);
       };
-      worker.postMessage({ type: "search", version, base: DATA_BASE, files: mine, criteria, span, concurrency: share });
+      worker.postMessage({ type: "search", version, base: DATA_BASE, dataSchemaVersion, files: mine, criteria, span, concurrency: share });
     });
     if (!pending) finish();
   });
@@ -441,7 +440,8 @@ async function scanInline(files, criteria, span, version, onProgress) {
       if (version !== searchVersion) return;
       const file = files[cursor++];
       try {
-        const text = await Rows.fetchCsvText(`${DATA_BASE}/${file.path}`, file.revalidate ? { cache: "no-cache" } : undefined);
+        const suffix = dataSchemaVersion ? `?v=${encodeURIComponent(dataSchemaVersion)}` : "";
+        const text = await Rows.fetchCsvText(`${DATA_BASE}/${file.path}${suffix}`, file.revalidate ? { cache: "no-cache" } : undefined);
         const result = Rows.scanText(text, modeOf(file), parsed, !(file.begin >= span.begin && file.end <= span.end));
         state.scanned += result.scanned;
         for (const row of result.matched) state.rows.push(row);
@@ -601,9 +601,25 @@ function fileBadge(row, files) {
   if (row.mode === "plan") return `<span class="file-badge ${row.hasAttachment ? "" : "empty"}">${row.hasAttachment ? "첨부 있음" : "첨부 없음"}</span>`;
   return `<span class="file-badge ${files.length ? "" : "empty"}">${files.length ? `첨부 ${files.length}` : "첨부 0"}</span>`;
 }
-function openModal(row) { currentRow = row; currentAnalysis = null; const files = normalizeFiles(row.files), entry = analyses.get(numberOf(row)); $("#modal-title").textContent = row.title || "(사업명 없음)"; $("#modal-subtitle").textContent = modalSubtitle(row, files); $("#modal-file-list").innerHTML = detailLink(row) + (files.length ? files.map((file, i) => `<li><span class="file-no">${i + 1}.</span><a href="${html(file.url)}" target="_blank" rel="noopener noreferrer">${html(file.name)}</a></li>`).join("") : row.mode === "plan" ? planLinks(row) : '<li><span class="empty-msg">이 공고에는 API로 제공되는 첨부파일이 없습니다.</span></li>'); $("#download-all-btn").disabled = !files.length; $("#download-all-btn").textContent = files.length ? `전체 다운로드 (${files.length}건)` : "전체 다운로드"; $("#ecr-tab").disabled = !entry; $("#ecr-tab").textContent = entry ? `ECR 규격 (${entry.ecrCount})` : "ECR 규격"; $("#ecr-content").innerHTML = entry ? '<p class="hint">ECR 규격을 불러오려면 탭을 선택하세요.</p>' : '<p class="hint">이 공고에는 분석된 ECR 규격이 없습니다.</p>'; selectTab("files"); modal.style.display = "flex"; }
+function scheduleItems(row) {
+  const schedule = row.bidSchedule || {};
+  return [
+    ["공고 게시", schedule.bidNtceDt],
+    ["입찰참가자격 등록 마감", schedule.bidQlfctRgstDt],
+    ["공동수급협정 마감", schedule.cmmnSpldmdAgrmntClseDt],
+    ["입찰서 제출 시작", schedule.bidBeginDt],
+    ["입찰서 제출 마감", schedule.bidClseDt || row.closeAt],
+    ["개찰 예정", schedule.opengDt],
+  ].filter((item) => item[1]);
+}
+function renderBidSchedule(row) {
+  const items = scheduleItems(row);
+  if (!items.length) return '<p class="schedule-empty">저장된 입찰 일정이 없습니다. 다음 데이터 갱신부터 공공 API의 일정 정보가 함께 저장됩니다.</p>';
+  return `<ol class="schedule-list">${items.map(([label, value]) => `<li class="schedule-item"><span class="schedule-dot" aria-hidden="true"></span><span class="schedule-label">${html(label)}</span><time class="schedule-time">${html(value)}</time></li>`).join("")}</ol><p class="schedule-note">개찰 예정은 실제 개찰 처리 시각이 아니라 개찰을 시작할 수 있는 최초 시각입니다.</p>`;
+}
+function openModal(row) { currentRow = row; currentAnalysis = null; const files = normalizeFiles(row.files), entry = analyses.get(numberOf(row)); $("#modal-title").textContent = row.title || "(사업명 없음)"; $("#modal-subtitle").textContent = modalSubtitle(row, files); $("#modal-file-list").innerHTML = detailLink(row) + (files.length ? files.map((file, i) => `<li><span class="file-no">${i + 1}.</span><a href="${html(file.url)}" target="_blank" rel="noopener noreferrer">${html(file.name)}</a></li>`).join("") : row.mode === "plan" ? planLinks(row) : '<li><span class="empty-msg">이 공고에는 API로 제공되는 첨부파일이 없습니다.</span></li>'); $("#download-all-btn").disabled = !files.length; $("#download-all-btn").textContent = files.length ? `전체 다운로드 (${files.length}건)` : "전체 다운로드"; $("#schedule-tab").disabled = row.mode !== "bid"; $("#schedule-content").innerHTML = row.mode === "bid" ? renderBidSchedule(row) : ""; $("#ecr-tab").disabled = !entry; $("#ecr-tab").textContent = entry ? `ECR 규격 (${entry.ecrCount})` : "ECR 규격"; $("#ecr-content").innerHTML = entry ? '<p class="hint">ECR 규격을 불러오려면 탭을 선택하세요.</p>' : '<p class="hint">이 공고에는 분석된 ECR 규격이 없습니다.</p>'; selectTab("files"); modal.style.display = "flex"; }
 function closeModal() { modal.style.display = "none"; currentRow = null; currentAnalysis = null; }
-function selectTab(tab) { document.querySelectorAll(".modal-tab").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab)); $("#files-content").hidden = tab !== "files"; $("#ecr-content").hidden = tab !== "ecr"; if (tab === "ecr") loadEcr(); }
+function selectTab(tab) { document.querySelectorAll(".modal-tab").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab)); $("#files-content").hidden = tab !== "files"; $("#schedule-content").hidden = tab !== "schedule"; $("#ecr-content").hidden = tab !== "ecr"; if (tab === "ecr") loadEcr(); }
 async function loadEcr() { const entry = analyses.get(numberOf(currentRow)); if (!entry) return; if (!currentAnalysis) { $("#ecr-content").innerHTML = '<p class="hint">ECR 규격을 불러오는 중입니다.</p>'; try { currentAnalysis = await getJson(`${DATA_BASE}/${entry.path}`); } catch (error) { $("#ecr-content").innerHTML = `<p class="warning-text">ECR 규격을 불러오지 못했습니다: ${html(error.message)}</p>`; return; } } renderEcr(currentAnalysis); }
 function renderEcr(data) { const alerts = [...(data.누락 || []).map((id) => `누락: ${id}`), ...(data.verification?.errors || []), ...(data.ecr || []).flatMap((item) => (item.불확실 || []).map((text) => `${item.id}: ${text}`))]; const rows = (data.ecr || []).map((item, i) => `<tr class="ecr-row" data-index="${i}"><td>${html(item.id)}</td><td>${html(item.분류)}</td><td>${html(item.명칭)}</td><td>${html((item.기본규격 || []).map((spec) => spec.수량).filter(Boolean).join(", ") || "-")}</td><td>${html((item.산출물 || []).join(", ") || "-")}</td></tr><tr id="detail-${i}" class="ecr-detail" hidden><td colspan="5"><p><strong>세부내용 원문</strong></p><div class="detail-text">${html(item.세부내용_원문 || "-")}</div>${specTable(item.기본규격 || [])}</td></tr>`).join(""); $("#ecr-content").innerHTML = `${alerts.length ? `<div class="ecr-alert">${alerts.map(html).join("<br>")}</div>` : ""}<p class="ecr-status ${data.verified ? "verified" : "unverified"}">${data.verified ? "자동 검증 통과" : "자동 검증 미통과 — 원문 확인 필요"}</p><div class="ecr-scroll"><table class="ecr-table"><thead><tr><th>ID</th><th>분류</th><th>명칭</th><th>수량</th><th>산출물</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">추출된 ECR이 없습니다.</td></tr>'}</tbody></table></div>`; document.querySelectorAll(".ecr-row").forEach((row) => row.onclick = () => { const detail = $(`#detail-${row.dataset.index}`); detail.hidden = !detail.hidden; row.classList.toggle("expanded", !detail.hidden); }); }
 function specTable(specs) { return specs.length ? `<p><strong>기본규격</strong></p><table class="nested-spec"><thead><tr><th>구분</th><th>항목</th><th>요구사항</th><th>수량</th></tr></thead><tbody>${specs.map((spec) => `<tr><td>${html(spec.구분)}</td><td>${html(spec.항목)}</td><td>${html(spec.요구사항)}</td><td>${html(spec.수량)}</td></tr>`).join("")}</tbody></table>` : ""; }
