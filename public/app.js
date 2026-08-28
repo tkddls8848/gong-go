@@ -177,8 +177,10 @@ $("#inst-loose").onchange = () => { page = 1; applyFilters(); };
 $("#inst-edit-toggle").onclick = () => {
   const panel = $("#inst-editor"), open = panel.hidden;
   panel.hidden = !open;
-  $("#inst-edit-toggle").setAttribute("aria-pressed", String(open));
-  $("#inst-edit-toggle").classList.toggle("active", open);
+  const toggle = $("#inst-edit-toggle");
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.textContent = open ? "프리셋 닫기" : "프리셋 열기";
+  toggle.classList.toggle("active", open);
   if (open) $("#inst-name").focus();
 };
 $("#today-btn").onclick = () => jumpToToday();
