@@ -13,6 +13,10 @@ const ASK_PATH = "/api/ask";
 const LIVE_PATH = "/api/live";
 const LIVE_PAGE_SIZE = 100;
 const LIVE_MAX_PAGE = 200;
+// 같은 조회 조건은 짧은 시간 안에 반복되는 경우가 많다. 브라우저에는 저장하지 않되 Worker의
+// Cache API에만 5분 보관해 검색 버튼·모드 왕복·여러 세션이 같은 나라장터 페이지를 다시
+// 호출하지 않게 한다. 개발계정의 일일 호출 한도를 아끼는 것이 목적이다.
+const LIVE_CACHE_TTL_SECONDS = 5 * 60;
 // JSON schema 모드를 지원하면서 한국어 파싱이 가장 나은 축이다. 실패하면 규칙 파서로 내려간다 —
 // 8B를 중간에 두지 않은 이유는 한국어에서 기관명을 뭉개 조용히 틀린 답을 내기 때문이다.
 const ASK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
@@ -65,7 +69,7 @@ const REFRESH_DAILY_LIMIT = 20;
 const REFRESH_LIMIT_KEY = "_meta/refresh-limit.json";
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, context) {
     const url = new URL(request.url);
 
     // 중계는 사람용 비밀번호 게이트와 별개다. 수집기(GitHub Actions)가 쓰는 기계 경로라
@@ -87,7 +91,7 @@ export default {
     }
 
     if (await isAuthenticated(request, password)) {
-      return routeRequest(request, env);
+      return routeRequest(request, env, context);
     }
 
     const dest = safePath(url.pathname + url.search);
@@ -152,10 +156,10 @@ async function runningCollect(env) {
   return data.workflow_runs?.find((run) => run.status !== "completed") || null;
 }
 
-async function routeRequest(request, env) {
+async function routeRequest(request, env, context) {
   const url = new URL(request.url);
   if (url.pathname === REFRESH_PATH) return handleRefresh(request, env, url);
-  if (url.pathname === LIVE_PATH) return handleLive(request, env, url);
+  if (url.pathname === LIVE_PATH) return handleLive(request, env, url, context);
   // 게이트를 통과한 요청만 여기 온다. 인증 앞에 두면 남이 계정 요금을 태울 수 있다.
   if (url.pathname === ASK_PATH) return handleAsk(request, env);
   if (url.pathname.startsWith(DATA_PREFIX)) {
@@ -169,7 +173,7 @@ async function routeRequest(request, env) {
 
 // 저장된 결과를 먼저 보여 준 뒤 최근 결과만 덧붙이는 조회 경로. Worker는 큰 JSON을 파싱하지
 // 않고 그대로 흘려보낸다. 무료 플랜의 CPU는 아끼고 인증키도 브라우저에 노출하지 않는다.
-async function handleLive(request, env, url) {
+async function handleLive(request, env, url, context) {
   if (request.method !== "GET") return jsonResponse({ message: "GET만 지원합니다." }, 405, { Allow: "GET" });
   if (!env.SERVICE_KEY) return jsonResponse({ message: "SERVICE_KEY 시크릿이 설정되지 않았습니다." }, 501);
 
@@ -182,6 +186,15 @@ async function handleLive(request, env, url) {
   if (!service || !service.ops[businessType]) return jsonResponse({ message: "공고 유형 또는 업무구분이 올바르지 않습니다." }, 400);
   if (!validLiveRange(begin, end)) return jsonResponse({ message: "실시간 조회 기간은 YYYY-MM-DD 형식의 연속 2일까지 지원합니다." }, 400);
   if (!Number.isInteger(pageNo) || pageNo < 1 || pageNo > LIVE_MAX_PAGE) return jsonResponse({ message: `pageNo는 1~${LIVE_MAX_PAGE}만 지원합니다.` }, 400);
+
+  // 인증 쿠키와 ServiceKey는 캐시 키에 넣지 않는다. 검증을 마친 조회 조건만 정해진 순서로
+  // 다시 조립하므로 쿼리 파라미터 순서가 달라도 같은 페이지는 같은 캐시 항목을 쓴다.
+  const cache = globalThis.caches?.default;
+  const cacheKey = new Request(liveCacheUrl(url, { mode, businessType, begin, end, pageNo }));
+  if (cache) {
+    const cached = await cache.match(cacheKey);
+    if (cached) return liveClientResponse(cached, "HIT");
+  }
 
   const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(LIVE_PAGE_SIZE), inqryDiv: "1", ServiceKey: env.SERVICE_KEY });
   if (service.snapshot) {
@@ -203,9 +216,34 @@ async function handleLive(request, env, url) {
     "Content-Type": upstream.headers.get("Content-Type") || "application/json; charset=utf-8",
     "Cache-Control": "no-store",
     "Server-Timing": `upstream;dur=${(performance.now() - started).toFixed(1)}`,
+    "X-Gong-Live-Cache": "MISS",
   });
   if (upstream.headers.has("Retry-After")) headers.set("Retry-After", upstream.headers.get("Retry-After"));
-  return new Response(upstream.body, { status: upstream.status, headers });
+  const response = new Response(upstream.body, { status: upstream.status, headers });
+  // 오류와 한도 응답은 캐시하지 않는다. 성공 응답만 내부 캐시용 복제본의 수명을 바꿔 넣고,
+  // 사용자에게 돌려주는 원본은 계속 no-store라 브라우저 디스크에는 남지 않는다.
+  if (cache && upstream.ok) {
+    const cacheable = response.clone();
+    cacheable.headers.set("Cache-Control", `public, max-age=${LIVE_CACHE_TTL_SECONDS}`);
+    cacheable.headers.delete("Retry-After");
+    const writing = cache.put(cacheKey, cacheable).catch(() => {});
+    if (context?.waitUntil) context.waitUntil(writing);
+    else await writing;
+  }
+  return response;
+}
+
+function liveCacheUrl(url, condition) {
+  const params = new URLSearchParams(Object.entries(condition).map(([key, value]) => [key, String(value)]));
+  return `${url.origin}${LIVE_PATH}?${params}`;
+}
+
+function liveClientResponse(response, state) {
+  const headers = new Headers(response.headers);
+  headers.set("Cache-Control", "no-store");
+  headers.set("X-Gong-Live-Cache", state);
+  headers.set("Server-Timing", `live-cache;desc=${state.toLowerCase()}`);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 function validLiveRange(begin, end) {

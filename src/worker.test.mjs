@@ -154,8 +154,34 @@ test("최신 조회는 게이트 뒤에서 키를 붙이고 원문 응답을 전
   assert.equal(target.searchParams.get("inqryBgnDt"), "202608160000");
   assert.equal(target.searchParams.get("inqryEndDt"), "202608172359");
   assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.equal(response.headers.get("X-Gong-Live-Cache"), "MISS");
   assert.equal(response.headers.get("Retry-After"), "7");
   assert.match(response.headers.get("Server-Timing") || "", /^upstream;dur=/);
+});
+
+test("같은 최신 조회 조건은 Worker에서 5분 캐시해 상류를 한 번만 부른다", async (t) => {
+  const store = new Map();
+  const originalCaches = globalThis.caches;
+  globalThis.caches = { default: {
+    async match(request) { const response = store.get(request.url); return response?.clone(); },
+    async put(request, response) { store.set(request.url, response.clone()); },
+  } };
+  t.after(() => { if (originalCaches === undefined) delete globalThis.caches; else globalThis.caches = originalCaches; });
+  const calls = stubFetch(t, () => jsonResponse({ response: { body: { items: [] } } }));
+  const env = envOf({ SERVICE_KEY: "key" });
+  const cookie = await gateCookie(env);
+
+  const first = await authed(LIVE_PATH, { cookie }, env);
+  // 순서와 인코딩 표현이 달라도 유효한 조회 조건이 같으면 같은 캐시 키를 사용한다.
+  const secondPath = "/api/live?pageNo=2&end=2026-08-17&begin=2026-08-16&businessType=물품&mode=bid";
+  const second = await authed(secondPath, { cookie }, env);
+
+  assert.equal(calls.length, 1);
+  assert.equal(first.headers.get("X-Gong-Live-Cache"), "MISS");
+  assert.equal(second.headers.get("X-Gong-Live-Cache"), "HIT");
+  assert.equal(second.headers.get("Cache-Control"), "no-store");
+  assert.equal(store.values().next().value.headers.get("Cache-Control"), "public, max-age=300");
+  assert.deepEqual(await second.json(), { response: { body: { items: [] } } });
 });
 
 test("최신 조회는 인증·시크릿·입력 범위를 검사한 뒤에만 상류를 부른다", async (t) => {
