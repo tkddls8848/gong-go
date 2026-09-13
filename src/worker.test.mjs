@@ -302,6 +302,7 @@ test("캐시 수명은 인덱스·봉인·최근·지난 파일이 다르다", a
   assert.equal(await control("analysis-index.json"), "private, max-age=60");
   // 봉인된 월은 다시 바뀌지 않는다.
   assert.equal(await control("bid/2020/01.csv.gz"), "private, max-age=31536000, immutable");
+  assert.equal((await authed("/data/bid/2020/01.csv.gz", { cookie }, dataEnv())).status, 200);
   // 재수집 창(40일) 안쪽은 매시 덮어써지므로 짧게 잡는다.
   assert.equal(await control("bid/2026/08/10.csv.gz"), "private, max-age=300");
   assert.equal(await control("bid/2026/06/01.csv.gz"), "private, max-age=31536000, immutable");

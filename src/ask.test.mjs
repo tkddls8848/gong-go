@@ -1,9 +1,9 @@
-// 자연어 → 검색조건 변환의 순수 함수 테스트. 모델 없이 도는 부분이 전부 여기에 있다.
-// 오늘을 고정해 두므로 실행 날짜와 무관하게 같은 답이 나와야 한다 — 이 파일이 로컬 시간
-// API를 쓰지 않는다는 규칙(nl-filter.js 머리 주석)을 지키는지 확인하는 역할도 겸한다.
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const { kstToday, monthBounds, lastDay, recentMonth, resolvePeriod, normalizeAsk, ruleParse, validDate, DATA_FLOOR } = require("./nl-filter");
+// 배포본의 질의 해석. 모델 없이 도는 부분이 전부 여기에 있다. 오늘을 고정해 두므로 실행
+// 날짜와 무관하게 같은 답이 나와야 한다 — 이 파일이 로컬 시간 API를 쓰지 않는다는 규칙
+// (ask.js 머리 주석)을 지키는지 확인하는 역할도 겸한다.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { kstToday, monthBounds, lastDay, recentMonth, resolvePeriod, normalizeAsk, ruleParse, validDate, dataFloor, ASK_SCHEMA, buildPrompt } from "./ask.js";
 
 const TODAY = "2026-08-13"; // 목요일
 const ask = (parsed, mode = "pre") => normalizeAsk(parsed, { today: TODAY, mode });
@@ -56,6 +56,8 @@ test("이름 있는 기간은 코드가 날짜를 만든다", () => {
 test("월만 말하면 그 달 전체, 연도를 말하면 그 해로 본다", () => {
   assert.deepEqual(ask({ period: "month", month: 4 }).filter.begin, "2026-04-01");
   assert.deepEqual(ask({ period: "month", month: 4 }).filter.end, "2026-04-30");
+  assert.equal(ask({ period: "month", month: 9, year: 2025 }).filter.begin, "2025-09-01");
+  // 2020년 이후의 과거 연도도 조회한다.
   assert.equal(ask({ period: "month", month: 4, year: 2025 }).filter.begin, "2025-04-01");
   // 이번 달을 말하면 끝은 말일이 아니라 오늘로 잘린다 — 게시일은 미래가 될 수 없다.
   assert.equal(ask({ period: "month", month: 8 }).filter.end, TODAY);
@@ -73,8 +75,10 @@ test("게시일은 미래가 될 수 없다 — 클램프·스왑·연도 되감
   const future = ask({ period: "explicit", from: "2027-03-01", to: "2027-03-31" });
   assert.deepEqual([future.filter.begin, future.filter.end], ["2026-03-01", "2026-03-31"]);
   assert.match(future.notes.join(" "), /1년 되감/);
-  // 수집 시작일보다 앞서면 바닥으로 올린다.
-  assert.equal(ask({ period: "explicit", from: "1999-01-01", to: "2020-06-01" }).filter.begin, DATA_FLOOR);
+  // 2020년 이전은 수집 시작일로 올린다.
+  const early = ask({ period: "explicit", from: "1999-01-01", to: "2026-06-01" });
+  assert.equal(early.filter.begin, dataFloor(TODAY));
+  assert.match(early.notes.join(" "), /가장 이른 날짜/);
   // 달력에 없는 날짜는 기간 조건을 아예 버린다.
   const broken = ask({ period: "explicit", from: "2026-02-30", to: "2026-03-01" });
   assert.equal(broken.filter.begin, "");
@@ -149,4 +153,34 @@ test("설명 문장에 해석 결과가 그대로 담긴다", () => {
   assert.match(explain, /본공고/);
   assert.match(explain, /2026-04-01 ~ 2026-04-30/);
   assert.match(explain, /국민연금공단\(부분일치\)/);
+});
+
+// 모델에 주는 스키마와 프롬프트는 배포본에만 있다.
+test("스키마는 평면이고 모든 키가 required다", () => {
+  // Workers AI의 JSON 모드는 constrained decoding이라 중첩·oneOf에서 실패하고, llama는
+  // optional 키를 빠뜨리거나 없는 키를 지어낸다. "없음"은 ""·0·[]로 표현한다.
+  assert.deepEqual(ASK_SCHEMA.required.sort(), Object.keys(ASK_SCHEMA.properties).sort());
+  for (const property of Object.values(ASK_SCHEMA.properties)) {
+    assert.ok(["string", "integer", "array"].includes(property.type), property.type);
+  }
+});
+
+test("프롬프트는 오늘·올해·이번 달을 그대로 적어 준다", () => {
+  // 모델이 날짜를 계산하지 않아도 되도록 기준값을 문장에 박아 넣는다.
+  const prompt = buildPrompt(TODAY);
+  assert.match(prompt, /오늘: 2026-08-13/);
+  assert.match(prompt, /올해: 2026/);
+  assert.match(prompt, /이번 달: 08/);
+  assert.match(prompt, new RegExp(dataFloor(TODAY)));
+  // 예시의 연도도 오늘에서 만든다 — 해가 바뀌면 예시가 미래를 가리키면 안 된다.
+  assert.match(prompt, /"from":"2026-08-03","to":"2026-08-09"/);
+});
+
+test("2020년부터 과거 기간을 계속 조회할 수 있다", () => {
+  assert.equal(dataFloor(TODAY), "2020-01-01");
+  assert.equal(dataFloor("2030-12-31"), "2020-01-01");
+  const old = ask({ period: "explicit", from: "2021-03-01", to: "2021-03-31" });
+  assert.equal(old.filter.begin, "2021-03-01");
+  const lastYear = ask({ period: "last_year" });
+  assert.deepEqual([lastYear.filter.begin, lastYear.filter.end], ["2025-01-01", "2025-12-31"]);
 });

@@ -13,8 +13,10 @@
 //   --prune    봉인이 끝난 월의 일별 파일을 지운다(봉인 결과를 확인한 뒤 따로 실행)
 //   --reseal   이미 봉인된 월도 일별 파일에서 다시 만든다(봉인 뒤 그 달을 재수집한 경우)
 const zlib = require("node:zlib");
-const { DATA_DIR, fs, path, mapPool, readJson, buildIndexEntries, lastDayOfMonth } = require("../shared/pipeline-utils");
-const { serializeCsv, parseCsv } = require("../shared/csv-record");
+const fs = require("node:fs/promises");
+const path = require("node:path");
+const { DATA_DIR, mapPool, readJson, buildIndexEntries, lastDayOfMonth } = require("./store");
+const { serializeCsv, parseCsv } = require("./csv-record");
 
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
 const MODES = ["pre", "bid", "plan"];
@@ -71,7 +73,7 @@ async function seal(group, previous) {
   const headers = new Set(texts.map((text) => text.slice(0, newlineAt(text))));
   // 헤더가 다르면 이어붙이기가 조용히 어긋난 CSV를 만든다. 그게 최악이므로 그 달만
   // 파싱해서 컬럼 합집합으로 다시 쓴다. project()가 원본에 없는 컬럼을 만들지 않으므로
-  // (shared/service-columns.js) 같은 모드 안에서도 헤더가 갈릴 수 있다.
+  // (collector/service-columns.js) 같은 모드 안에서도 헤더가 갈릴 수 있다.
   const merged = headers.size > 1 ? rebuild(texts) : { text: texts.map(body).join(""), header: [...headers][0] };
   const expected = headers.size > 1 ? merged.rows : texts.reduce((sum, text) => sum + countRows(body(text)), 0);
   const rows = countRows(merged.text);
@@ -125,7 +127,7 @@ async function rowCountOf(file) {
   catch (error) { if (error.code === "ENOENT") return null; throw error; }
 }
 
-// 값 안에 개행이 들어 있을 수 있으므로 줄 수를 세지 않는다. shared/csv-record.js의 파서와
+// 값 안에 개행이 들어 있을 수 있으므로 줄 수를 세지 않는다. collector/csv-record.js의 파서와
 // 같은 규칙으로 따옴표 구간을 건너뛰며 세되, 셀 문자열을 만들지 않아 메모리를 쓰지 않는다.
 const QUOTE = 34, COMMA = 44, LF = 10, CR = 13;
 function countRows(text) {

@@ -1,12 +1,26 @@
 // rows.js는 브라우저 스크립트지만 self가 없으면 globalThis에 붙으므로 그대로 실행해 검사한다.
-// 입력은 collector가 실제로 쓰는 직렬화기로 만든다 — 파일 형식이 어긋나면 여기서 걸린다.
+// 입력은 collector가 저장하는 것과 같은 형식으로 만든다 — 형식이 어긋나면 여기서 걸린다.
 //
 // 다른 테스트와 달리 대상 옆에 두지 않는다. public/은 wrangler의 자산 디렉터리라
 // 그 안에 있는 파일은 전부 사이트로 배포된다.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const zlib = require("node:zlib");
-const { serializeCsv } = require("../shared/csv-record");
+
+// 입력은 collector가 실제로 쓰는 것과 같은 **형식**으로 만든다. collector/csv-record.js를
+// require하지 않는 이유는 조회 화면 테스트가 수집기 모듈에 묶이지 않게 하기 위해서다 —
+// 두 모듈이 맞춰야 하는 것은 저장된 파일 형식이지 함수가 아니다(README 모듈 경계).
+// 형식: 헤더는 컬럼 합집합, 값이 있는 셀은 ="값"을 RFC 4180 따옴표로 감싸고 빈 셀은 빈 필드.
+function serializeCsv(rows) {
+  const columns = [];
+  for (const row of rows) for (const key of Object.keys(row)) if (!columns.includes(key)) columns.push(key);
+  return [columns.join(","), ...rows.map((row) => columns.map((key) => cell(row[key])).join(","))].join("\n");
+}
+function cell(value) {
+  const text = value !== null && typeof value === "object" ? JSON.stringify(value) : String(value ?? "");
+  if (text === "") return "";
+  return `"${`="${text}"`.replaceAll('"', '""')}"`;
+}
 
 require("../public/rows.js");
 const Rows = globalThis.GongRows;

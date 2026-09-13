@@ -9,7 +9,7 @@
 
   const QUOTE = 34, COMMA = 44, LF = 10, CR = 13, EQUALS = 61;
 
-  // shared/csv-record.js와 같은 slice 기반 파서. 예전 프런트 파서는 셀을 한 글자씩
+  // collector/csv-record.js와 같은 규칙의 읽기 전용 사본(slice 기반 파서). 예전 프런트 파서는 셀을 한 글자씩
   // 이어붙여(cell += text[i++]) 1년 조회에서 수천만 번의 문자열 재할당을 냈다.
   function parseLines(text) {
     const rows = [];

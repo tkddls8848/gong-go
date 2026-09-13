@@ -1,5 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+test("부분 삭제 오류는 성공으로 보고하지 않는다", async () => {
+  const { deleteAll } = require("./upload");
+  await assert.rejects(deleteAll({ send: async () => ({ Errors: [{ Key: "bid/2020/01.csv.gz", Code: "AccessDenied" }] }) }, ["bid/2020/01.csv.gz"]), /AccessDenied/);
+});
 const { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf, endpoint, parseUploadArgs } = require("./upload");
 
 test("업로더는 기본 dry-run이고 --commit이 있을 때만 실제 실행한다", () => {
@@ -111,4 +115,8 @@ test("봉인 직후 삭제 전이라도 인덱스는 월 항목만 남긴다", (
   const present = new Set(["bid/2023/12.csv.gz", "bid/2023/12/11.csv.gz"]);
   const local = [{ path: "bid/2023/12.csv.gz", count: 42170 }, { path: "bid/2023/12/11.csv.gz", count: 1500 }];
   assert.deepEqual(indexFiles(present, new Set(), local, []).map((file) => file.path), ["bid/2023/12.csv.gz"]);
+});
+
+test("보관 기간 정리 명령은 더 이상 허용하지 않는다", () => {
+  assert.throws(() => parseUploadArgs(["--retention-only"]), /알 수 없는 인자/);
 });

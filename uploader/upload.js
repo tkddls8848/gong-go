@@ -7,6 +7,8 @@
 // 크론 러너는 최근 며칠치만 로컬에 갖고 있다. 그래서 "로컬에 없으면 지운다" 같은 규칙은
 // 절대 쓰지 않는다 — 삭제 판정은 버킷 안 정보(또는 SYNC_BEGIN/END로 명시된 구간)로만 한다.
 //
+// 서비스와 raw 모두 2020-01-01부터 누적 보관하며 기간 만료로 삭제하지 않는다.
+//
 // 사용: node uploader/upload.js [--commit] [--put-only|--index-only]
 //   기본값     올릴/지울 대상만 출력한다(dry-run)
 //   --commit   실제 업로드·삭제를 수행한다
@@ -15,8 +17,13 @@
 //
 // 자격증명(.env 또는 환경변수): R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
 const crypto = require("node:crypto");
+const fs = require("node:fs/promises");
+const fsSync = require("node:fs");
+const path = require("node:path");
 const { S3Client, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectsCommand } = require("@aws-sdk/client-s3");
-const { ROOT, DATA_DIR, fs, path, loadEnv, mapPool, readJson, buildIndexEntries, SEALED_PATH } = require("../shared/pipeline-utils");
+
+const ROOT = path.join(__dirname, "..");
+const DATA_DIR = path.join(ROOT, "data");
 
 loadEnv(path.join(ROOT, ".env"));
 
@@ -25,13 +32,15 @@ const CONCURRENCY = 8;
 const INDEX_KEY = "index.json";
 const ANALYSIS_INDEX_KEY = "analysis-index.json";
 const DAILY_KEY = /^(pre|bid|plan)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/;
+// 봉인된 월 키(mode/YYYY/MM.csv.gz). collector/compact.js가 만드는 파일과 같은 모양이지만
+// 판정은 버킷 키로 하므로 이 정규식은 uploader가 제 것으로 갖는다.
+const SEALED_PATH = /^(pre|bid|plan)\/(\d{4})\/(\d{2})\.csv\.gz$/;
 // 구간을 지정해 다시 받을 수 있는 모드. vanishedDaily의 "구간 안에서는 로컬이 완전하다"는
 // 전제가 이 모드에서만 성립한다 — plan은 API가 최근 며칠치만 주므로(collector.js의 snapshot)
 // 로컬에 없다는 것이 "그날 0건이 됐다"는 뜻이 아니라 "애초에 받을 수 없다"는 뜻이다.
 const RANGED_DAILY_KEY = /^(pre|bid)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/;
 const RANGED_RAW_DAILY_KEY = /^raw\/(pre|bid)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/;
 const MODES = ["pre", "bid", "plan"];
-
 if (require.main === module) main().catch((error) => { console.error(`업로드 실패: ${error.message}`); process.exitCode = 1; });
 
 async function main() {
@@ -150,7 +159,8 @@ async function putAll(client, entries, remote) {
 
 async function deleteAll(client, keys) {
   for (let offset = 0; offset < keys.length; offset += 1000) {
-    await client.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: keys.slice(offset, offset + 1000).map((Key) => ({ Key })), Quiet: true } }));
+    const result = await client.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: keys.slice(offset, offset + 1000).map((Key) => ({ Key })), Quiet: true } }));
+    if (result.Errors?.length) throw new Error(`R2 삭제 실패: ${result.Errors.map((error) => `${error.Key}: ${error.Code}`).join(", ")}`);
   }
   return keys.length;
 }
@@ -218,9 +228,9 @@ function monthOf(key) { const [mode, year, month] = key.split("/"); return `${mo
 function dateOf(key) { const parts = key.split("/"); const offset = parts[0] === "raw" ? 1 : 0; return `${parts[offset + 1]}-${parts[offset + 2]}-${parts[offset + 3].slice(0, 2)}`; }
 function required(name) { const value = process.env[name]; if (!value) throw new Error(`${name}을 .env 또는 환경변수로 설정하세요.`); return value; }
 function mb(bytes) { return `${(bytes / 1024 / 1024).toFixed(1)}MB`; }
-function today() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; }
+function today() { return new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10); }
 function parseUploadArgs(args) {
-  const unknown = args.filter((arg) => arg !== "--dry-run" && arg !== "--commit" && arg !== "--put-only" && arg !== "--index-only");
+  const unknown = args.filter((arg) => !["--dry-run", "--commit", "--put-only", "--index-only"].includes(arg));
   if (unknown.length) throw new Error(`알 수 없는 인자: ${unknown.join(", ")}`);
   if (args.includes("--dry-run") && args.includes("--commit")) throw new Error("--dry-run과 --commit을 함께 쓸 수 없습니다.");
   if (args.includes("--put-only") && args.includes("--index-only")) throw new Error("--put-only와 --index-only를 함께 쓸 수 없습니다.");
@@ -229,5 +239,49 @@ function parseUploadArgs(args) {
 async function exists(file) { try { await fs.access(file); return true; } catch { return false; } }
 async function readdir(dir) { try { return await fs.readdir(dir, { withFileTypes: true }); } catch (error) { if (error.code === "ENOENT") return []; throw error; } }
 
+// 아래 넷은 uploader가 직접 갖는다. 다른 모듈에도 같은 모양의 함수가 있지만 공용 파일로
+// 묶지 않는다 — 업로드는 되돌릴 수 없는 단계라 수집기나 변환기 쪽 사정으로 함께 바뀌면
+// 안 된다(README 모듈 경계). 바꿀 일이 생기면 이 파일만 보고 판단한다.
+function loadEnv(file = path.join(ROOT, ".env")) {
+  try {
+    for (const line of fsSync.readFileSync(file, "utf8").split(/\r?\n/)) {
+      const match = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (match && !process.env[match[1]]) process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, "");
+    }
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
+}
+async function mapPool(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (cursor < items.length) { const index = cursor; cursor += 1; results[index] = await worker(items[index], index); }
+  }));
+  return results;
+}
+async function readJson(file, fallback) {
+  try { return JSON.parse(await fs.readFile(file, "utf8")); } catch (error) { if (error.code === "ENOENT") return fallback; throw error; }
+}
+
+// 인덱스 항목의 모양({mode,begin,end,path,count})은 프런트와 Worker가 읽는 데이터 계약이다.
+// collector/store.js도 같은 규칙으로 로컬 인덱스를 만든다. 코드를 공유하지 않는 대신
+// uploader/upload.test.js와 collector/store.test.js가 같은 계약을 각자 고정한다.
+function lastDayOfMonth(year, month) { return String(new Date(Number(year), Number(month), 0).getDate()).padStart(2, "0"); }
+function indexEntry(relative, count) {
+  const sealed = relative.match(SEALED_PATH);
+  if (sealed) { const [, mode, year, month] = sealed; return { mode, begin: `${year}-${month}-01`, end: `${year}-${month}-${lastDayOfMonth(year, month)}`, path: relative, count }; }
+  const [mode, year, month, name] = relative.split("/");
+  const date = `${year}-${month}-${name.slice(0, 2)}`;
+  return { mode, begin: date, end: date, path: relative, count };
+}
+// 같은 달에 월별 봉인 키와 일별 키가 함께 남아 있으면 월 항목만 낸다. 둘 다 두면 프런트가
+// 같은 행을 두 번 읽는다.
+function buildIndexEntries(counts) {
+  const entries = [...counts].map(([relative, count]) => indexEntry(relative, count));
+  const sealed = new Set(entries.filter((entry) => SEALED_PATH.test(entry.path)).map((entry) => `${entry.mode}|${entry.begin.slice(0, 7)}`));
+  return entries
+    .filter((entry) => SEALED_PATH.test(entry.path) || !sealed.has(`${entry.mode}|${entry.begin.slice(0, 7)}`))
+    .sort((a, b) => a.begin.localeCompare(b.begin) || a.mode.localeCompare(b.mode));
+}
+
 // 삭제·인덱스 판정은 잘못되면 되돌릴 수 없다. 순수 함수로 떼어 두고 upload.test.js가 검증한다.
-module.exports = { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf, endpoint, parseUploadArgs };
+module.exports = { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf, endpoint, parseUploadArgs, deleteAll };

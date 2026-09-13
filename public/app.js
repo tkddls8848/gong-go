@@ -1,4 +1,4 @@
-// 배포본은 Worker가 R2를 중계하고, 로컬은 devserver가 저장소의 data/를 제공한다.
+// Cloudflare Worker가 R2 데이터를 중계한다.
 const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", ASK_API = "/api/ask", LIVE_API = "/api/live", POLL_SLOW_MS = 5000, POLL_FAST_MS = 2000, MAX_ROWS = 200000;
 // dispatch는 받아들여졌는데 실행이 끝내 목록에 뜨지 않는 경우의 한도. 이게 없으면 영원히 폴링한다.
 const REFRESH_WAIT_LIMIT_MS = 120000;
@@ -69,7 +69,7 @@ const MODE_SUBTITLES = {
 };
 const MODE_NAMES = { pre: "사전공고", bid: "본공고", plan: "발주계획" };
 
-if (location.protocol === "file:") { $("#status").textContent = "CSV 조회는 웹 서버에서만 가능합니다. 저장소 루트에서 npm run serve 실행 후 http://localhost:8788/public/ 를 여세요."; renderRows([]); }
+if (location.protocol === "file:") { $("#status").textContent = "배포된 서비스 주소에서 접속해 주세요."; renderRows([]); }
 else { loadIndex(true).then(({ changed }) => applyFilters({ revalidateRecent: changed })).catch((error) => { $("#status").textContent = error.message; renderRows([]); }); resumeRefresh(); }
 
 // index.json은 갱신 직후에도 최신이어야 하므로 매번 캐시를 우회한다. 파일 1개라 호출량에
@@ -86,13 +86,16 @@ async function loadIndex(initial) {
   if (initial) { defaultRange(); $("#status").textContent = `${fileIndex.length}개 CSV를 찾았습니다.`; }
   return { index, changed: Boolean(previous && index.updatedAt && previous !== index.updatedAt) };
 }
-function renderDataStatus(index) { const { begin, end } = dataRange(), total = totalCount(); $("#data-range").textContent = end ? `${begin} ~ ${end}` : "없음"; $("#data-count").textContent = end ? `${format(fileIndex.length)}개 파일 · ${format(total)}건` : ""; $("#last-crawl").textContent = `마지막 크롤링 ${stamp(index?.updatedAt)}`; $("#updated-at").textContent = `updated ${stamp(index?.updatedAt)}`; renderTodaySummary(); }
+// 실제 인덱스의 가장 이른 날짜를 조회 범위로 사용한다.
+// 날짜 입력의 min으로 그 바닥을 알려 준다. max는 두지 않는다 — 오늘치 파일이 아직 없어도
+// /api/live가 최신 공고를 얹으므로 오늘을 고를 수 있어야 한다.
+function renderDataStatus(index) { const { begin, end } = dataRange(), total = totalCount(); if (begin) { $("#begin").min = begin; $("#end").min = begin; } $("#data-range").textContent = end ? `${begin} ~ ${end}` : "없음"; $("#data-count").textContent = end ? `${format(fileIndex.length)}개 파일 · ${format(total)}건` : ""; $("#last-crawl").textContent = `마지막 크롤링 ${stamp(index?.updatedAt)}`; $("#updated-at").textContent = `updated ${stamp(index?.updatedAt)}`; renderTodaySummary(); }
 
 // "오늘"은 브라우저 로컬 날짜다. 데이터의 날짜는 KST 벽시계 문자열이라 KST 밖에서 열면 하루 어긋난다.
 function today() { return localDate(new Date()); }
 function todayKey() { return today().replaceAll("-", ""); }
 function isToday(value) { return dateKey(value) === todayKey(); }
-// 일별 인덱스 항목은 begin === end === 그 날짜다(shared/pipeline-utils.js의 indexEntry).
+// 일별 인덱스 항목은 begin === end === 그 날짜다(collector/store.js의 indexEntry).
 // 그래서 파일을 하나도 내려받지 않고 오늘 건수를 세 모드 모두 셀 수 있다.
 function todayFile(mode) { const date = today(); return fileIndex.find((file) => modeOf(file) === mode && file.begin === date && file.end === date); }
 // 오늘 건수는 레일의 유형 줄에 붙는다. 버튼은 index.html에 고정으로 있고 여기서는 숫자만
@@ -472,7 +475,6 @@ async function startRefresh() {
     refreshRunId = state.runId || null;
     // dispatch 시각. 상태 조회가 이 뒤에 만들어진 실행만 보게 해서, 아직 등록되지 않은 내
     // 실행 대신 직전 실행(크론이나 앞선 버튼)의 결과를 받아 오는 일을 막는다.
-    // 로컬 devserver는 이 값을 주지 않고 자기 작업 상태를 직접 답하므로 그대로 null이다.
     refreshSince = state.dispatchedAt || null;
     // 범위는 시작 응답에만 실려 온다. 상태 조회는 GitHub의 실행 정보만 되돌려주므로,
     // 여기서 붙들지 않으면 진행·완료 문구의 구간이 계속 "-"로 남는다.

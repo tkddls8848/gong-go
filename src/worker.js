@@ -1,8 +1,8 @@
 // 인증 후 정적 자산, R2 데이터, GitHub Actions 갱신 API, 자연어 질의 해석을 제공한다.
 
-// shared/는 CommonJS지만 wrangler(esbuild)가 ESM 진입점에서 import할 수 있게 번들한다.
-// nl-filter.js는 Node 내장 모듈을 쓰지 않으므로 Worker 런타임에서 그대로 돈다.
-import { ASK_SCHEMA, buildPrompt, kstToday, normalizeAsk, ruleParse } from "../shared/nl-filter.js";
+// 질의 해석은 같은 모듈 안(src/)에 둔다. Node 내장 모듈을 쓰지 않으므로 Worker 런타임에서
+// 그대로 돌고, 번들에 CommonJS를 섞지 않는다.
+import { ASK_SCHEMA, buildPrompt, kstToday, normalizeAsk, ruleParse } from "./ask.js";
 
 const COOKIE_NAME = "gong_gate";
 const LOGIN_PATH = "/__gate/login";
@@ -272,7 +272,6 @@ async function handleRefresh(request, env, url) {
       // 붙는 것은 나라장터 API를 한 번도 더 부르지 않으므로 한도를 세지 않는다(상태를 쓰지 않는다).
       // 범위는 싣지 않는다 — workflow_dispatch의 inputs는 실행 정보로 되돌아오지 않아서,
       // 그 실행이 어느 구간을 받는 중인지 여기서는 알 수 없다. 지어내느니 비운다.
-      // 409와 본문 모양은 로컬 devserver의 같은 경로와 맞춘다(devserver/server.js의 handleRefresh).
       // 화면은 409를 오류로 보지 않고 여기 실린 runId로 폴링을 이어 간다(public/app.js의 startRefresh).
       return jsonResponse({
         message: "이미 갱신이 진행 중입니다.",

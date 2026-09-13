@@ -4,9 +4,9 @@ const path = require("node:path");
 const zlib = require("node:zlib");
 const { promisify } = require("node:util");
 const gzip = promisify(zlib.gzip);
-const { serializeCsv, parseCsv } = require("../shared/csv-record");
-const { ROOT, DATA_DIR, loadEnv, mapPool, sleep, buildIndexEntries } = require("../shared/pipeline-utils");
-const { project } = require("../shared/service-columns");
+const { serializeCsv, parseCsv } = require("./csv-record");
+const { ROOT, DATA_DIR, loadEnv, mapPool, sleep, buildIndexEntries } = require("./store");
+const { project } = require("./service-columns");
 
 const CONFIG_FILE = path.join(__dirname, "sync.config.json");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
@@ -72,7 +72,7 @@ async function main() {
   }
   const config = await readConfig();
   // --begin/--end/--no-resume은 sync.config.json을 건드리지 않고 이번 실행에만 적용된다.
-  // 갱신 버튼(devserver)이 최근 구간만 다시 받을 때 사용한다.
+  // CLI에서 수집 기간을 지정할 때 사용한다.
   const args = parseArgs();
   const resume = args.resume === false ? false : config.resume;
   // 우선순위는 CLI 인자 > GitHub Actions 환경변수 > sync.config.json 순이다.
@@ -302,7 +302,7 @@ async function readStore(begin, end) {
   const store = { buckets: new Map(), location: new Map(), counts: new Map() };
   let previous = new Map();
   try { previous = new Map(JSON.parse(await fs.readFile(INDEX_FILE, "utf8")).files.map((file) => [file.path, file.count])); } catch (error) { if (error.code !== "ENOENT") throw error; }
-  const selected = files.filter((file) => file.date >= beginDate && file.date <= endDate);
+  const selected = (await dailyFiles(path.join(DATA_DIR, "raw"))).filter((file) => file.date >= beginDate && file.date <= endDate);
   await mapPool(selected, FILE_CONCURRENCY, async (file) => {
     for (const row of await readSourceCsv(file.path)) {
       const key = recordKey(row);
@@ -391,10 +391,10 @@ async function writeCsv(file, rows) {
   await Promise.all([fs.writeFile(file, service), fs.writeFile(rawFile, raw)]);
 }
 function dataFile(day, mode) { const [year, month, date] = day.split("-"); return path.join(DATA_DIR, mode, year, month, `${date}.csv.gz`); }
-async function dailyFiles() {
+async function dailyFiles(root = DATA_DIR) {
   const result = [];
   for (const mode of Object.keys(MODES)) {
-    const modePath = path.join(DATA_DIR, mode);
+    const modePath = path.join(root, mode);
     let years;
     try { years = await fs.readdir(modePath, { withFileTypes: true }); } catch (error) { if (error.code === "ENOENT") continue; throw error; }
     for (const yearEntry of years) {

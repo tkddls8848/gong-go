@@ -1,11 +1,14 @@
+// collector 모듈 안에서만 공유하는 저장소 헬퍼. collector.js(수집)와 compact.js(봉인)가
+// 같은 data/ 트리와 같은 index.json을 쓰기 때문에 두 파일 사이에서만 공유한다.
+//
+// 다른 모듈은 이 파일을 require하지 않는다. uploader도 index.json을 만들지만 그쪽은
+// 제 모듈 안에 같은 규칙을 따로 갖고 있다 — 인덱스 항목 모양은 저장된 데이터의 계약이지
+// 코드의 계약이 아니고, 여기 한 줄이 업로드까지 멈추게 두지 않는다(README 모듈 경계).
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
 const path = require("node:path");
-const zlib = require("node:zlib");
-const { parseCsv } = require("./csv-record");
 
-// 모든 단계(collector/downloader/converter/analyzer)가 공유하는 경로.
-// ROOT는 저장소 루트이고, 산출물은 전부 ROOT/data 아래에 모인다.
+// ROOT는 저장소 루트이고, 수집 산출물은 전부 ROOT/data 아래에 모인다.
 const ROOT = path.join(__dirname, "..");
 const DATA_DIR = path.join(ROOT, "data");
 
@@ -30,13 +33,11 @@ async function mapPool(items, limit, worker) {
 async function readJson(file, fallback) {
   try { return JSON.parse(await fs.readFile(file, "utf8")); } catch (error) { if (error.code === "ENOENT") return fallback; throw error; }
 }
-async function writeJson(file, value) { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, JSON.stringify(value, null, 2), "utf8"); }
-async function readGzipText(file) { return zlib.gunzipSync(await fs.readFile(file)).toString("utf8"); }
-async function writeGzipText(file, text) { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, zlib.gzipSync(Buffer.from(text, "utf8"))); }
-async function readCsvGz(file) { try { return parseCsv(await readGzipText(file)); } catch (error) { if (error.code === "ENOENT") return []; throw error; } }
+
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 // index.json 항목 스키마는 {mode, begin, end, path, count}로 통일한다. 일별 파일은
-// begin === end이고, collector/compact.js가 만든 월별 봉인 파일은 그 달 전체를 덮는다.
+// begin === end이고, compact.js가 만든 월별 봉인 파일은 그 달 전체를 덮는다.
 // 프런트(public/app.js)는 이 구간이 조회 구간과 겹치는 항목만 받으므로, 일별과 월별을
 // 같은 모양으로 두면 양쪽을 구분하지 않고 고를 수 있다.
 const SEALED_PATH = /^(pre|bid|plan)\/(\d{4})\/(\d{2})\.csv\.gz$/;
@@ -58,24 +59,4 @@ function buildIndexEntries(counts) {
     .sort((a, b) => a.begin.localeCompare(b.begin) || a.mode.localeCompare(b.mode));
 }
 
-function noticeNumber(row) { return String(row.bidNtceNo || row.bfSpecRgstNo || row.orderPlanUntyNo || "").trim(); }
-function rowDate(row) { return String(row.rgstDt || row.bidNtceDt || row.nticeDt || "").replace(/\D/g, "").slice(0, 8); }
-function institution(row) { return String(row.rlDminsttNm || row.dminsttNm || row.orderInsttNm || ""); }
-function title(row) { return String(row.bizNm || row.prdctClsfcNoNm || row.bidNtceNm || ""); }
-function normalizeFiles(row) {
-  const pre = row.bfSpecRgstNo && !row.bidNtceNo;
-  const prefix = pre ? "specDocFileUrl" : "ntceSpecDocUrl";
-  const namePrefix = pre ? "specDocFileNm" : "ntceSpecFileNm";
-  const count = pre ? 5 : 10;
-  return Array.from({ length: count }, (_, index) => ({ url: row[`${prefix}${index + 1}`] || "", name: row[`${namePrefix}${index + 1}`] || guessName(row[`${prefix}${index + 1}`], index) })).filter((file) => /^https?:/i.test(file.url));
-}
-function guessName(url, index) {
-  try { const parsed = new URL(url); return decodeURIComponent(parsed.searchParams.get("fileNm") || parsed.searchParams.get("orgFileNm") || parsed.searchParams.get("fileName") || `첨부파일_${index + 1}`); } catch { return `첨부파일_${index + 1}`; }
-}
-function safeFileName(name, fallback = "attachment") {
-  const base = path.basename(String(name || fallback)).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/^\.+$/, "_").trim();
-  return base.slice(0, 180) || fallback;
-}
-function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
-
-module.exports = { ROOT, DATA_DIR, fs, path, loadEnv, mapPool, readJson, writeJson, readGzipText, writeGzipText, readCsvGz, SEALED_PATH, lastDayOfMonth, buildIndexEntries, noticeNumber, rowDate, institution, title, normalizeFiles, safeFileName, sleep };
+module.exports = { ROOT, DATA_DIR, loadEnv, mapPool, readJson, sleep, SEALED_PATH, lastDayOfMonth, buildIndexEntries };

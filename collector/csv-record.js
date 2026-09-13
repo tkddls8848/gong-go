@@ -1,3 +1,7 @@
+// 수집기가 쓰는 CSV 직렬화·파싱. collector 모듈 안에서만 공유한다(collector.js·compact.js).
+// 다른 모듈이 이 파일을 require하지 않는다 — 여기서 형식을 바꾸면 조회 화면·다운로더까지
+// 한 번에 멈추기 때문이다. 같은 형식을 읽는 사본이 public/rows.js와 downloader/attachments.js에
+// 따로 있고, 서로 맞춰야 할 것은 "파일 형식"이지 이 파일의 코드가 아니다(README 모듈 경계).
 function columnsFor(rows) {
   const columns = [];
   const known = new Set();

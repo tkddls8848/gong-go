@@ -1,10 +1,9 @@
-// 자연어 질의를 조회 화면의 검색 조건으로 바꾸는 순수 함수 모음.
-// src/worker.js(ESM)와 devserver/server.js(CJS)가 함께 쓴다. wrangler(esbuild)가 CJS를 ESM
-// 진입점에서 import할 수 있게 번들하므로 형식은 shared/의 관례대로 CommonJS로 둔다.
+// 배포본(Worker)의 자연어 질의 해석. 질의를 조회 화면의 검색 조건으로 바꾸는 순수 함수와,
+// Workers AI에 주는 스키마·프롬프트가 함께 들어 있다. src/worker.js만 이 파일을 import한다.
 //
 // 두 가지를 반드시 지킨다.
 //   1. Node 내장 모듈을 쓰지 않는다. 이 파일은 Worker 번들에 들어가므로 fs·process·Buffer가
-//      들어오면 배포가 깨진다. shared/pipeline-utils.js는 node:fs를 쓰므로 재사용 금지.
+//      들어오면 배포가 깨진다.
 //   2. 로컬 시간 API(getFullYear 등)를 쓰지 않는다. Worker는 UTC로 돌고 개발자 PC는 KST라
 //      같은 입력에 다른 답이 나온다. 날짜는 전부 Date.UTC와 문자열로 다룬다.
 //
@@ -12,8 +11,7 @@
 // 고르고 실제 날짜는 resolvePeriod가 만든다. 모델이 "2026-02-30" 같은 값을 지어내도 형식은
 // 맞아서 정규식 검증을 그대로 통과하는데, 그 오류를 애초에 만들 수 없게 하는 편이 낫다.
 
-// 수집 시작일. 이보다 앞선 구간은 볼 수 없으므로 바닥으로 쓴다.
-const DATA_FLOOR = "2020-01-01";
+// 서비스와 raw 모두 2020년부터 누적 보관한다.
 const MODES = ["pre", "bid", "plan"];
 const MODE_NAMES = { pre: "사전공고", bid: "본공고", plan: "발주계획" };
 // 화면의 업무구분 드롭다운(public/index.html)과 정확히 같아야 한다. rows.js의 typeMatches가
@@ -47,6 +45,7 @@ function validDate(value) { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) retu
 // "4월"에 연도를 붙이는 규칙: 아직 시작하지 않은 달을 말했을 리 없으므로, 1일이 오늘 이하인
 // 가장 최근의 그 달을 고른다. 게시일은 미래가 될 수 없다는 성질이 근거다.
 function recentMonth(today, month) { const { year } = split(today); return ymd(year, month, 1) <= today ? year : year - 1; }
+function dataFloor() { return "2020-01-01"; }
 
 // 이름 있는 기간을 실제 구간으로 편다. 모델은 enum만 골랐으므로 여기서 틀릴 일이 없다.
 function resolvePeriod(parsed, today) {
@@ -83,7 +82,9 @@ function clampSpan(span, today, notes) {
     if (validDate(back.begin) && validDate(back.end) && back.begin <= today) { begin = back.begin; end = back.end; notes.push("구간이 통째로 미래라 연도를 1년 되감았습니다."); }
   }
   if (end > today) end = today;
-  if (begin < DATA_FLOOR) begin = DATA_FLOOR;
+  const floor = dataFloor(today);
+  if (end < floor) { notes.push(`${floor}부터 조회할 수 있어 그보다 앞선 기간은 비워 두었습니다.`); return null; }
+  if (begin < floor) { begin = floor; notes.push(`조회할 수 있는 가장 이른 날짜인 ${floor}로 시작일을 올렸습니다.`); }
   return begin > end ? null : { begin, end };
 }
 
@@ -113,7 +114,7 @@ function explain(filter) {
   return pieces.join(" · ");
 }
 
-// 모델(또는 규칙 파서)이 뱉은 것을 화면 필터로 바꾸는 유일한 관문. Worker도 devserver도
+// 모델(또는 규칙 파서)이 뱉은 것을 화면 필터로 바꾸는 유일한 관문. Worker는
 // 여기만 통과시킨다. 나올 수 있는 최악은 "이상하지만 구조적으로 유효한 조회 조건"이다.
 function normalizeAsk(parsed, { today, mode } = {}) {
   const raw = parsed && typeof parsed === "object" ? parsed : {};
@@ -130,9 +131,12 @@ function normalizeAsk(parsed, { today, mode } = {}) {
   // 모델이 만든 기관명은 언제나 접미사 위험이 있다("국민연금공단" ⊂ "국민연금공단 서울지역본부").
   filter.looseInstitution = filter.institutions.length > 0;
   const period = PERIODS.includes(raw.period) ? raw.period : "none";
+  // clampSpan이 이유를 남기고 버린 구간(보존 구간보다 앞선 기간)까지 "알아듣지 못했다"고
+  // 말하면 틀린 안내가 된다. 저쪽이 아무 말도 하지 않았을 때만 그렇게 적는다.
+  const explained = notes.length;
   const span = clampSpan(resolvePeriod({ ...raw, period }, today), today, notes);
   if (span) { filter.begin = span.begin; filter.end = span.end; }
-  else if (period !== "none") notes.push("기간을 알아듣지 못해 게시일 조건은 그대로 두었습니다.");
+  else if (period !== "none" && notes.length === explained) notes.push("기간을 알아듣지 못해 게시일 조건은 그대로 두었습니다.");
   if (period === "month" && span && !Number(raw.year)) notes.push(`연도를 말하지 않아 가장 최근 지나간 ${Number(raw.month)}월(${span.begin.slice(0, 4)}년)로 봤습니다.`);
   return { filter, explain: explain(filter), notes };
 }
@@ -162,7 +166,7 @@ function buildPrompt(today) {
   const { year, month } = split(today);
   return `너는 나라장터 공고 조회 화면의 검색 조건을 채우는 파서다. JSON만 출력한다.
 
-오늘: ${today} (KST). 올해: ${year}. 이번 달: ${pad(month)}. 보유 데이터: ${DATA_FLOOR} ~ 오늘.
+오늘: ${today} (KST). 올해: ${year}. 이번 달: ${pad(month)}. 보유 데이터: ${dataFloor(today)} ~ 오늘.
 
 규칙
 - 날짜를 직접 계산하지 마라. 이름 있는 기간은 period 값만 고르고 from/to는 ""로 둔다.
@@ -193,7 +197,7 @@ const INSTITUTION_PATTERN = /[가-힣A-Za-z0-9]{2,18}(?:공단|공사|공제회|
 // "최근 7일"은 아래 숫자 패턴이 먼저 잡는다. 여기 있는 것은 숫자를 쓰지 않는 표현들이다.
 const RELATIVE = [[/오늘/, "today"], [/어제/, "yesterday"], [/(?:최근|지난)\s*(?:일주일|한\s*주)/, "last_7_days"], [/(?:최근|지난)\s*(?:한\s*달|1개월)/, "last_30_days"], [/이번\s*주|금주/, "this_week"], [/지난\s*주|저번\s*주|전주/, "last_week"], [/이번\s*달|이달|금월/, "this_month"], [/지난\s*달|저번\s*달|전월/, "last_month"], [/올해|금년/, "this_year"], [/작년|지난해|전년/, "last_year"]];
 
-// 모델 없이도 도는 규칙 파서. devserver의 /api/ask 구현이자 Worker의 마지막 폴백이고,
+// 모델 없이도 도는 규칙 파서. Worker의 마지막 폴백이고,
 // 덕분에 AI가 죽어도 대표 질의는 회귀 테스트로 고정된다. 못 알아들으면 null을 돌려준다.
 function ruleParse(query, today) {
   const text = stripControl(String(query || ""));
@@ -236,4 +240,4 @@ function ruleParse(query, today) {
   return hit ? parsed : null;
 }
 
-module.exports = { DATA_FLOOR, ASK_SCHEMA, MODES, BUSINESS_TYPES, kstToday, monthBounds, lastDay, recentMonth, resolvePeriod, normalizeAsk, ruleParse, buildPrompt, validDate };
+export { dataFloor, ASK_SCHEMA, kstToday, monthBounds, lastDay, recentMonth, resolvePeriod, normalizeAsk, ruleParse, buildPrompt, validDate };

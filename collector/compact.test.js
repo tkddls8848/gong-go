@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { countRows, body, sealable, groupByMonth } = require("./compact");
-const { serializeCsv, parseCsv } = require("../shared/csv-record");
+const { serializeCsv, parseCsv } = require("./csv-record");
 
 test("countRows는 헤더를 뗀 본문의 행 수를 센다", () => {
   assert.equal(countRows("a,b\n"), 1);

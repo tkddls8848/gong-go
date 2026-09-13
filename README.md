@@ -5,11 +5,10 @@
 ## 구성
 
 - `collector/`: 공공데이터 API 수집, 일별 gzip CSV 저장, 지난 월 봉인
-- `downloader/` → `converter/` → `analyzer/`: 첨부 다운로드, HWPX/Markdown 변환, ECR 분석
+- `downloader/` → `analyzer/`: 첨부 다운로드, ECR 분석. 그 사이의 **문서 변환(HWP/HWPX→Markdown)은 이 저장소에 없다** — 별도 저장소 `orca/quotation`의 `converters/`가 맡는다
 - `uploader/`: 변경된 서비스 CSV·raw 원본·분석 결과만 R2 업로드
 - `public/`: 조회 화면. `app.js`가 화면을, `search-worker.js`가 CSV 스캔을, `rows.js`가 둘이 공유하는 파서와 행 모델을 맡는다
 - `src/worker.js`: 비밀번호 인증, 정적 자산/R2 제공, 원격 갱신 실행, 공공데이터 API 중계, 고급검색 해석
-- `shared/`: CSV와 파이프라인 공용 함수. `nl-filter.js`는 Worker와 로컬 서버가 함께 쓰는 자연어 해석 순수 함수다
 - `test/`: 조회 화면용 테스트. 나머지 테스트는 대상 옆에 두지만 이것만 떼어 놓는다 — `public/`은 wrangler의 자산 디렉터리라 그 안의 파일은 전부 사이트로 배포된다
 
 산출물은 모두 gitignore된 `data/`에 저장합니다.
@@ -18,10 +17,41 @@
 data/
 ├─ pre|bid|plan/YYYY/MM/DD.csv.gz   일별 서비스 데이터
 ├─ pre|bid|plan/YYYY/MM.csv.gz      봉인된 월 데이터
-├─ raw/pre|bid|plan/...             원본 컬럼 백업
+├─ raw/pre|bid|plan/...             원본 컬럼 백업(2020년~, 보존 기한 없음)
 ├─ files|norm|text/bid/...     첨부와 변환 결과
 └─ analysis/bid/...            ECR 분석 결과
 ```
+
+### 모듈 경계 — 공유 코드를 두지 않는다
+
+**각 모듈은 제가 쓰는 것을 제 안에 전부 구현한다. 모듈을 가로지르는 공용 디렉터리는 두지 않는다.**
+공유는 해당 기능 모듈 **안에서만** 한다(예: `collector/csv-record.js`는 `collector.js`와 `compact.js`가
+함께 쓴다). 예전의 `shared/`는 없앴고, 그 안에 있던 것은 쓰는 모듈마다 제 사본을 갖는다.
+
+이유는 장애 전파다. 공용 파일 한 줄을 고치면 수집·다운로드·변환·분석·업로드·조회가 한꺼번에
+영향권에 들어온다. 이 저장소는 단계마다 실행 주체와 실행 시점이 다르다(크론 러너, 로컬 PC,
+Cloudflare Worker). 한 단계를 고치다 다른 단계를 멈추는 것이 가장 비싼 사고다.
+
+**모듈 사이에 실제로 있는 계약은 코드가 아니라 데이터다.**
+
+| 계약 | 정하는 곳 | 읽는 곳 |
+| --- | --- | --- |
+| CSV 저장 형식 (BOM + 헤더 + `="값"`) | `collector/csv-record.js` | `downloader/attachments.js`, `public/rows.js` |
+| `index.json` 항목 `{mode,begin,end,path,count}` | `collector/store.js` | `uploader/upload.js`, `public/app.js`, `src/worker.js` |
+| `data/` 디렉터리 구조 | `collector/` | 그 아래 모든 단계 |
+
+그래서 같은 모양의 함수가 여러 곳에 있다 — CSV 파서는 쓰는 쪽 하나(`collector/`)와 읽는 쪽
+둘(`downloader/`, `public/`)에 각각 있고, 인덱스 항목을 만드는 규칙은 `collector/`와 `uploader/`에
+각각 있다. **이것은 중복이 아니라 경계다.** 지켜야 할 것은 함수의 동일성이 아니라 위 표의 계약이고,
+각 사본은 제 모듈의 테스트가 따로 고정한다(`collector/csv-record.test.js`,
+`downloader/attachments.test.js`, `test/rows.test.js`, `collector/store.test.js`, `uploader/upload.test.js`).
+
+**새 코드를 넣을 때의 규칙**
+
+1. 다른 모듈의 파일을 `require`/`import`하지 않는다. 필요하면 제 모듈 안에 구현한다.
+2. 한 모듈 안에서 두 파일 이상이 같은 것을 쓰면 그때만 모듈 안에 공용 파일을 만든다.
+3. 사본을 만들 때는 원본 파일명을 주석으로 적고(형식이 같다는 뜻), 그 사본의 테스트를 함께 둔다.
+4. 계약(위 표)을 바꿔야 하면 문서를 먼저 고치고, 읽는 쪽 사본을 하나씩 따라 고친다.
 
 ## 준비
 
@@ -40,31 +70,40 @@ npm ci
 - `GITHUB_TOKEN`: 배포 화면의 갱신 버튼용 GitHub fine-grained PAT. 이 저장소의 Actions read/write 권한만 부여
 - `API_BASE`, `RELAY_TOKEN`: 공공데이터 API 중계 경유 설정. 로컬에서는 비워 둡니다([공공데이터 API 중계](#공공데이터-api-중계) 참고)
 
-## 로컬 실행
+## 운영 실행
+
+조회 화면은 Cloudflare Worker 배포 주소에서만 사용한다. 로컬 웹 서버는 제공하지 않는다.
+수집은 GitHub Actions와 운영 화면의 갱신 버튼으로 실행한다.
 
 ```powershell
-npm run collect       # collector/sync.config.json 기준 수집
-npm run serve         # http://127.0.0.1:8788/public/
 npm test
-```
-
-조회 화면의 갱신 버튼은 로컬에서 수집기를 직접 실행합니다. 기간을 일시적으로 바꾸려면 다음처럼 실행합니다.
-
-```powershell
-node collector/collector.js --begin=2026-08-01 --end=2026-08-09 --no-resume
+npm run deploy
 ```
 
 ## 첨부·ECR 파이프라인
 
-`downloader/download.config.json`에서 기관과 파일명 조건을 정한 뒤 순서대로 실행합니다. HWP 변환은 Windows에 설치된 한글 COM을 사용합니다.
+`downloader/download.config.json`에서 기관과 파일명 조건을 정한 뒤 실행합니다.
 
 ```powershell
 npm run attachments
-npm run convert
 npm run analyze -- --provider ollama --model qwen3.5-hermes-64k:latest
 ```
 
 유료 분석 전에는 `--dry-run`으로 입력 토큰과 예상 비용을 확인합니다.
+
+**가운데 변환 단계는 이 저장소에 없습니다.** HWP/HWPX를 Markdown으로 바꾸는 일은 별도 저장소
+`orca/quotation`의 `converters/`가 맡습니다(한글 COM·HWPX 파서가 그쪽 기능이라 여기 둘 이유가
+없습니다). 두 저장소가 맞추는 것은 코드가 아니라 **`data/` 산출물 규약**입니다 — 모듈 경계와 같은
+원칙입니다.
+
+| 이 저장소가 만드는 것 | 변환기가 읽고 쓰는 것 | 이 저장소가 읽는 것 |
+| --- | --- | --- |
+| `data/files/bid/<공고번호>/NN_이름.hwp` | 위 파일 → 변환 | `data/text/bid/<공고번호>/manifest.json` |
+| | | `data/text/bid/<공고번호>/NN.md.gz` (gzip Markdown) |
+
+`manifest.json`은 `{ notice, convertedAt, documents: [{ kind, source, markdown, originalName, ... }] }`
+이고, `analyzer/analyze.js`는 `kind`가 `hwpx`인 항목의 `markdown` 경로와 `pdf` 항목의 `source`만
+봅니다. 그 모양만 지키면 변환기를 무엇으로 바꾸든 분석 단계는 그대로입니다.
 
 ## 공공데이터 API 중계
 
@@ -141,13 +180,33 @@ npm run deploy
 raw 프리픽스를 허용하지 않으므로 사이트 방문자가 원본 백업을 직접 내려받지는 못한다.
 명시한 재수집 구간에서 공고가 사라지면 서비스 일별 파일과 대응 raw 객체를 함께 정리한다.
 
-과거 데이터에 새 컬럼을 소급할 때는 GitHub Actions의 `historical-backfill`을 실행한다. 기본 범위는
-`2020-01-01 ~ 2026-03-31`이며 3개월씩 순차 처리한다. 과거 조회가 가능한 사전공고와 본공고를
-다시 받아 현재 컬럼으로 만든 월별 서비스 CSV와 전체 컬럼 raw 일별 CSV를 함께 R2에 넣는다.
+과거 raw를 채우거나 새 컬럼을 소급할 때는 GitHub Actions의 `historical-backfill`을 실행한다. 기본 범위는
+`2020-01-01 ~ KST 오늘`이며 3개월씩 순차 처리한다. 과거 조회가 가능한 사전공고와 본공고를
+다시 받아 전체 컬럼 raw 일별 CSV와 서비스 CSV를 같은 기간 전체에 대해 R2에 저장한다.
 개별 백필 작업은 `--put-only` 업로드라 운영 `index.json`과 원격 삭제를 건드리지 않는다.
 모든 작업이 성공한 뒤에만 최종 작업이 `index.json.schemaVersion`을 올린다. 화면은 이 값을
 CSV URL에 붙여 기존 1년 immutable 캐시를 새 데이터로 한 번 교체한다. 발주계획 API는 과거
 범위 조회를 지원하지 않아 역사 백필 대상에서 제외된다.
+
+### 보존 구간 — 서비스와 raw 모두 2020년부터 전부
+
+서비스 데이터와 raw 원본 모두 **2020-01-01부터 현재까지 누적 보관**한다.
+12개월 제한, 기간 만료 삭제, 매일 04시 저장용량 정리 크론은 사용하지 않는다.
+기존 매시/매일 수집은 유지하여 새 서비스 데이터와 raw를 계속 갱신한다.
+
+| 대상 | R2 키 | 보존 |
+| --- | --- | --- |
+| 서비스 CSV | `{pre,bid,plan}/YYYY/MM[/DD].csv.gz` | 2020년부터 누적 |
+| raw 원본 | `raw/{pre,bid,plan}/YYYY/MM/DD.csv.gz` | 2020년부터 누적 |
+
+raw에서 서비스 데이터를 복원할 때는 `node collector/restore-r2.js`로 대상을 확인하고,
+`node collector/restore-r2.js --commit`으로 실행한다. raw는 읽기만 하며 서비스 컬럼을
+복원하고 행 수를 확인한 뒤 파일을 올린다. 모든 파일이 성공하면 인덱스를 갱신한다.
+`node uploader/storage-report.js`는 용량을 읽기만 하는 수동 점검 도구다.
+
+발주계획 API는 과거 소급 조회를 지원하지 않으므로 확보한 스냅샷부터 보존한다.
+원본의 정정·이동에 따른 중복 정리와 수동 월별 봉인은 데이터 동기화 기능으로 유지한다.
+데이터가 오래됐다는 이유로 삭제하지 않는다.
 
 > 시크릿 이름은 코드가 읽는 것과 **정확히** 같아야 합니다. Worker는 `env.RELAY_TOKEN`을
 > 읽으므로 `RELAY` 같은 다른 이름으로 등록하면 값이 들어 있어도 중계가 501을 반환합니다.
@@ -174,7 +233,7 @@ Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN`, `SERVICE
 
 **범위를 나눈 이유**는 비용입니다. 본공고 한 페이지가 5~6MB라 매시 36일치를 다시 훑으면 하루에 수 GB를 나라장터에서 되받습니다. 매시 범위를 오늘 하루가 아니라 **어제~오늘**로 잡은 것은, 전날 18시 실행 뒤에 등록된 공고가 어제 날짜로 남아 다음 날 05:00까지 들어오지 못하기 때문입니다. 이틀은 28일 청크 하나에 들어가므로 작업 수는 그대로이고 페이지 수만 늡니다.
 
-`wrangler.jsonc`의 크론 식은 **UTC로만** 해석됩니다(KST 표기가 없습니다). 크론 트리거는 `npm run deploy`로 배포해야 등록되며, 로컬에서는 `npx wrangler dev --test-scheduled` 뒤 `curl "http://localhost:8787/__scheduled"`로 확인합니다.
+`wrangler.jsonc`의 크론 식은 **UTC로만** 해석됩니다(KST 표기가 없습니다). 크론 트리거는 `npm run deploy`로 배포해야 등록됩니다. 실행 결과는 Cloudflare 로그와 GitHub Actions에서 확인합니다.
 
 ### 갱신에 걸리는 시간
 
@@ -214,7 +273,7 @@ Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN`, `SERVICE
 실시간 쪽은 한 페이지 100건으로 먼저 응답하고 나머지 페이지를 최대 4개씩 받는다. Worker는
 큰 JSON을 파싱하지 않고 서비스 키를 붙인 원문 응답만 `no-store`로 전달한다. 검색 기간 중
 과거 구간은 이미 저장된 CSV만 사용하며, 전체 정합성·소급 수정 반영은 기존 매시/새벽 수집이
-계속 책임진다. 로컬 `npm run serve`도 `.env`의 `SERVICE_KEY`로 같은 경로를 제공한다.
+계속 책임진다.
 
 조회는 인덱스에서 고른 `.csv.gz`를 브라우저가 직접 받아 훑는 방식이다. 구간이 길어지면 파일 수가 그대로 일거리가 되므로 네 가지로 줄인다.
 
@@ -239,7 +298,7 @@ Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN`, `SERVICE
 | 발주계획 | `orderPlanDtlUrl` | |
 | 사전공고 | 없음 | 사전규격정보서비스 응답에는 규격문서파일 URL만 있다 |
 
-본공고의 `bidNtceDtlUrl`은 나중에 `shared/service-columns.js`에 추가한 컬럼이라, **그 전에 모아
+본공고의 `bidNtceDtlUrl`은 나중에 `collector/service-columns.js`에 추가한 컬럼이라, **그 전에 모아
 둔 파일에는 없다.** 옛 파일의 행은 링크 없이 그려지고, 그 구간을 다시 수집하면 채워진다.
 `/api/live`가 합친 최신 행은 원본 응답을 그대로 보므로 저장 컬럼과 무관하게 링크가 붙는다.
 
@@ -290,9 +349,9 @@ Cloudflare 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN`, `SERVICE
 
 ### 날짜는 모델이 계산하지 않는다
 
-LLM은 말일·윤년·주 경계에서 틀리는데 형식은 맞아서 정규식 검증을 그대로 통과한다. 그래서 **모델은 `period` enum 하나만 고르고**(`today`·`last_month`·`month`·`explicit` 등) 실제 날짜는 `shared/nl-filter.js`의 `resolvePeriod`가 만든다. "4월"은 `{period:"month", month:4}`로만 받는다.
+LLM은 말일·윤년·주 경계에서 틀리는데 형식은 맞아서 정규식 검증을 그대로 통과한다. 그래서 **모델은 `period` enum 하나만 고르고**(`today`·`last_month`·`month`·`explicit` 등) 실제 날짜는 `src/ask.js`의 `resolvePeriod`가 만든다. "4월"은 `{period:"month", month:4}`로만 받는다.
 
-연도를 말하지 않은 달은 **1일이 오늘 이하인 가장 최근의 그 달**로 본다(오늘이 8월이면 "4월"은 올해 4월, "10월"은 작년 10월). 게시일은 미래가 될 수 없다는 성질이 근거이고, 같은 성질로 구간이 통째로 미래면 연도를 1년 되감는다. 그 뒤 달력 유효성·역전 스왑·`2020-01-01`~오늘 클램프를 한 번 더 건다.
+연도를 말하지 않은 달은 **1일이 오늘 이하인 가장 최근의 그 달**로 본다(오늘이 8월이면 "4월"은 올해 4월, "10월"은 작년 10월). 게시일은 미래가 될 수 없다는 성질이 근거이고, 같은 성질로 구간이 통째로 미래면 연도를 1년 되감는다. 그 뒤 달력 유효성·역전 스왑·2020-01-01~오늘 클램프를 한 번 더 건다. 2020년 이전 기간은 수집 범위 밖이므로 바닥으로 올리고, 통째로 앞이면 게시일 조건을 비운 뒤 이유를 안내에 남긴다.
 
 ### 기관명은 부분일치로 건다
 
@@ -302,7 +361,7 @@ LLM은 말일·윤년·주 경계에서 틀리는데 형식은 맞아서 정규�
 
 ### 모델과 폴백
 
-`@cf/meta/llama-3.3-70b-instruct-fp8-fast`를 쓴다. JSON schema 모드를 지원하고 한국어 파싱이 8B보다 확실히 낫다. 실패하면 `shared/nl-filter.js`의 **규칙 파서**로 내려가고, 그것도 못 알아들으면 그때만 실패로 알린다. 8B를 중간에 두지 않은 이유는 한국어에서 기관명을 뭉개 조용히 틀린 답을 내기 때문이다.
+`@cf/meta/llama-3.3-70b-instruct-fp8-fast`를 쓴다. JSON schema 모드를 지원하고 한국어 파싱이 8B보다 확실히 낫다. 실패하면 `src/ask.js`의 **규칙 파서**로 내려가고, 그것도 못 알아들으면 그때만 실패로 알린다. 8B를 중간에 두지 않은 이유는 한국어에서 기관명을 뭉개 조용히 틀린 답을 내기 때문이다.
 
 안전성은 화이트리스트가 맡는다. 사용자 질의는 언제나 user 턴에만 들어가고, 모델 출력은 JSON schema로 강제된 뒤 `normalizeAsk`가 enum·정규식·달력 유효성으로 한 번 더 거른다. 나올 수 있는 최악은 "이상하지만 구조적으로 유효한 조회 조건"이다. 질의는 200자까지만 받는다.
 
@@ -314,9 +373,7 @@ LLM은 말일·윤년·주 경계에서 틀리는데 형식은 맞아서 정규�
 "ai": { "binding": "AI", "remote": true }
 ```
 
-> **Workers AI는 로컬 시뮬레이션이 없다.** `wrangler dev`도 실제 계정으로 프록시하고 **로컬 개발에서도 과금**된다. `--local`로 켜면 `remote: false`와 같아져 오류가 나므로 `npm run worker:dev`에서 `--local`을 뺐다.
 
-`npm run serve`(로컬 devserver)에는 AI 바인딩이 없어 **규칙 파서로만** 답한다. 화면 통합을 로컬에서 개발하기 위한 것이고 해석 정확도는 배포본이 책임진다. 로컬 서버에는 인증이 없어서 AI 호출을 붙이지 않았다 — 아무나 계정 요금을 태울 수 있다.
 
 ## 현재 데이터 계약
 
@@ -324,6 +381,7 @@ LLM은 말일·윤년·주 경계에서 틀리는데 형식은 맞아서 정규�
 - 서비스 파일: gzip CSV만 사용
 - 파일 경로: 일별 `{pre,bid,plan}/YYYY/MM/DD.csv.gz`, 월별 `{pre,bid,plan}/YYYY/MM.csv.gz`
 - 배포 데이터: `index.json`, `analysis-index.json`, 서비스 CSV, 분석 JSON만 공개
+- 보존: 서비스 CSV와 `raw/` 모두 2020년부터 전부 누적 보관
 
 과거 평문 CSV나 구 인덱스 형식은 런타임에서 변환하지 않습니다.
 

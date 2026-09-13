@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { serializeCsv } = require("../shared/csv-record");
+const { serializeCsv } = require("./csv-record");
 const {
   applyItems,
   checkpointState,
