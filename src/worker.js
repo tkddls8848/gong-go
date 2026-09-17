@@ -8,6 +8,7 @@ const COOKIE_NAME = "gong_gate";
 const LOGIN_PATH = "/__gate/login";
 const LOGOUT_PATH = "/__gate/logout";
 const DATA_PREFIX = "/data/";
+const ROBOTS_PATH = "/robots.txt";
 const REFRESH_PATH = "/api/refresh";
 const ASK_PATH = "/api/ask";
 const LIVE_PATH = "/api/live";
@@ -76,6 +77,13 @@ export default {
     // 자체 토큰으로만 인증하고, 로그인 화면을 돌려주지 않는다.
     if (url.pathname.startsWith(RELAY_PREFIX)) return handleRelay(request, env, url);
 
+    // robots.txt도 게이트 앞이다. 뒤에 두면 크롤러는 이 자리에서도 401 로그인 페이지를
+    // 받고, 그것은 "수집하지 말라"가 아니라 "규칙을 읽을 수 없다"로 읽힌다 — 규약은
+    // 가져오지 못한 robots.txt를 "제한 없음"으로 보는 쪽과 "전부 금지"로 보는 쪽이
+    // 갈려서, 결국 크롤러마다 다르게 굴게 된다. 내용을 공개하는 것이 아니라 오지 말라는
+    // 말만 내보내는 자리이므로 인증을 걸 이유도 없다.
+    if (url.pathname === ROBOTS_PATH) return env.ASSETS.fetch(request);
+
     const password = env.GATE_PASSWORD;
 
     if (!password) return new Response("GATE_PASSWORD is not configured", { status: 500 });
@@ -97,6 +105,10 @@ export default {
     const dest = safePath(url.pathname + url.search);
     return htmlResponse(loginPageHtml({ redirect: dest }), 401, {
       "Cache-Control": "no-store",
+      // robots.txt를 읽지 않고 링크를 타고 들어온 크롤러가 실제로 받는 것은 이 페이지다.
+      // 안의 <meta name="robots">와 같은 말이지만, 헤더 쪽은 HTML을 파싱하지 않는
+      // 수집기도 본다.
+      "X-Robots-Tag": "noindex, nofollow, noarchive",
     });
   },
 

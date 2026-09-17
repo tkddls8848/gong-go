@@ -1,0 +1,143 @@
+# 이 사이트는 검색 노출도, AI 학습·요약용 수집도 원하지 않는다.
+#
+# 조회 화면은 비밀번호 게이트 뒤에 있다(src/worker.js). 크롤러가 어느 경로를 찔러도
+# 401 로그인 페이지만 받으므로 공고 내용이 새어 나가지는 않는다. 그럼에도 이 파일을
+# 두는 이유는, 막히는 것과 오지 않는 것이 다르기 때문이다 — 401 을 돌려주는 일도
+# 요청이고, 게이트 앞의 인증 처리(비밀번호 해시 비교)를 매번 태운다. 무료 플랜의
+# 요청 한도를 쓰는 것도 같다. 여기서 돌려보내면 그 왕복 자체가 사라진다.
+#
+# 이 파일만은 게이트 앞에서 내보낸다. 게이트 뒤에 두면 크롤러는 robots.txt 자리에서도
+# 401 을 받고, 그러면 "규칙이 없다"가 아니라 "읽을 수 없다"가 되어 아무것도 알리지
+# 못한다. 그 예외는 src/worker.js 의 fetch 맨 앞에 있다.
+#
+# robots.txt 는 규약이지 강제가 아니다. 지키는 수집기만 멈춘다 — 이름을 숨기거나 이
+# 파일을 아예 읽지 않는 쪽은 여기서 막히지 않는다. 그쪽은 게이트와 Cloudflare 의 봇
+# 차단이 볼 몫이고, 여기서는 "예의를 지키는 수집기는 전부 돌려보낸다"까지만 한다.
+
+User-agent: *
+Disallow: /
+
+# 아래 목록은 위의 * 그룹과 내용이 같다. 그럼에도 이름을 하나씩 적는 이유는, 크롤러가
+# 자기 이름이 적힌 그룹을 찾으면 * 그룹을 아예 읽지 않기 때문이다 — 규약이 "가장 구체적인
+# 그룹 하나만 따른다"고 정해 두었다. 지금은 둘이 같지만, 나중에 * 쪽을 열어 주더라도
+# 이 목록은 그대로 막힌 채로 남는다. AI 수집을 막는 것이 이 파일의 목적이므로
+# 그 순서가 맞다.
+
+# OpenAI
+User-agent: GPTBot
+Disallow: /
+
+User-agent: OAI-SearchBot
+Disallow: /
+
+User-agent: ChatGPT-User
+Disallow: /
+
+# Anthropic
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: Claude-User
+Disallow: /
+
+User-agent: Claude-SearchBot
+Disallow: /
+
+User-agent: Claude-Web
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+# Google — Google-Extended 는 색인이 아니라 학습용 수집만 가리킨다. 일반 Googlebot 은
+# 맨 위 * 그룹에서 이미 막힌다.
+User-agent: Google-Extended
+Disallow: /
+
+# Perplexity
+User-agent: PerplexityBot
+Disallow: /
+
+User-agent: Perplexity-User
+Disallow: /
+
+# Meta
+User-agent: meta-externalagent
+Disallow: /
+
+User-agent: meta-externalfetcher
+Disallow: /
+
+User-agent: FacebookBot
+Disallow: /
+
+# Apple — Applebot-Extended 역시 학습용 수집만 가리킨다.
+User-agent: Applebot-Extended
+Disallow: /
+
+# Amazon
+User-agent: Amazonbot
+Disallow: /
+
+# ByteDance
+User-agent: Bytespider
+Disallow: /
+
+User-agent: TikTokSpider
+Disallow: /
+
+# Common Crawl — 공개 말뭉치라 여러 모델이 여기서 받아 간다. 한 번 들어가면 되돌릴 수 없다.
+User-agent: CCBot
+Disallow: /
+
+# Cohere
+User-agent: cohere-ai
+Disallow: /
+
+User-agent: cohere-training-data-crawler
+Disallow: /
+
+# Allen Institute for AI
+User-agent: AI2Bot
+Disallow: /
+
+User-agent: Ai2Bot-Dolma
+Disallow: /
+
+# Mistral
+User-agent: MistralAI-User
+Disallow: /
+
+# 그 밖의 수집·재배포 크롤러
+User-agent: Diffbot
+Disallow: /
+
+User-agent: omgili
+Disallow: /
+
+User-agent: Omgilibot
+Disallow: /
+
+User-agent: Webzio-Extended
+Disallow: /
+
+User-agent: ImagesiftBot
+Disallow: /
+
+User-agent: Timpibot
+Disallow: /
+
+User-agent: YouBot
+Disallow: /
+
+User-agent: DuckAssistBot
+Disallow: /
+
+User-agent: PanguBot
+Disallow: /
+
+User-agent: Kangaroo Bot
+Disallow: /
+
+User-agent: Scrapy
+Disallow: /
