@@ -5,6 +5,7 @@
 import { ASK_SCHEMA, buildPrompt, kstToday, normalizeAsk, ruleParse } from "./ask.js";
 import { handleEcr } from "./ecr.js";
 import { runBudgeted } from "./ai-budget.js";
+import { handleAiAccess, hasAiAccess, clearAiAccessCookie } from "./ai-access.js";
 
 const COOKIE_NAME = "gong_gate";
 const LOGIN_PATH = "/__gate/login";
@@ -93,7 +94,9 @@ export default {
     const secure = url.protocol === "https:";
 
     if (url.pathname === LOGOUT_PATH) {
-      return redirect("/", clearCookie(COOKIE_NAME, secure));
+      const response = redirect("/", clearCookie(COOKIE_NAME, secure));
+      response.headers.append("Set-Cookie", clearAiAccessCookie(request));
+      return response;
     }
 
     if (request.method === "POST" && url.pathname === LOGIN_PATH) {
@@ -177,6 +180,7 @@ async function routeRequest(request, env, context) {
   // 게이트를 통과한 요청만 여기 온다. 인증 앞에 두면 남이 계정 요금을 태울 수 있다.
   if (url.pathname === ASK_PATH) return handleAsk(request, env);
   if (url.pathname === "/api/ecr") return handleEcr(request, env);
+  if (url.pathname === "/api/ai-access") return handleAiAccess(request, env);
   if (url.pathname.startsWith(DATA_PREFIX)) {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
@@ -404,11 +408,11 @@ async function handleAsk(request, env) {
   const today = kstToday(Date.now());
   const mode = body?.mode;
   let parsed = null, source = "rule", fallbackNote = "";
-  if (env.AI) {
+  if (env.AI && await hasAiAccess(request, env)) {
     try { parsed = await askModel(env, query, today); source = ASK_MODEL; }
     catch (error) { fallbackNote = `AI 해석이 실패해 규칙 기반으로 대신 읽었습니다(${error.message}).`; }
   } else {
-    fallbackNote = "AI 바인딩(AI)이 없어 규칙 기반으로 읽었습니다.";
+    fallbackNote = env.AI ? "AI 분석이 잠겨 있어 규칙 기반으로 읽었습니다. ECR 분석에서 잠금을 해제할 수 있습니다." : "AI 바인딩(AI)이 없어 규칙 기반으로 읽었습니다.";
   }
   if (!parsed) {
     parsed = ruleParse(query, today);

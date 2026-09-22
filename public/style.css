@@ -288,6 +288,11 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
 #ecr-upload-form { margin: 16px 0; padding: 12px; border: 1px solid var(--border); border-radius: 9px; }
 #ecr-file { max-width: 100%; margin: 8px 0; }
 #ecr-progress { font-size: 13px; color: var(--muted); }
+.ecr-entry-btn { display: inline-block; margin: 6px 5px 0; padding: 3px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-hover); color: var(--text); cursor: pointer; font-size: 12px; }
+.ecr-entry-btn:hover, .ecr-entry-btn:focus-visible { text-decoration: underline; }
+#ai-access-panel { margin-top: 14px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; }
+#ai-unlock-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#ai-password { max-width: 100%; }
 .ecr-table { min-width: 620px; table-layout: auto; }
 .ecr-table th, .ecr-table td { width: auto; font-family: inherit; font-size: 12.5px; color: var(--text-2); }
 .ecr-table th { font-size: 11px; letter-spacing: 0.04em; }

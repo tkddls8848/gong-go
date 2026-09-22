@@ -17,7 +17,7 @@ const LIVE_PATH = "/api/live?mode=bid&businessType=%EB%AC%BC%ED%92%88&begin=2026
 const NOW = Date.parse("2026-08-16T23:00:00Z");
 
 function envOf(overrides = {}) {
-  return { GATE_PASSWORD: PASSWORD, GITHUB_TOKEN: "gh-token", ...(overrides.AI ? { DATA: memoryData() } : {}), ...overrides };
+  return { GATE_PASSWORD: PASSWORD, GITHUB_TOKEN: "gh-token", ...(overrides.AI ? { DATA: memoryData(), AI_ANALYSIS_PASSWORD: "test-analysis-password" } : {}), ...overrides };
 }
 function request(path, { method = "GET", headers = {}, body, origin = ORIGIN } = {}) {
   return new Request(`${origin}${path}`, { method, headers, body });
@@ -56,8 +56,17 @@ async function gateCookie(env = envOf()) {
   assert.equal(response.status, 302);
   return (response.headers.get("Set-Cookie") || "").split(";")[0];
 }
+const aiTestCookies = new WeakMap();
 async function authed(path, options = {}, env = envOf()) {
-  const cookie = options.cookie ?? await gateCookie(env);
+  let cookie = options.cookie ?? await gateCookie(env);
+  if (env.AI_ANALYSIS_PASSWORD) {
+    if (!aiTestCookies.has(env)) {
+      const unlocked = await worker.fetch(request("/api/ai-access", { method: "POST", headers: { Cookie: cookie, Origin: ORIGIN }, body: JSON.stringify({ password: env.AI_ANALYSIS_PASSWORD }) }), env);
+      assert.equal(unlocked.status, 200);
+      aiTestCookies.set(env, unlocked.headers.get("Set-Cookie").split(";")[0]);
+    }
+    cookie += "; " + aiTestCookies.get(env);
+  }
   return worker.fetch(request(path, { ...options, headers: { Cookie: cookie, ...options.headers } }), env);
 }
 

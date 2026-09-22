@@ -142,6 +142,27 @@ function evaluate(...names) {
   return new Function(`${names.map(sourceOf).join("\n")}\nreturn { ${names.join(", ")} };`)();
 }
 
+test("분석 결과가 없는 본공고에도 목록 ECR 버튼이 있고 누르면 분석 탭으로 바로 들어간다", () => {
+  const buttons = [], opened = [];
+  const rows = [{ mode: "bid", title: "서버 구매" }, { mode: "pre" }, { mode: "plan" }];
+  const titles = rows.map((_, index) => ({ dataset: { index: String(index) }, parentElement: { append: (button) => buttons.push(button) } }));
+  const document = { querySelectorAll: () => titles, createElement: () => ({ setAttribute() {} }) };
+  const run = new Function("document", "openModal", `${sourceOf("wireEcrEntrypoints")}\nreturn wireEcrEntrypoints;`)(document, (...args) => opened.push(args));
+  run(rows);
+  assert.equal(buttons.length, 1);
+  assert.equal(buttons[0].textContent, "ECR 분석");
+  buttons[0].onclick();
+  assert.deepEqual(opened, [[rows[0], "ecr"]]);
+  assert.match(sourceOf("renderRows"), /wireEcrEntrypoints\(visible\)/);
+  assert.match(sourceOf("openModal"), /selectTab\(initialTab\)/);
+});
+
+test("초기 화면에서 AI 업로드·실행은 잠겨 있고 비밀번호는 별도 입력한다", () => {
+  assert.match(HTML, /id="ecr-file"[^>]*disabled/);
+  assert.match(HTML, /id="ecr-analyze-btn"[^>]*disabled/);
+  assert.match(HTML, /id="ai-password"[^>]*type="password"/);
+});
+
 test("상세 링크가 있는 공고는 모드와 무관하게 나라장터로 열 수 있다", () => {
   const { detailLink } = evaluate("detailLink", "html");
   const bid = detailLink({ mode: "bid", detailUrl: "https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R25BK1&bidPbancOrd=000" });

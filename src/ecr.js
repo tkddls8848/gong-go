@@ -1,4 +1,5 @@
 import { runBudgeted } from "./ai-budget.js";
+import { requireAiAccess } from "./ai-access.js";
 
 export const ECR_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 const VERSION = "cloud-v1";
@@ -85,6 +86,8 @@ export async function handleEcr(request, env) {
     }
     if (request.method !== "POST") return json({ message: "GET 또는 POST만 지원합니다." }, 405);
     if (request.headers.get("Origin") !== url.origin) throw fail("같은 사이트에서만 분석할 수 있습니다.", 403);
+    const locked = await requireAiAccess(request, env);
+    if (locked) return locked;
     const action = url.searchParams.get("action");
     if (action === "upload") {
       const notice = url.searchParams.get("notice") || "";

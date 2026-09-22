@@ -570,7 +570,7 @@ function applyNlFilter(state) {
   if (!fileIndex.some((file) => modeOf(file) === viewMode && file.end >= $("#begin").value && file.begin <= $("#end").value)) notes.push(`${MODE_NAMES[viewMode]}에는 이 기간의 보유 데이터가 없습니다.`);
   setNl(false, [`해석: ${state.explain || "-"}`, ...notes].join(" · "), "done");
 }
-function renderRows(rows) { const pages = Math.max(1, Math.ceil(rows.length / pageSize)); page = Math.min(page, pages); const visible = rows.slice((page - 1) * pageSize, page * pageSize); $("#result-summary").textContent = `${format(rows.length)}건`; $("#page-label").textContent = `${page} / ${pages}`; $("#previous").disabled = page === 1; $("#next").disabled = page === pages; $("#download-btn").disabled = !rows.length; $("#download-ecr-btn").disabled = !analyses.size; $("#results").innerHTML = visible.length ? visible.map((row, i) => { const files = normalizeFiles(row.files), analysis = analyses.get(numberOf(row)); return `<tr><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(사업명 없음)")}</button>${row.live ? '<span class="live-badge">최신 확인</span>' : ""}${fileBadge(row, files)}${analysis ? `<span class="ecr-badge ${analysis.verified ? "" : "warning"}">ECR ${analysis.ecrCount}${analysis.verified ? "" : " · 확인 필요"}</span>` : ""}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">오늘</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`; }).join("") : $("#empty-row").innerHTML; document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)])); wireEmptyRefresh(); }
+function renderRows(rows) { const pages = Math.max(1, Math.ceil(rows.length / pageSize)); page = Math.min(page, pages); const visible = rows.slice((page - 1) * pageSize, page * pageSize); $("#result-summary").textContent = `${format(rows.length)}건`; $("#page-label").textContent = `${page} / ${pages}`; $("#previous").disabled = page === 1; $("#next").disabled = page === pages; $("#download-btn").disabled = !rows.length; $("#download-ecr-btn").disabled = !analyses.size; $("#results").innerHTML = visible.length ? visible.map((row, i) => { const files = normalizeFiles(row.files), analysis = analyses.get(numberOf(row)); return `<tr><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(사업명 없음)")}</button>${row.live ? '<span class="live-badge">최신 확인</span>' : ""}${fileBadge(row, files)}${analysis ? `<span class="ecr-badge ${analysis.verified ? "" : "warning"}">ECR ${analysis.ecrCount}${analysis.verified ? "" : " · 확인 필요"}</span>` : ""}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">오늘</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`; }).join("") : $("#empty-row").innerHTML; document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)])); wireEcrEntrypoints(visible); wireEmptyRefresh(); }
 // 빈 결과 안내에도 갱신 버튼이 있다. 템플릿을 통째로 다시 그리므로 매번 다시 걸고, 지금
 // 갱신이 도는 중이면 레일의 버튼과 같이 잠가 둔다 — 둘을 눌러 두 번 dispatch되면 안 된다.
 function wireEmptyRefresh() { document.querySelectorAll(".empty-refresh").forEach((button) => { button.onclick = startRefresh; button.disabled = $("#refresh-btn").disabled; button.textContent = $("#refresh-btn").textContent; }); }
@@ -621,9 +621,9 @@ function renderBidSchedule(row) {
   if (!items.length) return '<p class="schedule-empty">저장된 입찰 일정이 없습니다. 다음 데이터 갱신부터 공공 API의 일정 정보가 함께 저장됩니다.</p>';
   return `<ol class="schedule-list">${items.map(([label, value]) => `<li class="schedule-item"><span class="schedule-dot" aria-hidden="true"></span><span class="schedule-label">${html(label)}</span><time class="schedule-time">${html(value)}</time></li>`).join("")}</ol><p class="schedule-note">개찰 예정은 실제 개찰 처리 시각이 아니라 개찰을 시작할 수 있는 최초 시각입니다.</p>`;
 }
-function openModal(row) { currentRow = row; currentAnalysis = null; const files = normalizeFiles(row.files), entry = analyses.get(numberOf(row)); $("#modal-title").textContent = row.title || "(사업명 없음)"; $("#modal-subtitle").textContent = modalSubtitle(row, files); $("#modal-file-list").innerHTML = detailLink(row) + (files.length ? files.map((file, i) => `<li><span class="file-no">${i + 1}.</span><a href="${html(file.url)}" target="_blank" rel="noopener noreferrer">${html(file.name)}</a></li>`).join("") : row.mode === "plan" ? planLinks(row) : '<li><span class="empty-msg">이 공고에는 API로 제공되는 첨부파일이 없습니다.</span></li>'); $("#download-all-btn").disabled = !files.length; $("#download-all-btn").textContent = files.length ? `전체 다운로드 (${files.length}건)` : "전체 다운로드"; $("#schedule-tab").disabled = row.mode !== "bid"; $("#schedule-content").innerHTML = row.mode === "bid" ? renderBidSchedule(row) : ""; $("#ecr-tab").disabled = !entry; $("#ecr-tab").textContent = entry ? `ECR 규격 (${entry.ecrCount})` : "ECR 규격"; $("#ecr-content").innerHTML = entry ? '<p class="hint">ECR 규격을 불러오려면 탭을 선택하세요.</p>' : '<p class="hint">이 공고에는 분석된 ECR 규격이 없습니다.</p>'; selectTab("files"); modal.style.display = "flex"; }
+function openModal(row, initialTab = "files") { currentRow = row; currentAnalysis = null; const files = normalizeFiles(row.files), entry = analyses.get(numberOf(row)); $("#modal-title").textContent = row.title || "(사업명 없음)"; $("#modal-subtitle").textContent = modalSubtitle(row, files); $("#modal-file-list").innerHTML = detailLink(row) + (files.length ? files.map((file, i) => `<li><span class="file-no">${i + 1}.</span><a href="${html(file.url)}" target="_blank" rel="noopener noreferrer">${html(file.name)}</a></li>`).join("") : row.mode === "plan" ? planLinks(row) : '<li><span class="empty-msg">이 공고에는 API로 제공되는 첨부파일이 없습니다.</span></li>'); $("#download-all-btn").disabled = !files.length; $("#download-all-btn").textContent = files.length ? `전체 다운로드 (${files.length}건)` : "전체 다운로드"; $("#schedule-tab").disabled = row.mode !== "bid"; $("#schedule-content").innerHTML = row.mode === "bid" ? renderBidSchedule(row) : ""; $("#ecr-tab").disabled = row.mode !== "bid"; $("#ecr-tab").textContent = entry ? `ECR 분석 (${entry.ecrCount})` : "ECR 분석"; $("#ecr-content").innerHTML = entry ? '<p class="hint">ECR 규격을 불러오려면 탭을 선택하세요.</p>' : '<p class="hint">이 공고에는 분석된 ECR 규격이 없습니다.</p>'; $("#ecr-file").value = ""; $("#ecr-progress").textContent = ""; selectTab(initialTab); modal.style.display = "flex"; }
 function closeModal() { modal.style.display = "none"; currentRow = null; currentAnalysis = null; }
-function selectTab(tab) { document.querySelectorAll(".modal-tab").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab)); $("#files-content").hidden = tab !== "files"; $("#schedule-content").hidden = tab !== "schedule"; $("#ecr-content").hidden = tab !== "ecr"; $("#ecr-tab").disabled = currentRow?.mode !== "bid"; $("#ecr-upload-form").hidden = tab !== "ecr"; if (tab === "ecr") loadEcr(); }
+function selectTab(tab) { document.querySelectorAll(".modal-tab").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab)); $("#files-content").hidden = tab !== "files"; $("#schedule-content").hidden = tab !== "schedule"; $("#ecr-content").hidden = tab !== "ecr"; $("#ecr-tab").disabled = currentRow?.mode !== "bid"; $("#ecr-upload-form").hidden = tab !== "ecr"; $("#ai-access-panel").hidden = tab !== "ecr"; if (tab === "ecr") { refreshAiAccess(); loadEcr(); } }
 async function loadEcr() {
   const row = currentRow;
   const entry = analyses.get(numberOf(row));
@@ -653,10 +653,57 @@ async function loadEcr() {
   renderEcr(currentAnalysis);
   $("#ecr-content").insertAdjacentHTML("afterbegin", EquipmentSummary.render(currentAnalysis));
 }
-let ecrBusy = false;
+function wireEcrEntrypoints(rows) {
+  document.querySelectorAll(".title-link").forEach((title) => {
+    const row = rows[Number(title.dataset.index)];
+    if (row?.mode !== "bid") return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ecr-entry-btn";
+    button.textContent = "ECR 분석";
+    button.setAttribute("aria-label", `${row.title || "이 공고"} ECR 분석 열기`);
+    button.onclick = () => openModal(row, "ecr");
+    title.parentElement.append(button);
+  });
+}
+let ecrBusy = false, aiUnlocked = false;
+function showAiAccess(unlocked, message) {
+  aiUnlocked = unlocked;
+  $("#ai-unlock-form").hidden = unlocked;
+  $("#ai-lock-btn").hidden = !unlocked;
+  $("#ecr-file").disabled = !unlocked || ecrBusy;
+  $("#ecr-analyze-btn").disabled = !unlocked || ecrBusy;
+  $("#ai-access-status").textContent = message || (unlocked ? "AI 분석 잠금이 해제되었습니다. 30분 후 자동으로 잠깁니다." : "AI 분석이 잠겨 있습니다. 전용 비밀번호를 입력하세요.");
+}
+async function refreshAiAccess() {
+  showAiAccess(false, "분석 잠금 상태를 확인하고 있습니다.");
+  try {
+    const response = await fetch("/api/ai-access", { cache: "no-store" });
+    if (!response.ok) throw new Error("잠금 상태 조회 실패");
+    const data = await response.json();
+    showAiAccess(data.unlocked === true, !data.configured ? "AI 분석이 비활성화되어 있습니다. 운영자의 전용 비밀번호 설정이 필요합니다." : "");
+  } catch { showAiAccess(false, "분석 잠금 상태를 확인하지 못했습니다. 잠시 후 다시 시도하세요."); }
+}
+$("#ai-unlock-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const password = $("#ai-password").value;
+  $("#ai-password").value = "";
+  try {
+    const response = await fetch("/api/ai-access", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) });
+    const data = await response.json();
+    showAiAccess(response.ok && data.unlocked === true, data.message);
+  } catch { showAiAccess(false, "잠금 해제 요청에 실패했습니다."); }
+};
+$("#ai-lock-btn").onclick = async () => {
+  showAiAccess(false);
+  try {
+    const response = await fetch("/api/ai-access", { method: "DELETE" });
+    if (!response.ok) throw new Error("lock");
+  } catch { $("#ai-access-status").textContent = "서버 잠금 요청에 실패했습니다. 페이지를 다시 열어 잠금 상태를 확인하세요."; }
+};
 $("#ecr-upload-form").onsubmit = async (event) => {
   event.preventDefault();
-  if (ecrBusy) return;
+  if (ecrBusy || !aiUnlocked) return;
   const row = currentRow, file = $("#ecr-file").files[0];
   if (!file || row?.mode !== "bid") return;
   const progress = (message) => { if (currentRow === row) $("#ecr-progress").textContent = message; };
@@ -668,13 +715,14 @@ $("#ecr-upload-form").onsubmit = async (event) => {
     const send = async (params, body) => {
       const response = await fetch(`/api/ecr?${new URLSearchParams(params)}`, { method: "POST", body });
       const data = await response.json();
+      if (data.locked) showAiAccess(false, data.message);
       if (!response.ok) throw new Error(data.message || "분석 요청 실패");
       return data;
     };
     const job = await send({ action: "upload", notice: numberOf(row), name: file.name }, file);
     for (let index = 0; index < job.total; index++) {
       // 다른 공고로 이동하면 추가 뉴런을 쓰지 않는다. 이미 완료된 구간은 서버에 남는다.
-      if (currentRow !== row) break;
+      if (currentRow !== row || !aiUnlocked) break;
       progress(`요구사항 분석 중 · ${index + 1} / ${job.total} 구간`);
       const result = await send({ action: "step", id: job.id, index: String(index) });
       if (result.analysis) {
@@ -691,7 +739,7 @@ $("#ecr-upload-form").onsubmit = async (event) => {
       }
     }
   } catch (error) { progress(`${error.message} 완료된 구간은 저장되었습니다. 같은 파일로 다시 시작할 수 있습니다.`); }
-  finally { ecrBusy = false; $("#ecr-analyze-btn").disabled = false; }
+  finally { ecrBusy = false; $("#ecr-analyze-btn").disabled = !aiUnlocked; $("#ecr-file").disabled = !aiUnlocked; }
 };
 function renderEcr(data) { const alerts = [...(data.누락 || []).map((id) => `누락: ${id}`), ...(data.verification?.errors || []), ...(data.ecr || []).flatMap((item) => (item.불확실 || []).map((text) => `${item.id}: ${text}`))]; const rows = (data.ecr || []).map((item, i) => `<tr class="ecr-row" data-index="${i}"><td>${html(item.id)}</td><td>${html(item.분류)}</td><td>${html(item.명칭)}</td><td>${html((item.기본규격 || []).map((spec) => spec.수량).filter(Boolean).join(", ") || "-")}</td><td>${html((item.산출물 || []).join(", ") || "-")}</td></tr><tr id="detail-${i}" class="ecr-detail" hidden><td colspan="5"><p><strong>세부내용 원문</strong></p><div class="detail-text">${html(item.세부내용_원문 || "-")}</div>${specTable(item.기본규격 || [])}</td></tr>`).join(""); $("#ecr-content").innerHTML = `${alerts.length ? `<div class="ecr-alert">${alerts.map(html).join("<br>")}</div>` : ""}<p class="ecr-status ${data.verified ? "verified" : "unverified"}">${data.verified ? "자동 검증 통과" : "자동 검증 미통과 — 원문 확인 필요"}</p><div class="ecr-scroll"><table class="ecr-table"><thead><tr><th>ID</th><th>분류</th><th>명칭</th><th>수량</th><th>산출물</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">추출된 ECR이 없습니다.</td></tr>'}</tbody></table></div>`; document.querySelectorAll(".ecr-row").forEach((row) => row.onclick = () => { const detail = $(`#detail-${row.dataset.index}`); detail.hidden = !detail.hidden; row.classList.toggle("expanded", !detail.hidden); }); }
 function specTable(specs) { return specs.length ? `<p><strong>기본규격</strong></p><table class="nested-spec"><thead><tr><th>구분</th><th>항목</th><th>요구사항</th><th>수량</th></tr></thead><tbody>${specs.map((spec) => `<tr><td>${html(spec.구분)}</td><td>${html(spec.항목)}</td><td>${html(spec.요구사항)}</td><td>${html(spec.수량)}</td></tr>`).join("")}</tbody></table>` : ""; }

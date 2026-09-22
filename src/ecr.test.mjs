@@ -1,9 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "./worker.js";
-import { handleEcr, parseResult, splitDocument, ECR_MODEL } from "./ecr.js";
+import { handleEcr as rawHandleEcr, parseResult, splitDocument, ECR_MODEL } from "./ecr.js";
+import { handleAiAccess } from "./ai-access.js";
 import { reserveNeurons, runBudgeted } from "./ai-budget.js";
 const ORIGIN = "https://example.workers.dev";
+// 추출 기능 테스트는 실제 잠금 해제 API로 쿠키를 얻는다. 잠금 거부는 ai-access.test.mjs에서 검증한다.
+const accessCookies = new WeakMap();
+async function handleEcr(request, env) {
+  if (!accessCookies.has(env)) {
+    env.AI_ANALYSIS_PASSWORD = "test-analysis-password";
+    const response = await handleAiAccess(new Request(`${ORIGIN}/api/ai-access`, { method: "POST", headers: { Origin: ORIGIN }, body: JSON.stringify({ password: env.AI_ANALYSIS_PASSWORD }) }), env);
+    assert.equal(response.status, 200);
+    accessCookies.set(env, response.headers.get("Set-Cookie").split(";")[0]);
+  }
+  const headers = new Headers(request.headers); headers.set("Cookie", accessCookies.get(env));
+  return rawHandleEcr(new Request(request, { headers }), env);
+}
 function bucket() {
   const store = new Map(); let version = 0;
   return {
