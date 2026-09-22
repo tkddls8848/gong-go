@@ -56,7 +56,11 @@ test("파일명은 경로와 금지 문자를 없애고 길이를 자른다", ()
   // 상위 이동은 basename에서 떨어지고 이름만 남는다(점 파일 자체는 이름으로 허용된다).
   assert.equal(safeFileName("../../.env"), ".env");
   assert.equal(safeFileName("/etc/passwd"), "passwd");
-  assert.equal(safeFileName("C:\\Windows\\system32\\drivers\\etc\\hosts"), "hosts");
+  // 역슬래시는 Windows에서만 경로 구분자라 basename 결과가 플랫폼마다 다르다.
+  // 어느 쪽이든 구분자가 남지 않아야 한다.
+  const windowsPath = safeFileName("C:\\Windows\\system32\\drivers\\etc\\hosts");
+  assert.match(windowsPath, /hosts$/);
+  assert.doesNotMatch(windowsPath, /[\\/:]/);
   assert.equal(safeFileName("규격서<1>:*?.hwp"), "규격서_1____.hwp");
   assert.equal(safeFileName(".."), "_");
   assert.equal(safeFileName(""), "attachment");
