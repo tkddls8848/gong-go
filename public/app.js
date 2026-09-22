@@ -710,6 +710,7 @@ $("#ecr-upload-form").onsubmit = async (event) => {
   if (file.size > 8 * 1024 * 1024) { progress("파일은 8MB까지 지원합니다."); return; }
   ecrBusy = true;
   $("#ecr-analyze-btn").disabled = true;
+  let completedParts = 0;
   try {
     progress("문서를 변환하고 있습니다.");
     const send = async (params, body) => {
@@ -725,6 +726,7 @@ $("#ecr-upload-form").onsubmit = async (event) => {
       if (currentRow !== row || !aiUnlocked) break;
       progress(`요구사항 분석 중 · ${index + 1} / ${job.total} 구간`);
       const result = await send({ action: "step", id: job.id, index: String(index) });
+      completedParts = result.completed;
       if (result.analysis) {
         const data = result.analysis;
         analyses.set(numberOf(row), { notice: numberOf(row), path: `/api/ecr?notice=${encodeURIComponent(numberOf(row))}`, ecrCount: data.ecr.length, verified: data.verified });
@@ -738,7 +740,7 @@ $("#ecr-upload-form").onsubmit = async (event) => {
         }
       }
     }
-  } catch (error) { progress(`${error.message} 완료된 구간은 저장되었습니다. 같은 파일로 다시 시작할 수 있습니다.`); }
+  } catch (error) { progress(`${error.message}${completedParts > 0 ? ` 완료된 ${completedParts}개 구간은 저장되었습니다. 같은 파일로 다시 시작할 수 있습니다.` : ""}`); }
   finally { ecrBusy = false; $("#ecr-analyze-btn").disabled = !aiUnlocked; $("#ecr-file").disabled = !aiUnlocked; }
 };
 function renderEcr(data) { const alerts = [...(data.누락 || []).map((id) => `누락: ${id}`), ...(data.verification?.errors || []), ...(data.ecr || []).flatMap((item) => (item.불확실 || []).map((text) => `${item.id}: ${text}`))]; const rows = (data.ecr || []).map((item, i) => `<tr class="ecr-row" data-index="${i}"><td>${html(item.id)}</td><td>${html(item.분류)}</td><td>${html(item.명칭)}</td><td>${html((item.기본규격 || []).map((spec) => spec.수량).filter(Boolean).join(", ") || "-")}</td><td>${html((item.산출물 || []).join(", ") || "-")}</td></tr><tr id="detail-${i}" class="ecr-detail" hidden><td colspan="5"><p><strong>세부내용 원문</strong></p><div class="detail-text">${html(item.세부내용_원문 || "-")}</div>${specTable(item.기본규격 || [])}</td></tr>`).join(""); $("#ecr-content").innerHTML = `${alerts.length ? `<div class="ecr-alert">${alerts.map(html).join("<br>")}</div>` : ""}<p class="ecr-status ${data.verified ? "verified" : "unverified"}">${data.verified ? "자동 검증 통과" : "자동 검증 미통과 — 원문 확인 필요"}</p><div class="ecr-scroll"><table class="ecr-table"><thead><tr><th>ID</th><th>분류</th><th>명칭</th><th>수량</th><th>산출물</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">추출된 ECR이 없습니다.</td></tr>'}</tbody></table></div>`; document.querySelectorAll(".ecr-row").forEach((row) => row.onclick = () => { const detail = $(`#detail-${row.dataset.index}`); detail.hidden = !detail.hidden; row.classList.toggle("expanded", !detail.hidden); }); }

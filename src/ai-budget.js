@@ -21,13 +21,15 @@ export async function reserveNeurons(bucket, amount, now = Date.now()) {
   }
   throw Object.assign(new Error("동시에 분석 요청이 많습니다. 잠시 후 다시 시도하세요."), { status: 409 });
 }
-export async function runBudgeted(env, model, options) {
+export async function runBudgeted(env, model, options, onStage = () => {}) {
   const rates = RATES[model];
   if (!rates) throw new Error("무료 예산에 등록되지 않은 모델입니다.");
   // UTF-8 바이트 수는 텍스트 토큰 수의 보수적인 상한. 템플릿 여유와 25% 여유분을 포함한다.
   const bytes = new TextEncoder().encode(JSON.stringify(options)).length + 1024;
   const amount = Math.ceil((bytes * rates[0] + options.max_tokens * rates[1]) / 1e6 * 1.25);
+  onStage("budget");
   await reserveNeurons(env.DATA, amount);
   // 실패/시간 초과에도 반환하지 않는다. 실제 추론 비용이 이미 발생했을 수 있다.
+  onStage("inference");
   return env.AI.run(model, options);
 }

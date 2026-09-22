@@ -69,7 +69,7 @@ test("인증 전 분석 경로와 다른 사이트의 업로드는 차단한다"
   assert.equal((await handleEcr(request({ action: "upload" }, source, { Origin: "https://other.example" }), env)).status, 403);
 });
 test("PDF는 원격 toMarkdown 변환을 거치고 HWP는 명시적으로 안내한다", async () => {
-  const env = { DATA: bucket(), AI: { toMarkdown: async ({ name, blob }) => { assert.equal(name, "rfp.pdf"); assert.match(await blob.text(), /^%PDF-/); return { format: "markdown", data: source }; } } };
+  const env = { DATA: bucket(), AI: { toMarkdown: async ({ name, blob }) => { assert.equal(name, "rfp.pdf"); assert.equal(blob.type, "application/pdf", "Cloudflare 변환기는 빈 mimeType을 거부한다"); assert.equal(await blob.text(), "%PDF-test"); return { format: "markdown", data: source }; } } };
   assert.equal((await handleEcr(request({ action: "upload", notice: "test", name: "rfp.pdf" }, "%PDF-test"), env)).status, 200);
   assert.equal((await handleEcr(request({ action: "upload", notice: "test", name: "rfp.hwp" }, "test"), env)).status, 400);
   assert.equal((await handleEcr(request({ action: "upload", notice: "test", name: "rfp.pdf" }, "not pdf"), env)).status, 400);
