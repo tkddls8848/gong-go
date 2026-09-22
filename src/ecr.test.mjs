@@ -110,3 +110,30 @@ test("무료 예산 소진 응답은 429이며 기존 결과를 덮어쓰지 않
   assert.equal(calls, 0);
   assert.deepEqual(await (await env.DATA.get("_ecr/notices/test.json")).json(), { old: true });
 });
+
+test("출력 한도 구간만 세분화하고 성공한 하위 구간은 다시 호출하지 않는다", async () => {
+  let calls = 0;
+  const env = { DATA: bucket(), AI: { run: async () => ++calls === 1 ? { choices: [{ finish_reason: "length" }] } : { response: { items: [] } } } };
+  const job = await (await handleEcr(request({ action: "upload", notice: "test", name: "rfp.txt" }, "설명".repeat(500)), env)).json();
+  const step = async () => (await handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "1" }), env)).json();
+  assert.equal((await step()).retry, true);
+  assert.equal((await step()).retry, true);
+  assert.ok((await step()).analysis);
+  assert.ok((await step()).analysis);
+  assert.equal(calls, 3);
+});
+
+test("재업로드는 이전 구간과 캐시를 보존하고 우선순위 순서의 마지막 요청에서 합친다", async () => {
+  const env = { DATA: bucket(), AI: { run: async () => ({ response: { items: [] } }) } };
+  const job = await (await handleEcr(request({ action: "upload", notice: "test", name: "rfp.txt" }, "일반".repeat(3000)), env)).json();
+  const key = `_ecr/jobs/${job.id}.json`;
+  const stored = await (await env.DATA.get(key)).json();
+  stored.chunks = ["일반 배경", "ECR-001\n세부 내용 CPU 32코어"];
+  await env.DATA.put(key, JSON.stringify(stored));
+  const again = await (await handleEcr(request({ action: "upload", notice: "test", name: "rfp.txt" }, "일반".repeat(3000)), env)).json();
+  assert.deepEqual(again.order, [1, 0]);
+  const first = await (await handleEcr(request({ action: "step", id: job.id, index: 1, finalize: "0" }), env)).json();
+  assert.equal(first.analysis, undefined);
+  const final = await (await handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "1" }), env)).json();
+  assert.ok(final.analysis);
+});

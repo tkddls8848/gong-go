@@ -721,12 +721,15 @@ $("#ecr-upload-form").onsubmit = async (event) => {
       return data;
     };
     const job = await send({ action: "upload", notice: numberOf(row), name: file.name }, file);
-    for (let index = 0; index < job.total; index++) {
+    const order = job.order || Array.from({ length: job.total }, (_, index) => index);
+    for (let position = 0; position < order.length; position++) {
+      const index = order[position];
       // 다른 공고로 이동하면 추가 뉴런을 쓰지 않는다. 이미 완료된 구간은 서버에 남는다.
       if (currentRow !== row || !aiUnlocked) break;
-      progress(`요구사항 분석 중 · ${index + 1} / ${job.total} 구간`);
-      const result = await send({ action: "step", id: job.id, index: String(index) });
-      completedParts = result.completed;
+      progress(`${job.focused ? "ECR·장비 상세 표 분석" : "장비 요구사항 우선 분석"} 중 · ${position + 1} / ${job.total} 구간`);
+      const result = await send({ action: "step", id: job.id, index: String(index), finalize: position === order.length - 1 ? "1" : "0" });
+      if (result.retry) { progress(result.message); position--; continue; }
+      completedParts = position + 1;
       if (result.analysis) {
         const data = result.analysis;
         analyses.set(numberOf(row), { notice: numberOf(row), path: `/api/ecr?notice=${encodeURIComponent(numberOf(row))}`, ecrCount: data.ecr.length, verified: data.verified });
