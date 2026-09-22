@@ -3,6 +3,8 @@
 // 질의 해석은 같은 모듈 안(src/)에 둔다. Node 내장 모듈을 쓰지 않으므로 Worker 런타임에서
 // 그대로 돌고, 번들에 CommonJS를 섞지 않는다.
 import { ASK_SCHEMA, buildPrompt, kstToday, normalizeAsk, ruleParse } from "./ask.js";
+import { handleEcr } from "./ecr.js";
+import { runBudgeted } from "./ai-budget.js";
 
 const COOKIE_NAME = "gong_gate";
 const LOGIN_PATH = "/__gate/login";
@@ -174,6 +176,7 @@ async function routeRequest(request, env, context) {
   if (url.pathname === LIVE_PATH) return handleLive(request, env, url, context);
   // 게이트를 통과한 요청만 여기 온다. 인증 앞에 두면 남이 계정 요금을 태울 수 있다.
   if (url.pathname === ASK_PATH) return handleAsk(request, env);
+  if (url.pathname === "/api/ecr") return handleEcr(request, env);
   if (url.pathname.startsWith(DATA_PREFIX)) {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
@@ -420,7 +423,7 @@ async function askModel(env, query, today) {
   let timer;
   try {
     const result = await Promise.race([
-      env.AI.run(ASK_MODEL, {
+      runBudgeted(env, ASK_MODEL, {
         messages: [{ role: "system", content: buildPrompt(today) }, { role: "user", content: query }],
         // 스키마는 schema가 아니라 json_schema 아래다. JSON 모드는 스트리밍을 지원하지 않으므로
         // stream을 켜면 안 된다.

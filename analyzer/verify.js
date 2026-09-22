@@ -13,6 +13,7 @@ function verifyExtraction(result, markdown) {
     const excerpt = normalize(item.세부내용_원문).slice(0, 40);
     if (excerpt.length < 40) { errors.push(`${item.id}: 세부내용_원문이 너무 짧음`); continue; }
     if (!normalize(markdown).includes(excerpt)) errors.push(`${item.id}: 세부내용_원문이 변환 Markdown에서 확인되지 않음`);
+    else if (!normalize(markdown).includes(normalize(item.세부내용_원문))) errors.push(`${item.id}: 세부내용_원문 후반부가 변환 Markdown과 일치하지 않음`);
   }
   const loose = new Set((String(markdown).match(/[A-Z]{2,4}[-–][A-Z0-9-]+/g) || []).map((id) => id.replace("–", "-")));
   const absentInText = [...expected].filter((id) => !loose.has(id));

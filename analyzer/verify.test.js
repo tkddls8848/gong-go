@@ -62,6 +62,14 @@ test("공백 차이는 대조에서 무시한다", () => {
   assert.equal(verifyExtraction(result({ ecr: [{ id: "ECR-COM-01", 세부내용_원문: spaced }, { id: "ECR-HW-01", 세부내용_원문: SECOND }] }), MARKDOWN).verified, true);
 });
 
+test("원문 앞부분만 맞고 뒤에 규격을 지어낸 경우 검증을 통과하지 않는다", () => {
+  const data = result();
+  data.ecr[0].세부내용_원문 += " 메모리는 999TB를 제공한다.";
+  const check = verifyExtraction(data, MARKDOWN);
+  assert.equal(check.verified, false);
+  assert.ok(check.errors.some((error) => error.includes("후반부")));
+});
+
 test("변환 텍스트에서 ID를 못 찾으면 경고일 뿐 실패가 아니다", () => {
   // 표 안의 ID는 변환 과정에서 깨지기도 한다. 원문 대조가 통과했다면 막지 않는다.
   const check = verifyExtraction(result(), `${FIRST}\n${SECOND}`);

@@ -623,14 +623,98 @@ function renderBidSchedule(row) {
 }
 function openModal(row) { currentRow = row; currentAnalysis = null; const files = normalizeFiles(row.files), entry = analyses.get(numberOf(row)); $("#modal-title").textContent = row.title || "(사업명 없음)"; $("#modal-subtitle").textContent = modalSubtitle(row, files); $("#modal-file-list").innerHTML = detailLink(row) + (files.length ? files.map((file, i) => `<li><span class="file-no">${i + 1}.</span><a href="${html(file.url)}" target="_blank" rel="noopener noreferrer">${html(file.name)}</a></li>`).join("") : row.mode === "plan" ? planLinks(row) : '<li><span class="empty-msg">이 공고에는 API로 제공되는 첨부파일이 없습니다.</span></li>'); $("#download-all-btn").disabled = !files.length; $("#download-all-btn").textContent = files.length ? `전체 다운로드 (${files.length}건)` : "전체 다운로드"; $("#schedule-tab").disabled = row.mode !== "bid"; $("#schedule-content").innerHTML = row.mode === "bid" ? renderBidSchedule(row) : ""; $("#ecr-tab").disabled = !entry; $("#ecr-tab").textContent = entry ? `ECR 규격 (${entry.ecrCount})` : "ECR 규격"; $("#ecr-content").innerHTML = entry ? '<p class="hint">ECR 규격을 불러오려면 탭을 선택하세요.</p>' : '<p class="hint">이 공고에는 분석된 ECR 규격이 없습니다.</p>'; selectTab("files"); modal.style.display = "flex"; }
 function closeModal() { modal.style.display = "none"; currentRow = null; currentAnalysis = null; }
-function selectTab(tab) { document.querySelectorAll(".modal-tab").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab)); $("#files-content").hidden = tab !== "files"; $("#schedule-content").hidden = tab !== "schedule"; $("#ecr-content").hidden = tab !== "ecr"; if (tab === "ecr") loadEcr(); }
-async function loadEcr() { const entry = analyses.get(numberOf(currentRow)); if (!entry) return; if (!currentAnalysis) { $("#ecr-content").innerHTML = '<p class="hint">ECR 규격을 불러오는 중입니다.</p>'; try { currentAnalysis = await getJson(`${DATA_BASE}/${entry.path}`); } catch (error) { $("#ecr-content").innerHTML = `<p class="warning-text">ECR 규격을 불러오지 못했습니다: ${html(error.message)}</p>`; return; } } renderEcr(currentAnalysis); }
+function selectTab(tab) { document.querySelectorAll(".modal-tab").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab)); $("#files-content").hidden = tab !== "files"; $("#schedule-content").hidden = tab !== "schedule"; $("#ecr-content").hidden = tab !== "ecr"; $("#ecr-tab").disabled = currentRow?.mode !== "bid"; $("#ecr-upload-form").hidden = tab !== "ecr"; if (tab === "ecr") loadEcr(); }
+async function loadEcr() {
+  const row = currentRow;
+  const entry = analyses.get(numberOf(row));
+  if (!currentAnalysis) {
+    $("#ecr-content").innerHTML = '<p class="hint">ECR 규격을 불러오는 중입니다.</p>';
+    try {
+      const remote = await fetch(`/api/ecr?notice=${encodeURIComponent(numberOf(row))}`, { cache: "no-store" });
+      let data;
+      if (remote.ok) data = await remote.json();
+      else if (remote.status === 404 && entry) data = await getJson(entry.path.startsWith("/api/") ? entry.path : `${DATA_BASE}/${entry.path}`);
+      else if (remote.status === 404) {
+        if (currentRow === row) $("#ecr-content").innerHTML = '<p class="hint">제안요청서 파일을 올려 서버·스토리지 요구사항을 분석하세요.</p>';
+        return;
+      } else throw new Error((await remote.json()).message || "분석 조회 실패");
+      if (currentRow !== row) return;
+      currentAnalysis = data;
+      if (data.provider === "workers-ai") {
+        analyses.set(numberOf(row), { notice: numberOf(row), path: `/api/ecr?notice=${encodeURIComponent(numberOf(row))}`, ecrCount: data.ecr.length, verified: data.verified });
+        $("#download-ecr-btn").disabled = false;
+        $("#ecr-tab").textContent = `ECR 규격 (${data.ecr.length})`;
+      }
+    } catch (error) {
+      if (currentRow === row) $("#ecr-content").innerHTML = `<p class="warning-text">ECR 규격을 불러오지 못했습니다: ${html(error.message)}</p>`;
+      return;
+    }
+  }
+  renderEcr(currentAnalysis);
+  $("#ecr-content").insertAdjacentHTML("afterbegin", EquipmentSummary.render(currentAnalysis));
+}
+let ecrBusy = false;
+$("#ecr-upload-form").onsubmit = async (event) => {
+  event.preventDefault();
+  if (ecrBusy) return;
+  const row = currentRow, file = $("#ecr-file").files[0];
+  if (!file || row?.mode !== "bid") return;
+  const progress = (message) => { if (currentRow === row) $("#ecr-progress").textContent = message; };
+  if (file.size > 8 * 1024 * 1024) { progress("파일은 8MB까지 지원합니다."); return; }
+  ecrBusy = true;
+  $("#ecr-analyze-btn").disabled = true;
+  try {
+    progress("문서를 변환하고 있습니다.");
+    const send = async (params, body) => {
+      const response = await fetch(`/api/ecr?${new URLSearchParams(params)}`, { method: "POST", body });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "분석 요청 실패");
+      return data;
+    };
+    const job = await send({ action: "upload", notice: numberOf(row), name: file.name }, file);
+    for (let index = 0; index < job.total; index++) {
+      // 다른 공고로 이동하면 추가 뉴런을 쓰지 않는다. 이미 완료된 구간은 서버에 남는다.
+      if (currentRow !== row) break;
+      progress(`요구사항 분석 중 · ${index + 1} / ${job.total} 구간`);
+      const result = await send({ action: "step", id: job.id, index: String(index) });
+      if (result.analysis) {
+        const data = result.analysis;
+        analyses.set(numberOf(row), { notice: numberOf(row), path: `/api/ecr?notice=${encodeURIComponent(numberOf(row))}`, ecrCount: data.ecr.length, verified: data.verified });
+        if (currentRow === row) {
+          currentAnalysis = data;
+          $("#download-ecr-btn").disabled = false;
+          $("#ecr-tab").textContent = `ECR 규격 (${data.ecr.length})`;
+          renderEcr(data);
+          $("#ecr-content").insertAdjacentHTML("afterbegin", EquipmentSummary.render(data));
+          progress("분석이 완료되었습니다. 근거와 원문을 확인하세요.");
+        }
+      }
+    }
+  } catch (error) { progress(`${error.message} 완료된 구간은 저장되었습니다. 같은 파일로 다시 시작할 수 있습니다.`); }
+  finally { ecrBusy = false; $("#ecr-analyze-btn").disabled = false; }
+};
 function renderEcr(data) { const alerts = [...(data.누락 || []).map((id) => `누락: ${id}`), ...(data.verification?.errors || []), ...(data.ecr || []).flatMap((item) => (item.불확실 || []).map((text) => `${item.id}: ${text}`))]; const rows = (data.ecr || []).map((item, i) => `<tr class="ecr-row" data-index="${i}"><td>${html(item.id)}</td><td>${html(item.분류)}</td><td>${html(item.명칭)}</td><td>${html((item.기본규격 || []).map((spec) => spec.수량).filter(Boolean).join(", ") || "-")}</td><td>${html((item.산출물 || []).join(", ") || "-")}</td></tr><tr id="detail-${i}" class="ecr-detail" hidden><td colspan="5"><p><strong>세부내용 원문</strong></p><div class="detail-text">${html(item.세부내용_원문 || "-")}</div>${specTable(item.기본규격 || [])}</td></tr>`).join(""); $("#ecr-content").innerHTML = `${alerts.length ? `<div class="ecr-alert">${alerts.map(html).join("<br>")}</div>` : ""}<p class="ecr-status ${data.verified ? "verified" : "unverified"}">${data.verified ? "자동 검증 통과" : "자동 검증 미통과 — 원문 확인 필요"}</p><div class="ecr-scroll"><table class="ecr-table"><thead><tr><th>ID</th><th>분류</th><th>명칭</th><th>수량</th><th>산출물</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">추출된 ECR이 없습니다.</td></tr>'}</tbody></table></div>`; document.querySelectorAll(".ecr-row").forEach((row) => row.onclick = () => { const detail = $(`#detail-${row.dataset.index}`); detail.hidden = !detail.hidden; row.classList.toggle("expanded", !detail.hidden); }); }
 function specTable(specs) { return specs.length ? `<p><strong>기본규격</strong></p><table class="nested-spec"><thead><tr><th>구분</th><th>항목</th><th>요구사항</th><th>수량</th></tr></thead><tbody>${specs.map((spec) => `<tr><td>${html(spec.구분)}</td><td>${html(spec.항목)}</td><td>${html(spec.요구사항)}</td><td>${html(spec.수량)}</td></tr>`).join("")}</tbody></table>` : ""; }
 // 발주계획은 마감일이 없고 발주예정월이 그 자리를 대신하며, 첨부 URL도 없어 그 칸이 빈다.
 // 나라장터 링크는 모드마다 자리가 달라지지 않도록 전용 열로 뺐다.
 function downloadCsv() { downloadRows([["유형", "공고번호", "업무", "수요기관", "사업명(공고명)", "게시일", "마감일/발주예정", "첨부파일", "나라장터 링크"], ...filtered.map((row) => [MODE_NAMES[row.mode] || row.mode, numberOf(row), row.businessType, row.institution, row.title, row.publishedAt, row.mode === "plan" ? row.orderMonth : row.closeAt, row.mode === "plan" ? "" : normalizeFiles(row.files).map((file) => `${file.name} (${file.url})`).join(" | "), row.detailUrl || ""])], "gong-go"); }
-async function downloadEcr() { const rows = [["공고번호", "사업명", "ID", "분류", "명칭", "수량", "산출물", "세부내용 원문", "검증"]]; for (const row of filtered) { const entry = analyses.get(numberOf(row)); if (!entry) continue; try { const data = await getJson(`${DATA_BASE}/${entry.path}`); (data.ecr || []).forEach((item) => rows.push([numberOf(row), row.title, item.id, item.분류, item.명칭, (item.기본규격 || []).map((spec) => spec.수량).filter(Boolean).join(", "), (item.산출물 || []).join(", "), item.세부내용_원문, data.verified ? "통과" : "원문 확인 필요"])); } catch {} } downloadRows(rows, "gong-go-ecr"); }
+async function downloadEcr() {
+  const rows = [["공고번호", "사업명", "ID", "분류", "명칭", "수량", "산출물", "세부내용 원문", "검증", "장비 요구사항", "근거"]];
+  for (const row of filtered) {
+    const entry = analyses.get(numberOf(row)); if (!entry) continue;
+    try {
+      const data = await getJson(entry.path.startsWith("/api/") ? entry.path : `${DATA_BASE}/${entry.path}`);
+      for (const item of data.ecr || []) {
+        const facts = (item.장비요약 || []).flatMap((equipment) => equipment.규격 || []);
+        rows.push([numberOf(row), row.title, item.id, item.분류, item.명칭,
+          facts.filter((fact) => fact.항목 === "수량").map((fact) => fact.값).join(", ") || (item.기본규격 || []).map((spec) => spec.수량).filter(Boolean).join(", "),
+          (item.산출물 || []).join(", "), item.세부내용_원문, data.verified ? "통과" : "원문 확인 필요",
+          facts.map((fact) => `${fact.항목}: ${fact.값}`).join("\n"), facts.map((fact) => `${fact.항목}: ${fact.근거} (${fact.검증})`).join("\n")]);
+      }
+    } catch (error) { window.alert(`ECR 내보내기 실패: ${error.message}`); return; }
+  }
+  downloadRows(rows, "gong-go-ecr");
+}
 function downloadRows(rows, prefix) { const csv = rows.map((row) => row.map((value) => { const text = String(value ?? ""); return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }).join(",")).join("\n"); downloadBlob(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }), `${prefix}_${localDate(new Date()).replaceAll("-", "")}.csv`); }
 // CSV\uC640 \uD504\uB9AC\uC14B JSON\uC774 \uD568\uAED8 \uC4F4\uB2E4.
 function downloadBlob(blob, filename) { const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = filename; document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url); }

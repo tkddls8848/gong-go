@@ -17,7 +17,7 @@ const LIVE_PATH = "/api/live?mode=bid&businessType=%EB%AC%BC%ED%92%88&begin=2026
 const NOW = Date.parse("2026-08-16T23:00:00Z");
 
 function envOf(overrides = {}) {
-  return { GATE_PASSWORD: PASSWORD, GITHUB_TOKEN: "gh-token", ...overrides };
+  return { GATE_PASSWORD: PASSWORD, GITHUB_TOKEN: "gh-token", ...(overrides.AI ? { DATA: memoryData() } : {}), ...overrides };
 }
 function request(path, { method = "GET", headers = {}, body, origin = ORIGIN } = {}) {
   return new Request(`${origin}${path}`, { method, headers, body });
@@ -507,9 +507,15 @@ test("dispatch가 실패하면 GitHub의 상태와 사유를 그대로 전한다
 // 키라 /data/로는 절대 노출되지 않는다.
 function memoryData() {
   const store = new Map();
+  let version = 0;
   return {
-    async get(key) { return store.has(key) ? { async json() { return JSON.parse(store.get(key)); } } : null; },
-    async put(key, value) { store.set(key, value); },
+    async get(key) { const item = store.get(key); return item ? { etag: item.etag, async json() { return JSON.parse(item.value); } } : null; },
+    async put(key, value, options = {}) {
+      const prior = store.get(key), condition = options.onlyIf;
+      if (condition?.etagMatches && prior?.etag !== condition.etagMatches) return null;
+      if (condition?.etagDoesNotMatch === "*" && prior) return null;
+      const etag = String(++version); store.set(key, { value, etag }); return { etag };
+    },
   };
 }
 

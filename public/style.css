@@ -277,6 +277,17 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
 .ecr-status.verified { color: var(--ok); } .ecr-status.verified::before { background: var(--ok-dot); }
 .ecr-status.unverified { color: var(--warn); } .ecr-status.unverified::before { background: var(--warn-dot); }
 .ecr-scroll { overflow-x: auto; }
+.equipment-summary h3 { margin: 20px 0 10px; font-size: 15px; }
+.equipment-card { margin: 12px 0; padding: 14px; border: 1px solid var(--border); border-radius: 9px; }
+.equipment-card h4 { margin: 0; font-size: 14px; }
+.equipment-card small { color: var(--muted); font-weight: normal; }
+.equipment-card table { min-width: 480px; table-layout: auto; }
+.equipment-card td { white-space: pre-wrap; overflow-wrap: anywhere; }
+.equipment-card details { margin: 8px 0; }
+.equipment-card summary { cursor: pointer; }
+#ecr-upload-form { margin: 16px 0; padding: 12px; border: 1px solid var(--border); border-radius: 9px; }
+#ecr-file { max-width: 100%; margin: 8px 0; }
+#ecr-progress { font-size: 13px; color: var(--muted); }
 .ecr-table { min-width: 620px; table-layout: auto; }
 .ecr-table th, .ecr-table td { width: auto; font-family: inherit; font-size: 12.5px; color: var(--text-2); }
 .ecr-table th { font-size: 11px; letter-spacing: 0.04em; }
