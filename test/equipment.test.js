@@ -13,3 +13,9 @@ test("요약은 조건, 검증 상태, 원문을 표시하고 문서의 HTML을 
   assert.ok(!html.includes("<script>"));
   assert.match(html, /&lt;script&gt;/);
 });
+test("스위치 요구사항도 별도 섹션으로 표시한다", () => {
+  const html = render({ schemaVersion: 2, verified: false, ecr: [{ id: "ECR-026", 세부내용_원문: "SAN 스위치", 장비요약: [{ 종류: "스위치", 명칭: "SAN 스위치", 출처: "3쪽", 규격: [{ 항목: "포트 속도", 값: "32Gbps 24포트", 근거: "32Gbps 24포트", 검증: "원문 확인" }] }] }] });
+  assert.match(html, /스위치 요구사항/);
+  assert.match(html, /32Gbps 24포트/);
+  assert.match(html, /스위칭 용량<\/th><td>미기재/);
+});

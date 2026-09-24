@@ -30,3 +30,9 @@ test("모델의 줄 번호로 값과 근거를 복원하고 틀린 범위는 거
   assert.throws(() => parseResult(result, text, "rfp", 0), /줄 번호/);
   assert.equal(sourceLines("가".repeat(1000)).join(""), "가".repeat(1000));
 });
+test("이름이 같아도 장비 표만 남기고 소프트웨어·PC·UPS 표는 제외한다", () => {
+  const table = (id, name) => `| 요구사항 고유번호 | ${id} |\n| 요구사항 명칭 | ${name} |\n| 세부 내용 | CPU 32코어, 메모리 256GB |\n`;
+  const text = table("ECR-010", "NMS/SMS서버") + table("ECR-038", "NMS/SMS") + table("ECR-012", "백신관리서버")
+    + table("ECR-046", "백신(PC용/서버용)") + table("ECR-033", "PC 및 복합기") + table("ECR-026", "SAN 스위치");
+  assert.deepEqual(requirementSections(text).sections.map((section) => section.id), ["ECR-010", "ECR-012", "ECR-026"]);
+});

@@ -137,3 +137,22 @@ test("재업로드는 이전 구간과 캐시를 보존하고 우선순위 순�
   const final = await (await handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "1" }), env)).json();
   assert.ok(final.analysis);
 });
+
+test("본문이 길어도 상세 표만 작으면 분석하고, 표가 없는 긴 문서는 그대로 막는다", () => {
+  const table = (id) => `| 요구사항 고유번호 | ${id} |\n| 세부 내용 | ${id} 서버 메모리 256GB 이상 |\n`;
+  const body = "일반 배경 설명입니다.\n".repeat(12000);
+  const chunks = splitDocument(body + table("ECR-001") + table("ECR-002"));
+  assert.equal(chunks.length, 2);
+  assert.ok(!chunks.join("").includes("일반 배경"));
+  assert.throws(() => splitDocument(body), /문서가 너무 큽니다/);
+});
+
+test("스위치 규격도 줄 범위로 복원하고 분석 대상이 아닌 종류는 거절한다", () => {
+  const text = "ECR-026\nSAN 스위치 2대 신규 도입\n32Gbps 24포트 이상";
+  const result = { response: { items: [{ id: "ECR-026", kind: "스위치", name: "SAN 스위치", facts: [{ field: "포트 속도", from: 3, to: 3 }] }] } };
+  const [item] = parseResult(result, text, "rfp", 0);
+  assert.equal(item.분류, "스위치");
+  assert.equal(item.장비요약[0].규격[0].값, "32Gbps 24포트 이상");
+  result.response.items[0].kind = "랙";
+  assert.throws(() => parseResult(result, text, "rfp", 0), /장비 형식/);
+});

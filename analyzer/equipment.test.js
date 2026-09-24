@@ -30,3 +30,10 @@ test("긴 규격의 후반부와 복수 문서를 보존하고 한도 초과는 
   assert.ok(text.includes("Usable 100TB"));
   assert.throws(() => completeSource(docs, "규격 추출", 8192), /원문을 자르지 않았습니다/);
 });
+test("스위치 규격도 종류로 받아 원문과 대조한다", () => {
+  const 원문 = "ECR-026 SAN 스위치 2대, 32Gbps 24포트 이상 제공.";
+  const data = { id: "ECR-026", 세부내용_원문: 원문, 장비요약: [{ 종류: "스위치", 명칭: "SAN 스위치", 규격: [{ 항목: "포트 속도", 값: "32Gbps 24포트 이상", 근거: "32Gbps 24포트 이상 제공." }] }] };
+  assert.deepEqual(verifyEquipment([data], 원문), []);
+  assert.equal(data.장비요약[0].규격[0].검증, "원문 확인");
+  assert.equal(verifyEquipment([{ ...data, 장비요약: [{ ...data.장비요약[0], 종류: "랙" }] }], 원문).length, 1);
+});
