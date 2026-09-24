@@ -19,15 +19,19 @@ test("평문으로 변환된 번호 표와 상세 번호의 하위 마디를 지
 test("이전 작업도 상세 표 먼저 처리하되 원래 구간 번호는 보존한다", () => {
   assert.deepEqual(priorityOrder(["일반 배경", "ECR-001 서버", "요구사항 번호 ECR-002\n세부 내용 CPU 32코어"]), [2, 1, 0]);
 });
-test("모델의 줄 번호로 값과 근거를 복원하고 틀린 범위는 거절한다", () => {
+test("모델의 줄 번호로 값과 근거를 복원하고 틀린 범위는 그 규격만 빼고 남긴다", () => {
   const text = "장비-001\n서버당 메모리 256GB 이상\n2대 신규 도입";
-  const result = { response: { items: [{ id: "장비-001", kind: "서버", name: "서버", facts: [{ field: "메모리", from: 2, to: 2 }] }] } };
+  const facts = [{ field: "메모리", from: 2, to: 2 }];
+  const result = { response: { items: [{ id: "장비-001", kind: "서버", name: "서버", facts }] } };
   const [item] = parseResult(result, text, "rfp", 0);
   assert.equal(item.장비요약[0].규격[0].값, "서버당 메모리 256GB 이상");
   assert.equal(item.장비요약[0].규격[0].근거, "서버당 메모리 256GB 이상");
   assert.ok(!item.불확실.some((message) => message.includes("ID")));
-  result.response.items[0].facts[0].to = 99;
-  assert.throws(() => parseResult(result, text, "rfp", 0), /줄 번호/);
+  // 범위가 문서 밖이어도 구간 전체를 버리지 않는다. 그 규격만 빼고 무엇을 뺐는지 남긴다.
+  facts.push({ field: "수량", from: 3, to: 99 });
+  const [tolerated] = parseResult(result, text, "rfp", 0);
+  assert.equal(tolerated.장비요약[0].규격.length, 1);
+  assert.ok(tolerated.불확실.some((message) => message.includes("수량") && message.includes("제외")));
   assert.equal(sourceLines("가".repeat(1000)).join(""), "가".repeat(1000));
 });
 test("이름이 같아도 장비 표만 남기고 소프트웨어·PC·UPS 표는 제외한다", () => {

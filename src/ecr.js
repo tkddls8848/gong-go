@@ -86,18 +86,26 @@ export function parseResult(result, source, filename, index) {
     const uncertainties = [];
     if (!/^(?:ECR[-–][A-Za-z0-9–-]+|장비\s*[-–]?[A-Z]?\d+(?:[-–]\d+)*)$/.test(item.id) || !source.includes(item.id)) uncertainties.push("요구사항 ID 원문 확인 필요");
     if (!item.name || !norm(source).includes(norm(item.name))) uncertainties.push("장비명 원문 확인 필요");
-    const facts = item.facts.map((fact) => {
-      if (fact && ("from" in fact || "to" in fact)) {
+    // 규격 하나가 틀렸다고 구간 전체를 버리지 않는다. temperature가 0이라 다시 불러도 같은
+    // 응답이 오므로, 버리면 그 구간은 영영 통과하지 못하고 그때까지 쓴 뉴런만 사라진다.
+    // 확인할 수 없는 규격은 빼고 무엇을 뺐는지 남긴다 — 값을 지어내지 않는다.
+    const facts = [];
+    for (const fact of item.facts) {
+      if (!fact || typeof fact !== "object" || Array.isArray(fact)) { uncertainties.push("규격 항목 형식 오류로 제외함"); continue; }
+      if ("from" in fact || "to" in fact) {
         const lines = sourceLines(source);
-        if (!fields.includes(fact.field) || !Number.isInteger(fact.from) || !Number.isInteger(fact.to) || fact.from < 1 || fact.to < fact.from || fact.to > lines.length || fact.to - fact.from > 5) throw fail("모델이 유효하지 않은 원문 줄 번호를 반환했습니다.", 502);
+        const usable = fields.includes(fact.field) && Number.isInteger(fact.from) && Number.isInteger(fact.to)
+          && fact.from >= 1 && fact.to >= fact.from && fact.to <= lines.length && fact.to - fact.from <= 5;
+        if (!usable) { uncertainties.push(`${fields.includes(fact.field) ? fact.field : "규격"}: 모델이 가리킨 원문 줄(${fact.from}~${fact.to})을 확인할 수 없어 제외함`); continue; }
         const quote = lines.slice(fact.from - 1, fact.to).join("").trim();
-        return { 항목: fact.field, 값: quote, 근거: quote, 검증: quote ? "원문 확인" : "확인 필요" };
+        facts.push({ 항목: fact.field, 값: quote, 근거: quote, 검증: quote ? "원문 확인" : "확인 필요" });
+        continue;
       }
-      if (!fact || !fields.includes(fact.field) || typeof fact.value !== "string" || typeof fact.evidence !== "string") throw fail("모델 규격 형식이 올바르지 않습니다.", 502);
+      if (!fields.includes(fact.field) || typeof fact.value !== "string" || typeof fact.evidence !== "string") { uncertainties.push(`${fields.includes(fact.field) ? fact.field : "규격"}: 형식 오류로 제외함`); continue; }
       const verified = !!norm(fact.value) && !!norm(fact.evidence) && norm(fact.evidence).includes(norm(fact.value)) && norm(source).includes(norm(fact.evidence));
       if (!verified) uncertainties.push(`${fact.field}: 근거 확인 필요`);
-      return { 항목: fact.field, 값: fact.value, 근거: fact.evidence, 검증: verified ? "원문 확인" : "확인 필요" };
-    });
+      facts.push({ 항목: fact.field, 값: fact.value, 근거: fact.evidence, 검증: verified ? "원문 확인" : "확인 필요" });
+    }
     const location = `${filename} · 구간 ${index + 1}`;
     return { id: item.id || `확인 필요 (${index + 1})`, 분류: item.kind, 명칭: item.name, 세부내용_원문: source, 기본규격: [], 산출물: [], 출처: location, 불확실: uncertainties,
       장비요약: [{ 종류: item.kind, 명칭: item.name, 출처: location, 규격: facts }] };
