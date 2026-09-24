@@ -49,7 +49,7 @@ test("예산 저장 실패와 소진시 AI 호출을 하지 않는다", async ()
 });
 test("업로드부터 Workers AI 분석·저장·재조회까지 연결하고 재시도는 캐시를 사용한다", async () => {
   let calls = 0;
-  const env = { DATA: bucket(), AI: { run: async (model, options) => { calls++; assert.equal(model, ECR_MODEL); assert.equal(options.max_tokens, 4096); return modelResult(); } } };
+  const env = { DATA: bucket(), AI: { run: async (model, options) => { calls++; assert.equal(model, ECR_MODEL); assert.equal(options.max_tokens, 2048); return modelResult(); } } };
   const upload = await handleEcr(request({ action: "upload", notice: "R26-001", name: "rfp.md" }, source), env);
   assert.equal(upload.status, 200);
   const job = await upload.json();

@@ -10,6 +10,8 @@ const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_CHARS = 120000;
 // 표 선별은 문서 전체를 훑는다. 정규식이 도는 원문 자체에도 상한을 둔다.
 const SCAN_LIMIT = 600000;
+// 병합 요청이 쓰는 subrequest = 구간 수 + 작업/예산/결과 대여섯 개. 무료 한도 50에서 역산한다.
+const MAX_CHUNKS = 40;
 const CHUNK_SIZE = 5000;
 const OVERLAP = 600;
 const noticeOK = /^[A-Za-z0-9_-]{1,100}$/;
@@ -47,7 +49,9 @@ export function splitDocument(text) {
       start = end - OVERLAP;
     }
   }
-  if (chunks.length > 32) throw fail("분석할 요구사항 표가 많습니다. 문서를 나누어 올려 주세요.", 413);
+  // 상한은 최종 병합이 감당할 수 있는 양이다. 그 요청 하나가 구간 수만큼 R2를 읽고 작업·예산·
+  // 결과까지 만지므로, 무료 Worker의 요청당 subrequest 한도(50) 안에 들어와야 한다.
+  if (chunks.length > MAX_CHUNKS) throw fail("분석할 요구사항 표가 많습니다. 제안요청서를 나누어 올려 주세요.", 413);
   return chunks;
 }
 
@@ -133,10 +137,12 @@ export async function handleEcr(request, env) {
       } else text = await blob.text();
       stage = "prepare";
       const id = await hash(`${VERSION}\n${notice}\n${name}\n${text}`);
-      stage = "saveDocument";
       const existing = await env.DATA.get(keyOf(id));
       // 이미 저장된 구간 번호와 결과를 유지한다. 구형 작업도 표가 있는 구간부터 재개한다.
+      // 구간 나누기는 저장이 아니라 준비 단계다. 여기서 실패하면 "분석 문서 저장"이라고
+      // 잘못 알린다(SR-MaaS 본공고에서 실제로 그렇게 나왔다).
       const job = existing ? await existing.json() : { notice, name, chunks: splitDocument(text), focused: requirementSections(text).sections.length > 0 };
+      stage = "saveDocument";
       if (!existing) await env.DATA.put(keyOf(id), JSON.stringify(job));
       return json({ id, total: job.chunks.length, order: priorityOrder(job.chunks), focused: !!job.focused });
     }
@@ -161,7 +167,9 @@ export async function handleEcr(request, env) {
       const task = work.pending[0];
       const result = await runBudgeted(env, ECR_MODEL, {
         messages: [{ role: "system", content: system }, { role: "user", content: `${numberedSource(task.source)}\n/no_think` }],
-        response_format: { type: "json_schema", json_schema: schema }, temperature: 0, max_tokens: 4096,
+        // 모델은 규격 문장을 쓰지 않고 줄 번호만 돌려주므로 출력이 짧다. 예산은 출력 한도로
+        // 잡히니 한도를 낮추면 구간당 비용이 약 3분의 1 줄고, 그래도 잘리면 재분할이 받는다.
+        response_format: { type: "json_schema", json_schema: schema }, temperature: 0, max_tokens: 2048,
       }, (currentStage) => { stage = currentStage; });
       stage = "parse";
       if (result?.choices?.[0]?.finish_reason === "length") {
