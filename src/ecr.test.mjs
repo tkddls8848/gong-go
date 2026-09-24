@@ -111,16 +111,19 @@ test("무료 예산 소진 응답은 429이며 기존 결과를 덮어쓰지 않
   assert.deepEqual(await (await env.DATA.get("_ecr/notices/test.json")).json(), { old: true });
 });
 
-test("출력 한도 구간만 세분화하고 성공한 하위 구간은 다시 호출하지 않는다", async () => {
-  let calls = 0;
-  const env = { DATA: bucket(), AI: { run: async () => ++calls === 1 ? { choices: [{ finish_reason: "length" }] } : { response: { items: [] } } } };
+test("출력이 잘리면 한도를 먼저 올리고, 끝까지 모자랄 때만 구간을 나눈다", async () => {
+  const limits = [];
+  const env = { DATA: bucket(), AI: { run: async (model, options) => { limits.push(options.max_tokens); return limits.length <= 3 ? { choices: [{ finish_reason: "length" }] } : { response: { items: [] } }; } } };
   const job = await (await handleEcr(request({ action: "upload", notice: "test", name: "rfp.txt" }, "설명".repeat(500)), env)).json();
   const step = async () => (await handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "1" }), env)).json();
   assert.equal((await step()).retry, true);
   assert.equal((await step()).retry, true);
+  assert.equal((await step()).retry, true);
+  assert.deepEqual(limits, [2048, 4096, 8192], "한도를 두 배씩 올린 뒤에 나눈다");
+  assert.equal((await step()).retry, true, "나눈 앞부분을 먼저 끝낸다");
   assert.ok((await step()).analysis);
-  assert.ok((await step()).analysis);
-  assert.equal(calls, 3);
+  // 나눈 조각은 올려 둔 한도를 물려받아 사다리를 다시 타지 않는다. 성공한 조각은 재호출하지 않는다.
+  assert.deepEqual(limits.slice(3), [8192, 8192]);
 });
 
 test("재업로드는 이전 구간과 캐시를 보존하고 우선순위 순서의 마지막 요청에서 합친다", async () => {

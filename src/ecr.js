@@ -12,6 +12,9 @@ const MAX_CHARS = 120000;
 const SCAN_LIMIT = 600000;
 // 병합 요청이 쓰는 subrequest = 구간 수 + 작업/예산/결과 대여섯 개. 무료 한도 50에서 역산한다.
 const MAX_CHUNKS = 40;
+// 줄 번호만 받는 출력의 기본 한도와, 규격 행이 많은 표에서 두 배씩 올려 볼 상한.
+const OUTPUT_TOKENS = 2048;
+const OUTPUT_TOKENS_MAX = 8192;
 const CHUNK_SIZE = 5000;
 const OVERLAP = 600;
 const noticeOK = /^[A-Za-z0-9_-]{1,100}$/;
@@ -165,18 +168,28 @@ export async function handleEcr(request, env) {
       const savedWork = await env.DATA.get(workKey);
       const work = savedWork ? await savedWork.json() : { pending: [{ source: job.chunks[index], depth: 0 }], items: [] };
       const task = work.pending[0];
+      const budgetTokens = task.tokens || OUTPUT_TOKENS;
       const result = await runBudgeted(env, ECR_MODEL, {
         messages: [{ role: "system", content: system }, { role: "user", content: `${numberedSource(task.source)}\n/no_think` }],
-        // 모델은 규격 문장을 쓰지 않고 줄 번호만 돌려주므로 출력이 짧다. 예산은 출력 한도로
-        // 잡히니 한도를 낮추면 구간당 비용이 약 3분의 1 줄고, 그래도 잘리면 재분할이 받는다.
-        response_format: { type: "json_schema", json_schema: schema }, temperature: 0, max_tokens: 2048,
+        // 모델은 규격 문장을 쓰지 않고 줄 번호만 돌려주므로 보통은 짧게 끝난다. 예산이 출력
+        // 한도로 잡히니 기본을 낮게 두고, 모자라는 구간에서만 한도를 올린다.
+        response_format: { type: "json_schema", json_schema: schema }, temperature: 0, max_tokens: budgetTokens,
       }, (currentStage) => { stage = currentStage; });
       stage = "parse";
       if (result?.choices?.[0]?.finish_reason === "length") {
-        if (task.depth >= 3 || task.source.length < 500) throw fail("작게 나눈 표에서도 모델 출력이 잘렸습니다. 해당 표를 별도 파일로 나누어 분석해 주세요.", 422);
+        // 잘림은 출력이 모자란 것이지 입력이 큰 것이 아니다. 규격 행이 많은 표는 반으로 갈라도
+        // 양쪽이 다시 잘린다. 한도를 먼저 올려 보고, 끝까지 모자랄 때만 표를 나눈다.
+        if (budgetTokens < OUTPUT_TOKENS_MAX) {
+          work.pending[0] = { ...task, tokens: budgetTokens * 2 };
+          stage = "savePart";
+          await env.DATA.put(workKey, JSON.stringify(work));
+          return json({ retry: true, total: job.chunks.length, message: `출력이 잘려 ${index + 1}번째 구간을 더 넉넉한 한도로 다시 읽습니다.` });
+        }
+        if (task.depth >= 3 || task.source.length < 500) throw fail(`${index + 1}번째 구간은 한도를 끝까지 올리고 작게 나눠도 모델 출력이 잘립니다. 해당 표를 별도 파일로 나누어 분석해 주세요.`, 422);
         const middle = Math.floor(task.source.length / 2);
         const header = task.source.split("\n")[0].slice(0, 200);
-        work.pending.splice(0, 1, { source: task.source.slice(0, middle + 120), depth: task.depth + 1 }, { source: `${header}\n${task.source.slice(middle - 120)}`, depth: task.depth + 1 });
+        // 나눈 조각은 올려 둔 한도를 물려받는다. 기본값으로 되돌리면 같은 사다리를 다시 탄다.
+        work.pending.splice(0, 1, { source: task.source.slice(0, middle + 120), depth: task.depth + 1, tokens: budgetTokens }, { source: `${header}\n${task.source.slice(middle - 120)}`, depth: task.depth + 1, tokens: budgetTokens });
         stage = "savePart";
         await env.DATA.put(workKey, JSON.stringify(work));
         return json({ retry: true, total: job.chunks.length, message: "출력 한도에 맞춰 해당 구간을 더 작게 나누었습니다." });
