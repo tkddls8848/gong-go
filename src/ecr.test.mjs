@@ -27,6 +27,7 @@ function bucket() {
       if (onlyIf?.etagMatches && prior?.etag !== onlyIf.etagMatches || onlyIf?.etagDoesNotMatch === "*" && prior) return null;
       const value = { body, etag: String(++version) }; store.set(key, value); return value;
     },
+    async delete(key) { store.delete(key); },
   };
 }
 const request = (params, body, headers = {}) => new Request(`${ORIGIN}/api/ecr?${new URLSearchParams(params)}`, { method: "POST", body, headers: { Origin: ORIGIN, ...headers } });
@@ -158,4 +159,29 @@ test("스위치 규격도 줄 범위로 복원하고 분석 대상이 아닌 종
   assert.equal(item.장비요약[0].규격[0].값, "32Gbps 24포트 이상");
   result.response.items[0].kind = "랙";
   assert.throws(() => parseResult(result, text, "rfp", 0), /장비 형식/);
+});
+
+test("더 손쓸 수 없다고 판정한 구간은 다시 요청해도 모델을 부르지 않는다", async () => {
+  let calls = 0;
+  const env = { DATA: bucket(), AI: { run: async () => { calls++; return { choices: [{ finish_reason: "length" }] }; } } };
+  const job = await (await handleEcr(request({ action: "upload", notice: "test", name: "rfp.txt" }, "설명".repeat(120)), env)).json();
+  const step = () => handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "1" }), env);
+  await step(); await step();
+  const 한계 = await step();
+  assert.equal(한계.status, 422, "한도를 끝까지 올리고 더 나눌 수 없으면 실패로 끝낸다");
+  const 소모 = calls;
+  const 다시 = await step();
+  assert.equal(다시.status, 422);
+  assert.equal(calls, 소모, "판정을 남겼으므로 같은 추론을 되풀이하지 않는다");
+});
+
+test("같은 구간을 동시에 밀어도 모델은 한 번만 부른다", async () => {
+  let calls = 0;
+  const env = { DATA: bucket(), AI: { run: async () => { calls++; await new Promise((done) => setTimeout(done, 10)); return { response: { items: [] } }; } } };
+  const job = await (await handleEcr(request({ action: "upload", notice: "test", name: "rfp.md" }, source), env)).json();
+  const step = () => handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "0" }), env);
+  const 응답 = await Promise.all((await Promise.all([step(), step()])).map((response) => response.json()));
+  assert.equal(calls, 1, "뒤늦은 요청은 표식을 보고 되돌아간다");
+  assert.equal(응답.filter((body) => body.retry).length, 1, "한 요청만 되돌아온다");
+  assert.equal(응답.filter((body) => !body.retry).length, 1, "한 요청은 구간을 끝낸다");
 });

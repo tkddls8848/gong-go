@@ -525,6 +525,7 @@ function memoryData() {
       if (condition?.etagDoesNotMatch === "*" && prior) return null;
       const etag = String(++version); store.set(key, { value, etag }); return { etag };
     },
+    async delete(key) { store.delete(key); },
   };
 }
 
