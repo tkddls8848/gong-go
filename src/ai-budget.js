@@ -21,6 +21,24 @@ export async function reserveNeurons(bucket, amount, now = Date.now()) {
   }
   throw Object.assign(new Error("동시에 분석 요청이 많습니다. 잠시 후 다시 시도하세요."), { status: 409 });
 }
+// 예약은 출력 한도로 잡는다. 실제로는 그만큼 쓰지 않으므로, 공급자가 사용량을 알려주면
+// 차액만 장부에서 되돌린다. 되돌리지 않으면 하루 예산이 실제 사용보다 훨씬 빨리 닳아
+// 쓸 수 있는 뉴런을 남겨 둔 채 분석이 멈춘다.
+export async function settleNeurons(bucket, reserved, actual, now = Date.now()) {
+  const refund = Math.floor(reserved - actual);
+  if (!bucket || !(refund > 0)) return 0;
+  const date = new Date(now).toISOString().slice(0, 10);
+  const key = `_meta/ai-budget/${date}.json`;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const prior = await bucket.get(key);
+    if (!prior) return 0;
+    const used = (await prior.json()).reserved;
+    if (!Number.isFinite(used) || used < refund) return 0;
+    const stored = await bucket.put(key, JSON.stringify({ date, reserved: used - refund }), { onlyIf: { etagMatches: prior.etag } });
+    if (stored) return refund;
+  }
+  return 0;
+}
 export async function runBudgeted(env, model, options, onStage = () => {}) {
   const rates = RATES[model];
   if (!rates) throw new Error("무료 예산에 등록되지 않은 모델입니다.");
@@ -31,5 +49,14 @@ export async function runBudgeted(env, model, options, onStage = () => {}) {
   await reserveNeurons(env.DATA, amount);
   // 실패/시간 초과에도 반환하지 않는다. 실제 추론 비용이 이미 발생했을 수 있다.
   onStage("inference");
-  return env.AI.run(model, options);
+  const result = await env.AI.run(model, options);
+  // 공급자가 센 토큰만 믿는다. 없거나 이상하면 예약을 그대로 둔다 — 덜 쓴 것이 확실할 때만
+  // 되돌린다. 되돌릴 때도 예약에 넣었던 25% 여유분은 남긴다.
+  const usage = result?.usage;
+  const input = Number(usage?.prompt_tokens), output = Number(usage?.completion_tokens);
+  if (Number.isFinite(input) && Number.isFinite(output) && input >= 0 && output >= 0) {
+    const spent = Math.ceil((input * rates[0] + output * rates[1]) / 1e6 * 1.25);
+    await settleNeurons(env.DATA, amount, spent);
+  }
+  return result;
 }

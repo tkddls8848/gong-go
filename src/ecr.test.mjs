@@ -185,3 +185,22 @@ test("같은 구간을 동시에 밀어도 모델은 한 번만 부른다", asyn
   assert.equal(응답.filter((body) => body.retry).length, 1, "한 요청만 되돌아온다");
   assert.equal(응답.filter((body) => !body.retry).length, 1, "한 요청은 구간을 끝낸다");
 });
+
+test("실제 사용량이 보고되면 예약해 둔 차액을 장부에서 되돌린다", async () => {
+  const store = bucket();
+  const 예산키 = `_meta/ai-budget/${new Date().toISOString().slice(0, 10)}.json`;
+  const env = { DATA: store, AI: { run: async () => ({ response: { items: [] }, usage: { prompt_tokens: 900, completion_tokens: 120 } }) } };
+  await runBudgeted(env, ECR_MODEL, { messages: [], max_tokens: 2048 });
+  const 장부 = await (await store.get(예산키)).json();
+  assert.ok(장부.reserved > 0, "쓴 만큼은 남는다");
+  assert.ok(장부.reserved < 20, `출력 한도로 잡은 예약이 실제 사용량으로 줄어든다(현재 ${장부.reserved})`);
+});
+
+test("사용량이 없거나 이상하면 예약을 그대로 둔다", async () => {
+  const store = bucket();
+  const 예산키 = `_meta/ai-budget/${new Date().toISOString().slice(0, 10)}.json`;
+  const env = { DATA: store, AI: { run: async () => ({ response: { items: [] }, usage: { prompt_tokens: "많음" } }) } };
+  await runBudgeted(env, ECR_MODEL, { messages: [], max_tokens: 2048 });
+  const 장부 = await (await store.get(예산키)).json();
+  assert.ok(장부.reserved > 50, "덜 썼다는 증거가 없으면 되돌리지 않는다");
+});
