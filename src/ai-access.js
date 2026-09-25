@@ -2,7 +2,9 @@
 const COOKIE = "gong_ai_access";
 const LIFETIME = 30 * 60 * 1000;
 const enc = new TextEncoder();
-const configured = (env) => typeof env.AI_ANALYSIS_PASSWORD === "string" && env.AI_ANALYSIS_PASSWORD.length >= 16;
+// 위쪽 한도는 아래 passwordBody가 받는 길이와 같아야 한다. 어긋나면 설정은 되었다고
+// 표시되는데 맞는 비밀번호로도 잠금이 풀리지 않는다.
+const configured = (env) => typeof env.AI_ANALYSIS_PASSWORD === "string" && env.AI_ANALYSIS_PASSWORD.length >= 16 && env.AI_ANALYSIS_PASSWORD.length <= 512;
 const reply = (data, status = 200, headers = {}) => Response.json(data, { status, headers: { "Cache-Control": "no-store", ...headers } });
 const hex = (bytes) => [...new Uint8Array(bytes)].map((n) => n.toString(16).padStart(2, "0")).join("");
 async function signingKey(secret) { return crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]); }
@@ -55,8 +57,11 @@ export async function handleAiAccess(request, env) {
     const now = Date.now();
     const ip = request.headers.get("CF-Connecting-IP") || "unknown";
     const ipHash = hex(await crypto.subtle.digest("SHA-256", enc.encode(ip)));
-    if (!await attemptLimit(env.DATA, `_meta/ai-access/ip-${ipHash}.json`, 5, now) || !await attemptLimit(env.DATA, "_meta/ai-access/global.json", 50, now)) {
-      return reply({ message: "잠금 해제 시도가 너무 많습니다. 10분 후 다시 시도하세요." }, 429, { "Retry-After": "600" });
+    // 전역 한도는 게이트를 이미 지난 사람들이 함께 쓴다. 한 사람의 오타가 남의 잠금까지
+    // 막지 않도록 IP 한도보다 넉넉히 둔다. 남은 시간은 실제 창이 끝나는 시각으로 알린다.
+    const remain = Math.ceil((600000 - now % 600000) / 1000);
+    if (!await attemptLimit(env.DATA, `_meta/ai-access/ip-${ipHash}.json`, 5, now) || !await attemptLimit(env.DATA, "_meta/ai-access/global.json", 200, now)) {
+      return reply({ message: `잠금 해제 시도가 너무 많습니다. ${Math.ceil(remain / 60)}분 후 다시 시도하세요.` }, 429, { "Retry-After": String(remain) });
     }
     const body = await passwordBody(request);
     if (typeof body.password !== "string" || body.password.length > 512) return reply({ message: "비밀번호가 올바르지 않습니다." }, 403);

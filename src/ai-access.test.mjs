@@ -60,3 +60,11 @@ test("사이트 로그인만 한 자연어 검색은 뉴런 없이 규칙 기반
   assert.equal(response.status, 200);
   assert.equal((await response.json()).source, "rule");
 });
+test("설정 한도와 입력 한도가 어긋나 잠금을 못 푸는 비밀번호는 미설정으로 본다", async () => {
+  const env = envOf();
+  env.AI_ANALYSIS_PASSWORD = "가".repeat(513);
+  const state = await (await handleAiAccess(req("/api/ai-access", "GET"), env)).json();
+  assert.equal(state.configured, false, "제출할 수 없는 길이는 설정된 것으로 알리지 않는다");
+  const 시도 = await handleAiAccess(req("/api/ai-access", "POST", { password: env.AI_ANALYSIS_PASSWORD }), env);
+  assert.equal(시도.status, 403);
+});
