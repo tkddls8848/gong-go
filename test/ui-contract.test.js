@@ -252,3 +252,76 @@ test("내려받은 CSV는 머리글과 칸 수가 같다", () => {
   // 사전공고는 API가 상세 링크를 주지 않으므로 빈 칸이어야 한다(undefined가 아니라).
   assert.equal(rows[2][link], "");
 });
+
+test("결과 요약이 쓰는 클래스는 style.css에 모두 규칙이 있다", () => {
+  // equipment.js는 HTML을 문자열로 짜므로 클래스 이름을 고쳐도 아무 데서도 터지지 않는다.
+  // 스타일만 조용히 빠져 테두리 없는 맨 글자가 나온다. 여기서 이름 두 벌을 맞춰 둔다.
+  const EQUIPMENT = read("equipment.js");
+  const used = new Set([...EQUIPMENT.matchAll(/class="([^"$]+)"/g)].flatMap((match) => match[1].split(" ")).filter(Boolean));
+  const missing = [...used].filter((name) => !CSS.includes(`.${name}`));
+  assert.deepEqual(missing, [], `style.css에 규칙이 없는 클래스: ${missing.join(", ")}`);
+});
+
+test("좁은 화면의 카드 목록 규칙은 결과 표 안에만 건다", () => {
+  // `table, tbody, tr, td { display: block }`을 전역으로 걸면 모달의 규격 표까지 블록이 되어
+  // 항목과 값이 서로 다른 줄로 흩어지고, td:nth-child 자리 바꾸기가 엉뚱한 칸에 걸린다.
+  // 결과 표는 .table-scroll 안에만 있으므로 거기까지만 미친다.
+  const start = CSS.indexOf("@media (max-width: 700px)");
+  assert.notEqual(start, -1, "좁은 화면 블록이 없다");
+  const narrow = CSS.slice(start);
+  assert.match(narrow, /\.table-scroll table, \.table-scroll tbody, \.table-scroll tr, \.table-scroll td \{ display: block/);
+  assert.match(narrow, /\.table-scroll thead \{ display: none/);
+  assert.match(narrow, /\.table-scroll td \{ width: auto !important/);
+  for (const stray of [/^\s*table, tbody, tr, td \{/m, /^\s*thead \{ display: none/m, /^\s*td \{ width: auto/m, /^\s*td:nth-child\(/m]) {
+    assert.ok(!stray.test(narrow), `좁은 화면 규칙이 결과 표 밖까지 걸린다: ${stray}`);
+  }
+});
+
+test("360px에서 장비 규격 표는 가로로 넘치지 않고 줄로 눕는다", () => {
+  // .nested-spec은 세 열이다. 360px 화면에서 모달 안쪽은 300px 남짓이라 그대로 두면 값이
+  // 한두 글자씩 끊긴다. min-width를 풀고 항목 위·값 아래로 눕힌다.
+  const tiny = CSS.indexOf("@media (max-width: 560px)");
+  assert.notEqual(tiny, -1, "아주 좁은 화면 블록이 없다");
+  // 두 블록이 함께 걸리는 폭이라 뒤에 와야 이긴다. 앞에 두면 700px 블록에 그대로 덮인다.
+  assert.ok(tiny > CSS.indexOf("@media (max-width: 700px)"), "560px 블록이 700px 블록보다 앞에 있다");
+  const rules = CSS.slice(tiny);
+  assert.match(rules, /\.equipment-card table \{ min-width: 0/);
+  assert.match(rules, /\.equipment-card \.nested-spec[^{]*\{ display: block/);
+  assert.match(rules, /\.equipment-card \.nested-spec thead \{ display: none/);
+  // 기본규격 표는 첫 칸이 머리글이 아니라 값이라, 눕히면 어느 칸이 무엇이었는지 사라진다.
+  // 그쪽은 .ecr-scroll 안에서 옆으로 미는 쪽으로 둔다 — 눕히는 것은 장비 카드 안뿐이다.
+  assert.ok(!/^\s*\.nested-spec[^{]*\{ display: block/m.test(rules), "기본규격 표까지 눕히면 칸의 뜻이 사라진다");
+});
+
+test("모달 안의 기본규격 표도 가로 스크롤 상자 안에 있다", () => {
+  const { specTable } = evaluate("specTable", "html");
+  const rendered = specTable([{ 구분: "서버", 항목: "CPU", 요구사항: "16코어 이상", 수량: "2대" }]);
+  assert.match(rendered, /<div class="ecr-scroll"><table class="nested-spec">/);
+  assert.match(rendered, /<\/table><\/div>$/, "표가 스크롤 상자 밖에서 끝난다");
+  assert.equal(specTable([]), "");
+});
+
+test("제외된 규격의 사유는 요약 상자에만 두고 경고 묶음에서는 뺀다", () => {
+  // EquipmentSummary가 결과 머리에 전용 상자로 세어 모은다. 여기서도 내면 같은 문장이 두 번
+  // 나오고, 정작 확인해야 할 다른 불확실 메시지가 그 사이에 묻힌다.
+  let captured = "";
+  const content = { set innerHTML(value) { captured = value; } };
+  const run = new Function("$", "html", "document", "specTable", `${sourceOf("renderEcr")}\nreturn renderEcr;`)(
+    () => content,
+    (value) => String(value ?? ""),
+    { querySelectorAll: () => [] },
+    () => "",
+  );
+  run({ 누락: ["ECR-010"], verification: { errors: ["ECR-002 수량 불일치"] }, ecr: [{ id: "ECR-001", 불확실: ["CPU를 원문에서 확인하지 못해 제외함", "쪽 번호가 어긋남"] }] });
+  assert.ok(!captured.includes("제외함"), "제외 사유가 경고 묶음에 또 나온다");
+  assert.ok(captured.includes("쪽 번호가 어긋남"), "제외가 아닌 불확실 메시지는 그대로 남아야 한다");
+  assert.ok(captured.includes("ECR-002 수량 불일치"), "검증 오류는 그대로 남아야 한다");
+  assert.ok(captured.includes("누락: ECR-010"), "누락 안내는 그대로 남아야 한다");
+});
+
+test("원문 상자는 띄어쓰기 없이 이어진 긴 문장도 상자 안에서 끊는다", () => {
+  // 제안요청서 원문에는 공백 없이 이어지는 규격 문자열이 흔하다. white-space: pre-wrap만
+  // 두면 그런 줄이 상자를 밀고 나가 360px에서 모달 전체가 가로로 흐른다.
+  assert.match(CSS, /\.detail-text \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere/);
+  assert.match(CSS, /\.equipment-card h4 \{[^}]*overflow-wrap: anywhere/);
+});

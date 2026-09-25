@@ -279,7 +279,7 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
 .ecr-scroll { overflow-x: auto; }
 .equipment-summary h3 { margin: 20px 0 10px; font-size: 15px; }
 .equipment-card { margin: 12px 0; padding: 14px; border: 1px solid var(--border); border-radius: 9px; }
-.equipment-card h4 { margin: 0; font-size: 14px; }
+.equipment-card h4 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
 .equipment-card small { color: var(--muted); font-weight: normal; }
 .equipment-card table { min-width: 480px; table-layout: auto; }
 .equipment-card td { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -294,7 +294,7 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
 #ai-unlock-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 #ai-password { max-width: 100%; }
 .ecr-table { min-width: 620px; table-layout: auto; }
-.ecr-table th, .ecr-table td { width: auto; font-family: inherit; font-size: 12.5px; color: var(--text-2); }
+.ecr-table th, .ecr-table td { width: auto; font-family: inherit; font-size: 12.5px; color: var(--text-2); text-align: left; }
 .ecr-table th { font-size: 11px; letter-spacing: 0.04em; }
 .ecr-table td:nth-child(1) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
 .ecr-table td:nth-child(3) { color: var(--text); font-weight: 500; }
@@ -302,11 +302,41 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
 .ecr-detail td { padding: 4px 10px 18px; }
 .ecr-detail p { margin: 0; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; }
 .ecr-detail p + p { margin-top: 14px; }
-.detail-text { margin-top: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-input); color: var(--text-2); font-size: 12.5px; line-height: 1.75; white-space: pre-wrap; }
+.detail-text { margin-top: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-input); color: var(--text-2); font-size: 12.5px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 .nested-spec { width: 100%; margin-top: 8px; table-layout: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-input); }
 .nested-spec th, .nested-spec td { width: auto; padding: 8px 10px; font-family: inherit; font-size: 12px; white-space: normal; }
 .nested-spec th { padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .nested-spec td { border-bottom: 1px solid var(--line-weak); color: var(--text-2); }
+.equipment-summaries { margin-top: 14px; }
+/* 결과 머리의 종류별 건수. 0건인 종류도 0으로 남긴다 — 빠뜨린 것인지 없는 것인지가 거기서 갈린다. */
+.equipment-counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 0; }
+.equipment-count { display: inline-flex; align-items: baseline; gap: 6px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-input); color: var(--text-2); font-size: 12px; }
+.equipment-count strong { color: var(--text); font-size: 14px; font-variant-numeric: tabular-nums; }
+.equipment-count.zero, .equipment-count.zero strong { color: var(--faint); }
+.equipment-count.check { border-color: var(--warn-line); background: var(--warn-bg); }
+.equipment-count.check, .equipment-count.check strong { color: var(--warn); }
+/* 확인 필요가 하나도 없으면 경고가 아니라 결과다. 노랑을 그대로 두면 늘 켜진 경고등이 된다. */
+.equipment-count.check.zero { border-color: var(--ok-line); background: var(--ok-bg); }
+.equipment-count.check.zero, .equipment-count.check.zero strong { color: var(--ok); }
+/* 확인 불가로 뺀 규격. 표에 없는 것이 무엇인지 함께 보여야 표를 믿을 수 있다. */
+.excluded-specs { margin: 16px 0 0; padding: 13px 15px; border: 1px solid var(--warn-line); border-left-width: 3px; border-radius: 9px; background: var(--warn-bg); }
+.excluded-specs h3 { margin: 0; color: var(--warn); font-size: 13px; font-weight: 600; }
+.excluded-specs ul { margin: 9px 0 0; padding-left: 17px; color: var(--text-2); font-size: 12px; line-height: 1.75; }
+.excluded-specs li { overflow-wrap: anywhere; }
+.excluded-specs strong { margin-right: 5px; color: var(--warn); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+.excluded-note { margin: 10px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.7; }
+/* 검증 상태는 줄 표식·배지·줄 바탕 셋으로 가른다. 값 뒤 작은 글씨 하나뿐이면 훑을 때 그냥 지나간다. */
+.spec-row { border-left: 3px solid var(--line-weak); }
+.spec-row.verified { border-left-color: var(--ok-dot); }
+.spec-row.unverified { border-left-color: var(--warn-dot); background: var(--warn-bg); }
+.spec-row.missing td { color: var(--faint); }
+.nested-spec thead tr { border-left: 3px solid transparent; }
+.spec-value { overflow-wrap: anywhere; }
+.spec-mark { display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 17px; white-space: nowrap; }
+.spec-mark.ok { border: 1px solid var(--ok-line); background: var(--ok-bg); color: var(--ok); }
+.spec-mark.warn { border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn); }
+.equipment-tally { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0 0; }
+.equipment-tally .spec-mark { margin-left: 0; }
 
 /* ── 좁은 화면 ────────────────────────────────────────────────────────────
    레일은 서랍이 되고 표는 카드 목록이 된다. 열이 여섯이라 가로 스크롤로는 사업명을
@@ -328,24 +358,47 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
      통째로 화면 밖으로 나가 본문이 가로로 흐르던 자리다. 여기서는 칸 안에서 접히게 둔다. */
   .filter-date { flex-wrap: wrap; height: auto; padding: 7px 10px; row-gap: 4px; }
   .date-today { margin-left: auto; border-left: 0; }
-  table, tbody, tr, td { display: block; }
-  thead { display: none; }
-  table { table-layout: auto; }
-  tbody tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding: 14px 2px; border-bottom: 1px solid var(--line-weak); }
-  tbody tr:hover { background: none; }
-  td { width: auto !important; padding: 0; border: 0; }
-  td:nth-child(1) { order: 1; flex: 1 1 auto; font-size: 11px; }
-  td:nth-child(4) { order: 2; flex: 1 1 100%; margin: 6px 0 0; }
-  td:nth-child(3) { order: 3; margin-top: 6px; color: var(--text-2); }
-  td:nth-child(2) { order: 4; margin-top: 6px; color: var(--muted); }
-  td:nth-child(2)::before { content: "· "; }
-  td:nth-child(5) { order: 5; margin: 6px 0 0 auto; color: var(--muted); font-size: 12px; }
-  td:nth-child(6) { order: 6; margin-top: 6px; color: var(--muted); font-size: 12px; }
-  td:nth-child(6)::before { content: "· "; }
+  /* 이 블록의 카드 목록 규칙은 .table-scroll 안에서만 돈다. 전역으로 걸면 모달의 규격 표까지
+     블록이 되어 항목과 값이 서로 다른 줄로 흩어지고, td:nth-child 자리 바꾸기가 엉뚱한 칸에 걸린다. */
+  .table-scroll table, .table-scroll tbody, .table-scroll tr, .table-scroll td { display: block; }
+  .table-scroll thead { display: none; }
+  .table-scroll table { table-layout: auto; }
+  .table-scroll tbody tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding: 14px 2px; border-bottom: 1px solid var(--line-weak); }
+  .table-scroll tbody tr:hover { background: none; }
+  .table-scroll td { width: auto !important; padding: 0; border: 0; }
+  .table-scroll td:nth-child(1) { order: 1; flex: 1 1 auto; font-size: 11px; }
+  .table-scroll td:nth-child(4) { order: 2; flex: 1 1 100%; margin: 6px 0 0; }
+  .table-scroll td:nth-child(3) { order: 3; margin-top: 6px; color: var(--text-2); }
+  .table-scroll td:nth-child(2) { order: 4; margin-top: 6px; color: var(--muted); }
+  .table-scroll td:nth-child(2)::before { content: "· "; }
+  .table-scroll td:nth-child(5) { order: 5; margin: 6px 0 0 auto; color: var(--muted); font-size: 12px; }
+  .table-scroll td:nth-child(6) { order: 6; margin-top: 6px; color: var(--muted); font-size: 12px; }
+  .table-scroll td:nth-child(6)::before { content: "· "; }
   .title-link { font-size: 15px; }
-  .empty { padding: 56px 8px 60px; }
+  .table-scroll td.empty { padding: 56px 8px 60px; }
   .modal-backdrop { padding: 0; }
   .modal { max-height: 100vh; height: 100%; border: 0; border-radius: 0; }
   .modal-footer { flex-wrap: wrap; }
   .pagination { justify-content: space-between; }
+}
+
+/* ── 아주 좁은 화면 ───────────────────────────────────────────────────────
+   장비 규격 표는 세 열이다. 360px에 밀어 넣으면 값이 한두 글자씩 끊겨 읽을 수 없으므로
+   여기서만 줄로 눕힌다 — 항목이 위, 값과 근거가 아래로 온다. 기본규격 표(네 열)는 첫 칸이
+   머리글이 아니라 값이라 눕히면 뜻이 사라져, .ecr-scroll 안에서 옆으로 미는 쪽으로 둔다. */
+@media (max-width: 560px) {
+  .modal { padding: 18px 14px 16px; }
+  .equipment-card { padding: 12px 11px; }
+  .equipment-card table { min-width: 0; }
+  .equipment-card .nested-spec, .equipment-card .nested-spec tbody, .equipment-card .nested-spec tr, .equipment-card .nested-spec th, .equipment-card .nested-spec td { display: block; }
+  .equipment-card .nested-spec thead { display: none; }
+  .equipment-card .nested-spec tr { padding: 9px 11px; border-bottom: 1px solid var(--line-weak); }
+  .equipment-card .nested-spec tbody tr:last-child { border-bottom: 0; }
+  .equipment-card .nested-spec th, .equipment-card .nested-spec td { padding: 0; border-bottom: 0; }
+  .equipment-card .nested-spec th { color: var(--muted); font-size: 11px; letter-spacing: 0.04em; }
+  .equipment-card .nested-spec td:first-of-type { margin-top: 4px; }
+  .equipment-card .nested-spec td + td { margin-top: 6px; }
+  .equipment-counts { gap: 6px; }
+  .equipment-count { padding: 4px 10px; }
+  .spec-mark { margin-left: 6px; }
 }
