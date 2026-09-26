@@ -186,6 +186,125 @@ test("같은 구간을 동시에 밀어도 모델은 한 번만 부른다", asyn
   assert.equal(응답.filter((body) => !body.retry).length, 1, "한 요청은 구간을 끝낸다");
 });
 
+test("빈 모델 결과를 병합하면 원문 대상 번호를 누락으로 저장한다", async () => {
+  const env = { DATA: bucket(), AI: { run: async () => ({ response: { items: [] } }) } };
+  const job = await (await handleEcr(request({ action: "upload", notice: "missing", name: "rfp.md" }, source), env)).json();
+  const response = await handleEcr(request({ action: "step", id: job.id, index: 0 }), env);
+  const { analysis } = await response.json();
+  assert.deepEqual(analysis.누락, ["ECR-001"]);
+  assert.equal(analysis.coverage.status, "partial");
+  assert.equal(analysis.verified, false);
+  const saved = await (await env.DATA.get("_ecr/notices/missing.json")).json();
+  assert.deepEqual(saved.누락, ["ECR-001"]);
+});
+
+test("잠금 취득 전에 다른 요청이 끝나면 캐시를 다시 읽어 추론하지 않는다", async () => {
+  let calls = 0;
+  const env = { DATA: bucket(), AI: { run: async () => { calls++; return modelResult(); } } };
+  const job = await (await handleEcr(request({ action: "upload", notice: "race", name: "rfp.md" }, source), env)).json();
+  const step = () => handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "0" }), env);
+  const get = env.DATA.get.bind(env.DATA);
+  let intercepted = false;
+  env.DATA.get = async (key) => {
+    const snapshot = await get(key);
+    if (!intercepted && key.includes("/parts/")) {
+      intercepted = true;
+      assert.equal((await step()).status, 200);
+    }
+    return snapshot;
+  };
+  assert.equal((await step()).status, 200);
+  assert.equal(calls, 1);
+});
+
+test("이전 요청의 종료는 새 소유자의 잠금을 지우지 않는다", async () => {
+  const env = { DATA: bucket(), AI: {} };
+  const job = await (await handleEcr(request({ action: "upload", notice: "owner", name: "rfp.md" }, source), env)).json();
+  const key = `_ecr/lease/${job.id}/0.json`;
+  env.AI.run = async () => {
+    await env.DATA.put(key, JSON.stringify({ at: Date.now(), owner: "successor" }));
+    throw new Error("provider unavailable");
+  };
+  const result = await handleEcr(request({ action: "step", id: job.id, index: 0 }), env);
+  assert.ok(result.status >= 400);
+  assert.equal((await (await env.DATA.get(key)).json()).owner, "successor");
+});
+
+test("완료 결과를 저장할 때까지 잠금을 유지한다", async () => {
+  const data = bucket();
+  const env = { DATA: data, AI: { run: async () => modelResult() } };
+  const job = await (await handleEcr(request({ action: "upload", notice: "save-order", name: "rfp.md" }, source), env)).json();
+  const put = data.put.bind(data);
+  let checked = false;
+  data.put = async (key, body, options) => {
+    if (key.includes("/parts/")) {
+      checked = true;
+      assert.ok((await (await data.get(`_ecr/lease/${job.id}/0.json`)).json()).at > 0);
+    }
+    return put(key, body, options);
+  };
+  assert.equal((await handleEcr(request({ action: "step", id: job.id, index: 0 }), env)).status, 200);
+  assert.ok(checked);
+});
+
+test("잠금 해제 장애가 나도 저장된 결과는 재추론 없이 조회한다", async () => {
+  const data = bucket(); let calls = 0;
+  const env = { DATA: data, AI: { run: async () => { calls++; return modelResult(); } } };
+  const job = await (await handleEcr(request({ action: "upload", notice: "release-failure", name: "rfp.md" }, source), env)).json();
+  const put = data.put.bind(data);
+  data.put = async (key, body, options) => {
+    if (key.includes("/lease/") && JSON.parse(body).at === 0) throw new Error("release unavailable");
+    return put(key, body, options);
+  };
+  const step = () => handleEcr(request({ action: "step", id: job.id, index: 0 }), env);
+  assert.equal((await step()).status, 200);
+  assert.equal((await step()).status, 200);
+  assert.equal(calls, 1);
+});
+
+test("잠금이 만료된 후 돌아온 모델 응답은 완료 결과로 저장하지 않는다", async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, "now", () => now);
+  const env = { DATA: bucket(), AI: { run: async () => { now += 180001; return modelResult(); } } };
+  const job = await (await handleEcr(request({ action: "upload", notice: "expired", name: "rfp.md" }, source), env)).json();
+  const result = await handleEcr(request({ action: "step", id: job.id, index: 0 }), env);
+  assert.equal(result.status, 409);
+  assert.equal(await env.DATA.get(`_ecr/parts/${job.id}/0.json`), null);
+});
+
+test("정산 저장 장애는 성공한 모델 응답을 버리지 않는다", async () => {
+  const data = bucket();
+  const put = data.put.bind(data);
+  const result = { response: { items: [] }, usage: { prompt_tokens: 1, completion_tokens: 1 } };
+  const env = { DATA: data, AI: { run: async () => {
+    data.put = async () => { throw new Error("storage unavailable"); };
+    return result;
+  } } };
+  assert.equal(await runBudgeted(env, ECR_MODEL, { messages: [], max_tokens: 2048 }), result);
+  data.put = put;
+  assert.ok((await (await data.get(`_meta/ai-budget/${new Date().toISOString().slice(0, 10)}.json`)).json()).reserved > 50);
+});
+
+test("자정을 넘긴 추론의 정산은 예약 날짜에만 적용된다", async (t) => {
+  let now = Date.parse("2026-09-22T23:59:59Z");
+  t.mock.method(Date, "now", () => now);
+  const data = bucket();
+  const nextDay = now + 2000;
+  await reserveNeurons(data, 1000, nextDay);
+  await runBudgeted({ DATA: data, AI: { run: async () => {
+    now = nextDay;
+    return { usage: { prompt_tokens: 1, completion_tokens: 1 } };
+  } } }, ECR_MODEL, { messages: [], max_tokens: 2048 });
+  assert.equal((await (await data.get("_meta/ai-budget/2026-09-23.json")).json()).reserved, 1000);
+  assert.ok((await (await data.get("_meta/ai-budget/2026-09-22.json")).json()).reserved < 20);
+});
+
+test("null 사용량을 0으로 간주해 예약을 반환하지 않는다", async () => {
+  const data = bucket();
+  await runBudgeted({ DATA: data, AI: { run: async () => ({ usage: { prompt_tokens: null, completion_tokens: null } }) } }, ECR_MODEL, { messages: [], max_tokens: 2048 });
+  assert.ok((await (await data.get(`_meta/ai-budget/${new Date().toISOString().slice(0, 10)}.json`)).json()).reserved > 50);
+});
+
 test("실제 사용량이 보고되면 예약해 둔 차액을 장부에서 되돌린다", async () => {
   const store = bucket();
   const 예산키 = `_meta/ai-budget/${new Date().toISOString().slice(0, 10)}.json`;

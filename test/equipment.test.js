@@ -1,6 +1,69 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { render } = require("../public/equipment");
+
+test("구형 항목 하나 때문에 함께 저장된 신형 장비 요약을 숨기지 않는다", () => {
+  const data = { schemaVersion: 2, verified: true, ecr: [
+    { id: "ECR-OLD", 명칭: "<기존 장비>", 기본규격: [{ 수량: "2대" }], 불확실: ["수량을 확인하지 못해 제외함"] },
+    { id: "ECR-NEW", 장비요약: [{ 종류: "서버", 명칭: "신형 서버", 규격: [{ 항목: "메모리", 값: "256GB", 근거: "메모리 256GB", 검증: "원문 확인" }] }] },
+  ] };
+  const snapshot = JSON.stringify(data);
+  const output = render(data);
+  assert.match(output, /장비 요약 형식이 없는 요구사항 1건/);
+  assert.match(output, /ECR-OLD · &lt;기존 장비&gt;/);
+  assert.match(output, /서버 <strong>1<\/strong>/);
+  assert.match(output, /메모리 256GB/);
+  assert.match(output, /확인 불가로 제외된 규격 1건/);
+  assert.match(output, /추출된 스토리지 항목이 없습니다\. 분석이 미검증/);
+  assert.equal(JSON.stringify(data), snapshot);
+});
+
+test("모두 구형이면 대상 목록과 원문 안내를 보이며 장비 0건으로 집계하지 않는다", () => {
+  const output = render({ schemaVersion: 2, ecr: [{ id: "ECR-OLD" }, { 명칭: "기존 장비" }] });
+  assert.match(output, /장비 요약 형식이 없는 요구사항 2건/);
+  assert.match(output, /ID 없음 · 기존 장비/);
+  assert.match(output, /기존 ECR 원문은 아래/);
+  assert.ok(!output.includes("equipment-count"));
+});
+
+test("알 수 없는 저장 장비 종류도 규격·근거를 보존하고 별도 분류 경고를 표시한다", () => {
+  const data = { schemaVersion: 2, ecr: [{ id: "ECR-001", 장비요약: [
+    { 종류: "서버", 명칭: "웹서버", 규격: [] },
+    { 종류: "<img src=x onerror=alert(1)>", 명칭: "기존 장비", 규격: [{ 항목: "포트", 값: "24개", 근거: "포트 24개", 검증: "확인 필요" }] },
+  ] }] };
+  const before = JSON.stringify(data);
+  const output = render(data);
+  assert.match(output, /분류 확인 필요 <strong>1<\/strong>/);
+  assert.match(output, /서버 <strong>1<\/strong>/);
+  assert.match(output, /자동 재분류하지 않았습니다/);
+  assert.match(output, /저장된 종류: &lt;img/);
+  assert.ok(!output.includes("<img"));
+  assert.match(output, /포트 24개/);
+  assert.equal((output.match(/<article class="equipment-card">/g) || []).length, 2);
+  assert.equal(JSON.stringify(data), before);
+});
+
+test("종류 누락·공백·프로토타입 속성명도 정상 장비로 오인하거나 숨기지 않는다", () => {
+  for (const 종류 of [undefined, "", " ", "toString", "__proto__"]) {
+    const output = render({ schemaVersion: 2, ecr: [{ 장비요약: [{ 종류, 규격: [] }] }] });
+    assert.match(output, /분류 확인 필요 <strong>1<\/strong>/);
+    assert.equal((output.match(/<article class="equipment-card">/g) || []).length, 1);
+  }
+  assert.ok(!render({ schemaVersion: 2, ecr: [] }).includes("분류 확인 필요"));
+});
+
+test("빈 분석은 검증 플래그와 무관하게 원문 확인을 안내한다", () => {
+  const output = render({ schemaVersion: 2, verified: true, ecr: [] });
+  assert.match(output, /미검증 상태이므로 원문 확인/);
+  assert.match(output, /추출 0건은 장비 요구사항이 없다는 뜻이 아닙니다/);
+});
+
+test("요약은 번호 대조 범위와 미추출 건수를 완전성 검증과 구분한다", () => {
+  const html = render({ schemaVersion: 2, ecr: [], coverage: { expectedIds: ["ECR-001", "ECR-002"], matchedIds: ["ECR-001"], missingIds: ["ECR-002"] } });
+  assert.match(html, /분석 대상 번호 2개 중 유효 규격 추출 1개 · 미추출 1개/);
+  assert.match(html, /규격 전체의 완전성을 보증하지 않습니다/);
+  assert.match(render({ schemaVersion: 2, ecr: [] }), /추출 0건은 장비 요구사항이 없다는 뜻이 아닙니다/);
+});
 test("구형 결과는 장비 없음으로 오인하지 않고 재분석 안내를 표시한다", () => {
   assert.match(render({ schemaVersion: 1, ecr: [{}] }), /재분석/);
 });

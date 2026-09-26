@@ -299,6 +299,8 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
 .ecr-table td:nth-child(1) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
 .ecr-table td:nth-child(3) { color: var(--text); font-weight: 500; }
 .ecr-row { cursor: pointer; } .ecr-row.expanded, .ecr-row.expanded + .ecr-detail td { background: var(--bg-hover); }
+.ecr-detail-toggle { background: none; border: 0; color: var(--text); font: inherit; text-decoration: underline; cursor: pointer; padding: 6px 2px; }
+.ecr-detail-toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .ecr-detail td { padding: 4px 10px 18px; }
 .ecr-detail p { margin: 0; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; }
 .ecr-detail p + p { margin-top: 14px; }

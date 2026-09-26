@@ -46,17 +46,23 @@ export async function runBudgeted(env, model, options, onStage = () => {}) {
   const bytes = new TextEncoder().encode(JSON.stringify(options)).length + 1024;
   const amount = Math.ceil((bytes * rates[0] + options.max_tokens * rates[1]) / 1e6 * 1.25);
   onStage("budget");
-  await reserveNeurons(env.DATA, amount);
+  const reservation = await reserveNeurons(env.DATA, amount);
   // 실패/시간 초과에도 반환하지 않는다. 실제 추론 비용이 이미 발생했을 수 있다.
   onStage("inference");
   const result = await env.AI.run(model, options);
   // 공급자가 센 토큰만 믿는다. 없거나 이상하면 예약을 그대로 둔다 — 덜 쓴 것이 확실할 때만
   // 되돌린다. 되돌릴 때도 예약에 넣었던 25% 여유분은 남긴다.
   const usage = result?.usage;
-  const input = Number(usage?.prompt_tokens), output = Number(usage?.completion_tokens);
+  const input = usage?.prompt_tokens, output = usage?.completion_tokens;
   if (Number.isFinite(input) && Number.isFinite(output) && input >= 0 && output >= 0) {
     const spent = Math.ceil((input * rates[0] + output * rates[1]) / 1e6 * 1.25);
-    await settleNeurons(env.DATA, amount, spent);
+    // 추론 중 UTC 날짜가 바뀌어도 예약한 날짜의 장부만 정산한다.
+    // 정산 장애는 이미 얻은 모델 응답을 버리거나 재추론하는 이유가 되면 안 된다.
+    try {
+      await settleNeurons(env.DATA, amount, spent, Date.parse(`${reservation.date}T00:00:00Z`));
+    } catch {
+      console.warn("AI budget settlement deferred; reservation retained");
+    }
   }
   return result;
 }

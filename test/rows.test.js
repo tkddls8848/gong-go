@@ -7,6 +7,27 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const zlib = require("node:zlib");
 
+test("CSV 헤더 응답이 멈추면 시간 제한 후 종료하고 자동 재요청하지 않는다", async (t) => {
+  let calls = 0, signal;
+  t.mock.method(globalThis, "fetch", (_url, options) => { calls++; signal = options.signal; return new Promise(() => {}); });
+  await assert.rejects(Rows.fetchCsvText("/fixture.gz", undefined, 5), /대기 시간이 초과/);
+  assert.equal(calls, 1);
+  assert.equal(signal.aborted, true);
+});
+
+test("CSV 본문 지연도 시간 제한 대상이며 스트림을 취소한다", async (t) => {
+  let canceled = false;
+  t.mock.method(globalThis, "fetch", async () => new Response(new ReadableStream({ cancel() { canceled = true; } })));
+  await assert.rejects(Rows.fetchCsvText("/fixture.gz", undefined, 5), /대기 시간이 초과/);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(canceled, true);
+});
+
+test("손상된 gzip은 정상 CSV로 반환하지 않는다", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => new Response("not gzip"));
+  await assert.rejects(Rows.fetchCsvText("/fixture.gz", undefined, 1000));
+});
+
 // 입력은 collector가 실제로 쓰는 것과 같은 **형식**으로 만든다. collector/csv-record.js를
 // require하지 않는 이유는 조회 화면 테스트가 수집기 모듈에 묶이지 않게 하기 위해서다 —
 // 두 모듈이 맞춰야 하는 것은 저장된 파일 형식이지 함수가 아니다(README 모듈 경계).
@@ -227,6 +248,30 @@ test("헤더만 있는 파일은 빈 결과가 된다", () => {
   assert.equal(result.scanned, 0);
 });
 
+test("HTML·다른 공고 종류·중복 헤더는 정상 0건으로 숨기지 않는다", () => {
+  for (const text of ["<html>gateway error</html>", "bfSpecRgstNo,prdctClsfcNoNm\nPRE-1,서버", "bidNtceNo,bidNtceNo\nBID-1,BID-2"]) {
+    assert.throws(() => Rows.scanText(text, "bid", Rows.makeCriteria({}), false), /공고번호 열|헤더가 중복/);
+  }
+});
+
+test("빈 수집 파일과 식별 열만 있는 구형 CSV는 계속 허용한다", () => {
+  assert.equal(Rows.scanText("\uFEFF\n", "bid", Rows.makeCriteria({}), false).scanned, 0);
+  const result = Rows.scanText("bidNtceNo\nBID-1", "bid", Rows.makeCriteria({}), false);
+  assert.equal(result.matched[0].announcementNumber, "BID-1");
+});
+
+test("닫히지 않은 인용 필드와 잘못된 인용 뒤 문자는 파일 오류로 처리한다", () => {
+  for (const text of ['bidNtceNo,bidNtceNm\nBID-1,"잘린 제목', 'bidNtceNo,bidNtceNm\nBID-1,"제목"extra', 'bidNtceNo,bidNtceNm\nBID-1,제목,추가열']) {
+    assert.throws(() => Rows.scanText(text, "bid", Rows.makeCriteria({}), false), /CSV/);
+  }
+});
+
+test("파일 끝 쉼표의 빈 셀과 정상 인용 개행을 보존한다", () => {
+  assert.deepEqual(Rows.parseTable("a,b\nx,").rows, [["x", ""]]);
+  const result = Rows.scanText('bidNtceNo,bidNtceNm\r\nBID-1,"서버\r\n이중화"', "bid", Rows.makeCriteria({}), false);
+  assert.equal(result.matched[0].title, "서버\r\n이중화");
+});
+
 test("CSV fetch는 갱신 직후 조건부 재검증 옵션을 전달한다", async () => {
   const originalFetch = globalThis.fetch;
   let received;
@@ -236,7 +281,10 @@ test("CSV fetch는 갱신 직후 조건부 재검증 옵션을 전달한다", as
       return new Response(zlib.gzipSync(Buffer.from("hello", "utf8")), { status: 200 });
     };
     assert.equal(await Rows.fetchCsvText("/data/bid/2026/08/11.csv.gz", { cache: "no-cache" }), "hello");
-    assert.deepEqual(received, { url: "/data/bid/2026/08/11.csv.gz", init: { cache: "no-cache" } });
+    assert.equal(received.url, "/data/bid/2026/08/11.csv.gz");
+    assert.equal(received.init.cache, "no-cache");
+    assert.ok(received.init.signal instanceof AbortSignal);
+    assert.equal(received.init.signal.aborted, false);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -19,6 +19,24 @@ const lookupsIn = (source) => new Set([...source.matchAll(/\$\("#([\w-]+)"\)/g)]
 // 위치를 견주는 검사가 많다. 찾지 못한 표식은 -1이 되어 비교를 조용히 통과시키므로 여기서 끊는다.
 const at = (needle) => { const index = HTML.indexOf(needle); assert.notEqual(index, -1, `index.html에 ${needle}가 없다`); return index; };
 
+test("비동기 검색·수집 상태는 화면 낭독기에 전체 문장으로 전달한다", () => {
+  for (const id of ["status", "nl-status", "refresh-status"]) {
+    const tag = HTML.match(new RegExp(`<p\\b[^>]*id="${id}"[^>]*>`))?.[0];
+    assert.ok(tag, id);
+    assert.match(tag, /role="status"/);
+    assert.match(tag, /aria-live="polite"/);
+    assert.match(tag, /aria-atomic="true"/);
+  }
+});
+
+test("플레이스홀더만 있던 입력에도 지속적인 접근성 이름을 제공한다", () => {
+  for (const id of ["inst-name", "inst-code", "inst-preset", "nl-query"]) {
+    const tag = HTML.match(new RegExp(`<(?:input|select)\\b[^>]*id="${id}"[^>]*>`))?.[0];
+    assert.ok(tag, id);
+    assert.match(tag, /aria-label="[^"]+"/);
+  }
+});
+
 test("app.js가 id로 찾는 요소는 index.html에 모두 있다", () => {
   const missing = [...lookupsIn(APP)].filter((id) => !idsIn(HTML).has(id));
   assert.deepEqual(missing, [], `index.html에 없는 id: ${missing.join(", ")}`);
@@ -164,7 +182,7 @@ test("초기 화면에서 AI 업로드·실행은 잠겨 있고 비밀번호는 
 });
 
 test("상세 링크가 있는 공고는 모드와 무관하게 나라장터로 열 수 있다", () => {
-  const { detailLink } = evaluate("detailLink", "html");
+  const { detailLink } = evaluate("detailLink", "html", "safeExternalUrl");
   const bid = detailLink({ mode: "bid", detailUrl: "https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R25BK1&bidPbancOrd=000" });
   assert.match(bid, /href="https:\/\/www\.g2b\.go\.kr\/link\/PNPE027_01\/single\/\?bidPbancNo=R25BK1&amp;bidPbancOrd=000"/, "쿼리의 &가 이스케이프되지 않았다");
   assert.match(bid, /rel="noopener noreferrer"/);
@@ -173,6 +191,31 @@ test("상세 링크가 있는 공고는 모드와 무관하게 나라장터로 �
   // 사전공고와, 컬럼을 추가하기 전에 모은 본공고에는 링크가 없다.
   assert.equal(detailLink({ mode: "pre" }), "");
   assert.equal(detailLink({ mode: "bid", detailUrl: "" }), "");
+});
+
+test("외부 링크는 HTTP(S)만 허용하고 실행 스킴과 제어문자 우회를 차단한다", () => {
+  const { safeExternalUrl, detailLink } = evaluate("safeExternalUrl", "detailLink", "html");
+  for (const value of ["javascript:alert(1)", "JaVaScRiPt:alert(1)", "java\nscript:alert(1)", "data:text/html,<script>alert(1)</script>", "file:///C:/secret", "//example.com/file", "https://user:password@example.com/file", "https://example.com/\tfile", "https://", {}, null]) {
+    assert.equal(safeExternalUrl(value), "", String(value));
+    assert.doesNotMatch(detailLink({ mode: "bid", detailUrl: value }), /<a /);
+  }
+  assert.equal(safeExternalUrl(" https://www.g2b.go.kr/file?a=1&b=2 "), "https://www.g2b.go.kr/file?a=1&b=2");
+  assert.equal(safeExternalUrl("http://example.go.kr/file"), "http://example.go.kr/file");
+});
+
+test("깨진 첨부 항목은 실행 경로에서 제외하고 건수를 안내한다", () => {
+  const { normalizeFiles, attachmentWarnings } = evaluate("normalizeFiles", "safeExternalUrl", "attachmentWarnings");
+  const files = [null, { name: "악성", url: "javascript:alert(1)" }, { name: "정상.pdf", url: "https://example.go.kr/file" }];
+  assert.deepEqual(normalizeFiles(files), [files[2]]);
+  assert.match(attachmentWarnings(files), /첨부 링크 2건을 제외/);
+  assert.equal(files.length, 3, "원본 데이터는 변경하지 않는다");
+});
+
+test("전체 다운로드도 화면과 동일하게 검증된 링크만 연다", async () => {
+  const opened = [], button = {};
+  const run = new Function("currentRow", "$", "window", `${sourceOf("safeExternalUrl")}\n${sourceOf("normalizeFiles")}\nasync ${sourceOf("downloadAll")}\nreturn downloadAll;`);
+  await run({ files: [{ url: "javascript:alert(1)" }, { url: "https://example.go.kr/file" }] }, () => button, { open: (url) => opened.push(url) })();
+  assert.deepEqual(opened, ["https://example.go.kr/file"]);
 });
 
 test("첨부가 있는 공고에서도 상세 링크가 사라지지 않는다", () => {
@@ -253,6 +296,98 @@ test("내려받은 CSV는 머리글과 칸 수가 같다", () => {
   assert.equal(rows[2][link], "");
 });
 
+function runEcrExport(data, fail = false, count = 1) {
+  const captured = { rows: null, errors: [] };
+  const run = new Function("filtered", "analyses", "GongHttp", "downloadRows", "numberOf", "DATA_BASE", "window", "EquipmentSummary", `async ${sourceOf("downloadEcr")}\nreturn downloadEcr;`);
+  let calls = 0;
+  const execute = run(Array.from({ length: count }, (_, i) => ({ announcementNumber: `test${i}`, title: "테스트 공고" })), new Map(Array.from({ length: count }, (_, i) => [`test${i}`, { path: `/api/ecr?notice=test${i}` }])),
+    { requestJson: async (_url, _options, timeout, purpose) => { assert.equal(timeout, 30000); assert.equal(purpose, "read"); calls++; if (fail && calls === count) throw new Error("load failed"); return { response: { ok: true }, data }; } }, (rows) => { captured.rows = rows; }, (row) => row.announcementNumber, "/data", { alert: (message) => captured.errors.push(message) }, require("../public/equipment.js"));
+  return execute().then(() => captured);
+}
+
+test("ECR CSV는 여러 장비의 수량·규격·근거·개별 출처 소속을 유지한다", async () => {
+  const data = { ecr: [{ id: "ECR-001", 장비요약: [
+    { 종류: "서버", 명칭: "웹서버", 출처: "1쪽", 규격: [{ 항목: "수량", 값: "2대", 근거: "웹서버 2대", 검증: "원문 확인" }] },
+    { 종류: "서버", 명칭: "DB서버", 출처: "2쪽", 규격: [{ 항목: "수량", 값: "1대", 근거: "DB서버 1대", 검증: "확인 필요" }] },
+    { 종류: "미분류", 명칭: "추가 장비", 규격: [] },
+  ] }] };
+  const before = JSON.stringify(data);
+  const { rows } = await runEcrExport(data);
+  const value = (key) => rows[1][rows[0].indexOf(key)];
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].length, 19);
+  assert.equal(value("수량"), "[장비 1 | 서버 | 웹서버] 2대\n[장비 2 | 서버 | DB서버] 1대");
+  assert.match(value("장비 요구사항"), /\[장비 3 \| 미분류 \| 추가 장비\]\n추출 규격 없음/);
+  assert.match(value("근거"), /\[장비 1 \| 서버 \| 웹서버\]\n출처: 1쪽\n수량: 웹서버 2대/);
+  assert.match(value("근거"), /\[장비 2 \| 서버 \| DB서버\]\n출처: 2쪽\n수량: DB서버 1대/);
+  assert.equal(JSON.stringify(data), before);
+});
+
+test("구형 ECR CSV도 기본규격 요구사항과 수량 0을 잃지 않는다", async () => {
+  const { rows } = await runEcrExport({ ecr: [{ 기본규격: [{ 구분: "서버", 항목: "메모리", 요구사항: "256GB 이상", 수량: 0 }] }] });
+  assert.equal(rows[1][rows[0].indexOf("수량")], "0");
+  assert.equal(rows[1][rows[0].indexOf("장비 요구사항")], "서버 | 메모리: 256GB 이상");
+});
+
+test("ECR CSV는 미추출·제외 사유·검증 경고·분석 출처를 보존한다", async () => {
+  const { rows } = await runEcrExport({ verified: false, analyzedAt: "2026-09-25T00:00:00Z", model: "test-model", 누락: ["ECR-002"], coverage: { status: "partial", missingIds: ["ECR-002"] }, verification: { errors: ["오류"], warnings: ["범위 확인"] }, ecr: [{ id: "ECR-001", 출처: "rfp.md 구간 1", 불확실: ["다른 요구사항 근거 제외함"], 장비요약: [{ 규격: [{ 항목: "메모리", 값: "256GB 이상", 근거: "메모리 256GB 이상", 검증: "원문 확인" }] }] }] });
+  const value = (name) => rows[1][rows[0].indexOf(name)];
+  assert.equal(rows[1].length, rows[0].length);
+  assert.equal(value("미추출 번호"), "ECR-002");
+  assert.match(value("제외/불확실"), /제외함/);
+  assert.equal(value("검증 경고"), "범위 확인");
+  assert.equal(value("분석 모델"), "test-model");
+  assert.equal(value("출처"), "rfp.md 구간 1");
+  assert.equal(value("검증"), "원문 확인 필요");
+});
+
+test("ECR 추출 0건도 경고를 포함한 행으로 내보낸다", async () => {
+  const { rows } = await runEcrExport({ ecr: [], verified: true, 누락: ["ECR-001"] });
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].length, rows[0].length);
+  assert.equal(rows[1][rows[0].indexOf("명칭")], "추출된 ECR 없음");
+  assert.match(rows[1][rows[0].indexOf("검증")], /추출 결과 없음/);
+  assert.equal(rows[1][rows[0].indexOf("미추출 번호")], "ECR-001");
+});
+
+test("ECR 조회 실패 시 일부 결과만 성공 파일로 내보내지 않는다", async () => {
+  const output = await runEcrExport({ ecr: [{ id: "ECR-001" }] }, true, 2);
+  assert.equal(output.rows, null);
+  assert.match(output.errors[0], /내보내기 실패/);
+});
+
+test("ECR 배열이 없는 응답을 추출 0건으로 내보내지 않는다", async () => {
+  for (const data of [{}, { ecr: {} }, { ecr: "" }]) {
+    const output = await runEcrExport(data);
+    assert.equal(output.rows, null);
+    assert.match(output.errors[0], /형식/);
+  }
+});
+
+test("현재 검색에 저장 분석이 없으면 헤더만 있는 CSV를 만들지 않는다", async () => {
+  const output = await runEcrExport({}, false, 0);
+  assert.equal(output.rows, null);
+  assert.match(output.errors[0], /저장된 ECR 분석이 없/);
+});
+
+test("ECR 내보내기 도중 목록이 바뀌어도 최초 대상의 경로와 제목을 사용한다", async () => {
+  const filtered = [{ announcementNumber: "one", title: "원래 제목" }, { announcementNumber: "two", title: "두 번째" }];
+  const analyses = new Map([["one", { path: "/api/one" }], ["two", { path: "/api/two" }]]);
+  const urls = []; let release, output;
+  const run = new Function("filtered", "analyses", "GongHttp", "downloadRows", "numberOf", "DATA_BASE", "window", "EquipmentSummary", `async ${sourceOf("downloadEcr")}\nreturn downloadEcr;`);
+  const execute = run(filtered, analyses, { requestJson: async (url) => {
+    urls.push(url);
+    if (urls.length === 1) await new Promise((resolve) => { release = resolve; });
+    return { response: { ok: true }, data: { ecr: [] } };
+  } }, (rows) => { output = rows; }, (row) => row.announcementNumber, "/data", { alert: assert.fail }, require("../public/equipment.js"));
+  const pending = execute();
+  analyses.delete("two"); filtered[0].title = "변경된 제목"; filtered.pop();
+  release(); await pending;
+  assert.deepEqual(urls, ["/api/one", "/api/two"]);
+  assert.equal(output.length, 3);
+  assert.equal(output[1][1], "원래 제목");
+});
+
 test("결과 요약이 쓰는 클래스는 style.css에 모두 규칙이 있다", () => {
   // equipment.js는 HTML을 문자열로 짜므로 클래스 이름을 고쳐도 아무 데서도 터지지 않는다.
   // 스타일만 조용히 빠져 테두리 없는 맨 글자가 나온다. 여기서 이름 두 벌을 맞춰 둔다.
@@ -306,17 +441,52 @@ test("제외된 규격의 사유는 요약 상자에만 두고 경고 묶음에�
   // 나오고, 정작 확인해야 할 다른 불확실 메시지가 그 사이에 묻힌다.
   let captured = "";
   const content = { set innerHTML(value) { captured = value; } };
-  const run = new Function("$", "html", "document", "specTable", `${sourceOf("renderEcr")}\nreturn renderEcr;`)(
+  const run = new Function("$", "html", "document", "specTable", "EquipmentSummary", `${sourceOf("renderEcr")}\nreturn renderEcr;`)(
     () => content,
     (value) => String(value ?? ""),
     { querySelectorAll: () => [] },
     () => "",
+    require("../public/equipment.js"),
   );
   run({ 누락: ["ECR-010"], verification: { errors: ["ECR-002 수량 불일치"] }, ecr: [{ id: "ECR-001", 불확실: ["CPU를 원문에서 확인하지 못해 제외함", "쪽 번호가 어긋남"] }] });
   assert.ok(!captured.includes("제외함"), "제외 사유가 경고 묶음에 또 나온다");
   assert.ok(captured.includes("쪽 번호가 어긋남"), "제외가 아닌 불확실 메시지는 그대로 남아야 한다");
   assert.ok(captured.includes("ECR-002 수량 불일치"), "검증 오류는 그대로 남아야 한다");
   assert.ok(captured.includes("누락: ECR-010"), "누락 안내는 그대로 남아야 한다");
+});
+
+test("빈 ECR은 verified 플래그가 있어도 검증 통과로 표시하지 않는다", () => {
+  let captured = "";
+  const content = { set innerHTML(value) { captured = value; } };
+  const render = new Function("$", "html", "document", "specTable", "EquipmentSummary", `${sourceOf("renderEcr")}\nreturn renderEcr;`)(() => content, (value) => String(value ?? ""), { querySelectorAll: () => [] }, () => "", require("../public/equipment.js"));
+  render({ verified: true, ecr: [] });
+  assert.match(captured, /ecr-status unverified/);
+  assert.match(captured, /요구사항이 없다는 뜻은 아닙니다/);
+  assert.doesNotMatch(captured, /자동 검증 통과/);
+});
+
+test("누락·오류·불확실 정보는 저장된 통과 플래그보다 화면과 CSV에서 우선한다", async () => {
+  let captured = "";
+  const equipment = require("../public/equipment.js");
+  const render = new Function("$", "html", "document", "specTable", "EquipmentSummary", `${sourceOf("renderEcr")}\nreturn renderEcr;`)(() => ({ set innerHTML(value) { captured = value; } }), (value) => String(value ?? ""), { querySelectorAll: () => [] }, () => "", equipment);
+  for (const extra of [
+    { 누락: ["ECR-002"] }, { verification: { errors: ["근거 불일치"] } },
+    { coverage: { status: "matched", missingIds: ["ECR-002"] } },
+    { coverage: { status: "partial" } }, { coverage: { status: "unknown" } },
+    { ecr: [{ id: "ECR-001", 불확실: ["수량 확인 필요"] }] },
+  ]) {
+    const data = { verified: true, ecr: [{ id: "ECR-001" }], ...extra };
+    const before = JSON.stringify(data);
+    render(data);
+    assert.match(captured, /ecr-status unverified/);
+    assert.doesNotMatch(captured, /자동 검증 통과/);
+    if (extra.coverage?.missingIds) assert.match(captured, /누락: ECR-002/);
+    const { rows } = await runEcrExport(data);
+    assert.equal(rows[1][rows[0].indexOf("검증")], "원문 확인 필요");
+    assert.equal(JSON.stringify(data), before);
+  }
+  const legacy = { verified: true, ecr: [{ id: "ECR-001" }] };
+  assert.equal(equipment.isVerified(legacy), true, "명시적인 충돌 없는 구형 검증 표시는 유지한다");
 });
 
 test("원문 상자는 띄어쓰기 없이 이어진 긴 문장도 상자 안에서 끊는다", () => {

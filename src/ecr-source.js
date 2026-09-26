@@ -12,6 +12,7 @@ const detail = /세부\s*내용|상세\s*내용|요구사항\s*정의|CPU|메모
 // 백신(PC용/서버용)). 그래서 이름이 걸려도 꼬리가 장비면 남긴다.
 const NOT_EQUIPMENT = /\bPC\b|복합기|\bUPS\b|\bDBMS\b|그룹웨어|포털|백신|메신저|전자결재|기안기|오피스|Office|미들웨어|솔루션|소프트웨어|\bSW\b|S\/W|\bWAS\b|\bNMS\b|\bSMS\b|\bDRM\b|UI\/UX|공통|교환기|IP-?PBX|IP\s?Phone/i;
 const DEVICE_TAIL = /(?:서버|스토리지|스위치|장치|장비)\s*$/;
+const LICENSE_ONLY = /^(?:(?:장비|서버|시스템|SW|S\/W)\s*)?(?:라이선스|라이센스|licen[cs]es?)(?:\s*(?:요건|요구사항|도입|구매|제공))?$/i;
 function equipmentTable(text) {
   // 명칭 칸이 옆 칸과 엇갈려 분류 문구만 잡히는 표가 있다(양산선 ECR-034 UPS). 그때는
   // 이름을 못 읽은 것으로 보고 표 머리를 본다.
@@ -19,6 +20,8 @@ function equipmentTable(text) {
   const usable = name && !/^\s*(?:시스템\s*장비구성|요구사항|정의)/.test(name);
   // 마크다운 표로 변환되면 이름 뒤에 칸 구분자가 붙는다. 꼬리 판정 전에 떼어 낸다.
   const subject = (usable ? name : text.slice(0, 300)).replace(/\s+/g, " ").replace(/^[\s|]+|[\s|]+$/g, "");
+  // 별도 라이선스 조건 표와 '라이선스 포함 서버'는 다르다. 명칭 전체가 라이선스일 때만 제외한다.
+  if (usable && LICENSE_ONLY.test(subject)) return false;
   return !NOT_EQUIPMENT.test(subject) || DEVICE_TAIL.test(subject);
 }
 // 제안요청서는 요구사항 표 둘을 한 쪽에 좌우로 붙여 싣기도 한다(SR-MaaS 본공고). 평문으로
@@ -77,9 +80,8 @@ function unfoldPage(page) {
   }
   return page;
 }
-export function requirementSections(source) {
-  // 좌우로 붙은 표를 먼저 위아래로 편다. 이미 편 글은 번호 칸이 한 열에 모여 그대로 돌아온다.
-  const text = unfoldColumns(source);
+// 입력의 문자 위치를 보존한다. 모델 근거 줄의 소속 검증에서도 사용한다.
+export function requirementRanges(text) {
   const lines = [...text.matchAll(/[^\n]*(?:\n|$)/g)].filter((line) => line[0]);
   const boundaries = [];
   for (let i = 0; i < lines.length; i++) {
@@ -90,11 +92,15 @@ export function requirementSections(source) {
     if (!field && !leading) continue;
     boundaries.push({ id: ids[0], start: lines[i].index });
   }
-  const sections = boundaries.map((boundary, index) => ({ ...boundary, end: boundaries[index + 1]?.start ?? text.length }))
-    .filter((section) => target(section.id))
-    .map((section) => ({ ...section, text: text.slice(section.start, section.end) }))
+  return boundaries.map((boundary, index) => ({ ...boundary, end: boundaries[index + 1]?.start ?? text.length }))
+    .map((section) => ({ ...section, text: text.slice(section.start, section.end) }));
+}
+export function requirementSections(source) {
+  // 좌우로 붙은 표를 먼저 위아래로 편다. 이미 편 글은 번호 칸이 한 열에 모여 그대로 돌아온다.
+  const ranges = requirementRanges(unfoldColumns(source));
+  const sections = ranges.filter((section) => target(section.id))
     .filter((section) => detail.test(section.text) && equipmentTable(section.text));
-  return { sections, ids: [...new Set(boundaries.filter((entry) => target(entry.id)).map((entry) => entry.id))] };
+  return { sections, ids: [...new Set(ranges.filter((entry) => target(entry.id)).map((entry) => entry.id))] };
 }
 export function priorityOrder(chunks) {
   const rank = (text) => requirementSections(text).sections.length ? 0 : /ECR[-–]|장비\s*[-–]?\s*\d/i.test(text) ? 1 : 2;

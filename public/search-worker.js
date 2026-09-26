@@ -6,14 +6,23 @@ importScripts("rows.js");
 const Rows = self.GongRows;
 // 진행 중인 검색의 version. 새 검색이 오거나 취소되면 바뀌고, 루프는 그걸 보고 빠져나온다.
 let active = null;
+let activeController = null;
 
 self.onmessage = (event) => {
   const message = event.data;
-  if (message.type === "cancel") { active = null; return; }
-  if (message.type === "search") { active = message.version; run(message); }
+  if (message.type === "cancel") {
+    if (message.version !== active) return;
+    activeController?.abort(); activeController = null; active = null; return;
+  }
+  if (message.type === "search") {
+    activeController?.abort();
+    activeController = new AbortController();
+    active = message.version;
+    run(message, activeController.signal);
+  }
 };
 
-async function run({ version, base, dataSchemaVersion, files, criteria, span, concurrency }) {
+async function run({ version, base, dataSchemaVersion, files, criteria, span, concurrency }, signal) {
   const parsed = Rows.makeCriteria(criteria);
   let cursor = 0, rows = [], done = 0, scanned = 0, failures = 0;
 
@@ -30,15 +39,23 @@ async function run({ version, base, dataSchemaVersion, files, criteria, span, co
       const file = files[cursor++];
       try {
         const suffix = dataSchemaVersion ? `?v=${encodeURIComponent(dataSchemaVersion)}` : "";
-        const text = await Rows.fetchCsvText(`${base}/${file.path}${suffix}`, file.revalidate ? { cache: "no-cache" } : undefined);
+        const text = await Rows.fetchCsvText(`${base}/${file.path}${suffix}`, { ...(file.revalidate ? { cache: "no-cache" } : {}), signal });
         if (active !== version) return;
         // 파일 구간이 조회 구간 안에 통째로 들어오면 행마다 날짜를 볼 필요가 없다.
         // 월별 봉인 파일이 구간 끝에 걸릴 때만 행 단위 검사가 남는다.
         const result = Rows.scanText(text, file.mode, parsed, !(file.begin >= span.begin && file.end <= span.end));
         scanned += result.scanned;
         // push(...matched)는 행이 많으면 스택을 넘기고, concat은 묶음마다 배열을 새로 만든다.
-        for (const row of result.matched) rows.push(row);
-      } catch { failures += 1; }
+        for (const row of result.matched) {
+          rows.push(row);
+          if (rows.length >= 4000) {
+            flush();
+            // 큰 CSV도 한 번에 복제/전송하지 않는다. 취소 메시지를 처리할 기회도 준다.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            if (active !== version || signal.aborted) return;
+          }
+        }
+      } catch { if (active !== version || signal.aborted) return; failures += 1; }
       done += 1;
       if (rows.length >= 4000 || done >= 16) flush();
     }

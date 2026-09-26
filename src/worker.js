@@ -5,11 +5,12 @@
 import { ASK_SCHEMA, buildPrompt, kstToday, normalizeAsk, ruleParse } from "./ask.js";
 import { handleEcr } from "./ecr.js";
 import { runBudgeted } from "./ai-budget.js";
-import { handleAiAccess, hasAiAccess, clearAiAccessCookie } from "./ai-access.js";
+import { handleAiAccess, hasAiAccess, clearAiAccessCookie, revokeAiAccess } from "./ai-access.js";
 
 const COOKIE_NAME = "gong_gate";
 const LOGIN_PATH = "/__gate/login";
-const LOGOUT_PATH = "/__gate/logout";
+const LOGOUT_PATH = "/api/logout";
+const LEGACY_LOGOUT_PATH = "/__gate/logout";
 const DATA_PREFIX = "/data/";
 const ROBOTS_PATH = "/robots.txt";
 const REFRESH_PATH = "/api/refresh";
@@ -93,7 +94,15 @@ export default {
 
     const secure = url.protocol === "https:";
 
-    if (url.pathname === LOGOUT_PATH) {
+    if (url.pathname === LOGOUT_PATH || url.pathname === LEGACY_LOGOUT_PATH) {
+      const origin = request.headers.get("Origin");
+      if (request.headers.get("Sec-Fetch-Site") === "cross-site" || (origin && origin !== url.origin)) return new Response("같은 사이트에서 로그아웃해 주세요.", { status: 403 });
+      // /api 범위의 AI 쿠키를 받기 위해 브라우저가 해당 경로를 다시 요청하게 한다.
+      if (url.pathname === LEGACY_LOGOUT_PATH) return redirect(LOGOUT_PATH);
+      try { await revokeAiAccess(request, env); }
+      catch {
+        return htmlResponse('<!doctype html><html lang="ko"><meta charset="utf-8"><title>로그아웃 확인 필요</title><p>사이트 조회 쿠키는 삭제했습니다. AI 권한 취소에 실패했습니다.</p><p><a href="/api/logout">서버 권한 취소 다시 시도</a></p></html>', 503, { "Cache-Control": "no-store", "Set-Cookie": clearCookie(COOKIE_NAME, secure) });
+      }
       const response = redirect("/", clearCookie(COOKIE_NAME, secure));
       response.headers.append("Set-Cookie", clearAiAccessCookie(request));
       return response;

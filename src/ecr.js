@@ -1,21 +1,20 @@
 import { runBudgeted } from "./ai-budget.js";
 import { requireAiAccess } from "./ai-access.js";
 import { ecrError } from "./ecr-errors.js";
-import { requirementSections, priorityOrder, sourceLines, numberedSource, unfoldColumns } from "./ecr-source.js";
+import { sourceCoverage, compareCoverage } from "./ecr-coverage.js";
+import { requirementSections, requirementRanges, priorityOrder, sourceLines, numberedSource, unfoldColumns } from "./ecr-source.js";
 
 export const ECR_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 // 작업 키에 들어가는 파이프라인 판. 표 선별이나 구간 나누기를 고치면 반드시 올린다.
 // 올리지 않으면 같은 파일을 다시 올려도 예전 방식으로 자른 구간을 그대로 다시 쓴다 —
 // 고친 것이 반영되지 않고 고쳐진 것처럼 보인다.
-const VERSION = "cloud-v2-좌우표분리";
+const VERSION = "cloud-v4-근거소속검증";
 const MAX_BYTES = 8 * 1024 * 1024;
-// 무료 Worker의 요청당 subrequest 한도 안에서 최종 결과를 합칠 수 있는 분량.
+// 한 요청에서 다루는 텍스트와 병합 작업량을 제한한다.
 const MAX_CHARS = 120000;
 // 표 선별은 문서 전체를 훑는다. 정규식이 도는 원문 자체에도 상한을 둔다.
 const SCAN_LIMIT = 600000;
-// 병합 요청이 쓰는 subrequest = 구간 수 + 작업/예산/결과 대여섯 개. 무료 한도 50에서 역산한다.
-// 병합 요청 하나가 쓰는 R2 호출은 구간 수 N + 5 + 예산 CAS 재시도 2k 이고, 여기에 구간
-// 표식 세 번이 더 붙는다. 예산 경합이 최악(k=6)이어도 무료 한도 50 안에 들도록 역산한다.
+// R2 내부 호출 한도와 별개로 기존 작업 크기 상한을 유지한다.
 const MAX_CHUNKS = 33;
 // 한 구간을 동시에 분석하지 않도록 잡아 두는 시간. 중단된 요청의 표식은 이 뒤에 넘겨받는다.
 const LEASE_MS = 180000;
@@ -65,8 +64,7 @@ export function splitDocument(text) {
       start = end - OVERLAP;
     }
   }
-  // 상한은 최종 병합이 감당할 수 있는 양이다. 그 요청 하나가 구간 수만큼 R2를 읽고 작업·예산·
-  // 결과까지 만지므로, 무료 Worker의 요청당 subrequest 한도(50) 안에 들어와야 한다.
+  // 원격 분석과 최종 병합의 작업량을 제한한다. R2 내부 호출은 외부 호출 50회와 별개다.
   if (chunks.length > MAX_CHUNKS) throw fail("분석할 요구사항 표가 많습니다. 제안요청서를 나누어 올려 주세요.", 413);
   return chunks;
 }
@@ -94,6 +92,10 @@ export function parseResult(result, source, filename, index) {
   let parsed;
   try { parsed = typeof value === "string" ? JSON.parse(value) : value; } catch { throw fail("모델 응답 형식이 올바르지 않습니다.", 502); }
   if (!Array.isArray(parsed?.items)) throw fail("모델 응답에 장비 목록이 없습니다.", 502);
+  const ranges = requirementRanges(source), lines = sourceLines(source);
+  const offsets = [0];
+  for (const line of lines) offsets.push(offsets[offsets.length - 1] + line.length);
+  const idKey = (id) => id.replace(/–/g, "-").replace(/\s/g, "").toUpperCase();
   // 길이를 넘긴 응답은 통째로 버리지 않고 받는 만큼만 쓴다. 버리면 그 구간이 영영 통과하지
   // 못한다. 무엇을 못 받았는지는 적어 둔다 — 조용히 줄이지 않는다.
   const overflow = parsed.items.length > MAX_MODEL_ITEMS ? `장비 ${parsed.items.length}개 중 ${MAX_MODEL_ITEMS}개까지만 받았습니다. 나머지는 원문 확인이 필요합니다.` : "";
@@ -111,16 +113,28 @@ export function parseResult(result, source, filename, index) {
     for (const fact of item.facts.slice(0, MAX_MODEL_FACTS)) {
       if (!fact || typeof fact !== "object" || Array.isArray(fact)) { uncertainties.push("규격 항목 형식 오류로 제외함"); continue; }
       if ("from" in fact || "to" in fact) {
-        const lines = sourceLines(source);
         const usable = fields.includes(fact.field) && Number.isInteger(fact.from) && Number.isInteger(fact.to)
           && fact.from >= 1 && fact.to >= fact.from && fact.to <= lines.length && fact.to - fact.from <= 5;
         if (!usable) { uncertainties.push(`${fields.includes(fact.field) ? fact.field : "규격"}: 모델이 가리킨 원문 줄(${fact.from}~${fact.to})을 확인할 수 없어 제외함`); continue; }
-        const quote = lines.slice(fact.from - 1, fact.to).join("").trim();
-        facts.push({ 항목: fact.field, 값: quote, 근거: quote, 검증: quote ? "원문 확인" : "확인 필요" });
+        const raw = lines.slice(fact.from - 1, fact.to).join("");
+        const quote = raw.trim();
+        const start = offsets[fact.from - 1] + raw.length - raw.trimStart().length;
+        const end = offsets[fact.to] - (raw.length - raw.trimEnd().length);
+        const owners = ranges.filter((range) => range.start < end && range.end > start);
+        if (owners.some((range) => idKey(range.id) !== idKey(item.id))) {
+          uncertainties.push(`${fact.field}: 다른 요구사항의 원문 줄을 가리켜 제외함`); continue;
+        }
+        const verified = !!quote && (!ranges.length || owners.length && start >= owners[0].start);
+        if (quote && !verified) uncertainties.push(`${fact.field}: 요구사항 소속 확인 필요`);
+        facts.push({ 항목: fact.field, 값: quote, 근거: quote, 검증: verified ? "원문 확인" : "확인 필요" });
         continue;
       }
       if (!fields.includes(fact.field) || typeof fact.value !== "string" || typeof fact.evidence !== "string") { uncertainties.push(`${fields.includes(fact.field) ? fact.field : "규격"}: 형식 오류로 제외함`); continue; }
-      const verified = !!norm(fact.value) && !!norm(fact.evidence) && norm(fact.evidence).includes(norm(fact.value)) && norm(source).includes(norm(fact.evidence));
+      const evidence = norm(fact.evidence);
+      const owners = evidence ? ranges.filter((range) => norm(range.text).includes(evidence)) : [];
+      const own = owners.some((range) => idKey(range.id) === idKey(item.id));
+      if (owners.length && !own) { uncertainties.push(`${fact.field}: 다른 요구사항의 근거를 가리켜 제외함`); continue; }
+      const verified = !!norm(fact.value) && !!evidence && evidence.includes(norm(fact.value)) && norm(source).includes(evidence) && (!ranges.length || own);
       if (!verified) uncertainties.push(`${fact.field}: 근거 확인 필요`);
       facts.push({ 항목: fact.field, 값: fact.value, 근거: fact.evidence, 검증: verified ? "원문 확인" : "확인 필요" });
     }
@@ -171,8 +185,10 @@ export async function handleEcr(request, env) {
       // 구간 나누기는 저장이 아니라 준비 단계다. 여기서 실패하면 "분석 문서 저장"이라고
       // 잘못 알린다(SR-MaaS 본공고에서 실제로 그렇게 나왔다).
       const job = existing ? await existing.json() : { notice, name, chunks: splitDocument(text), focused: requirementSections(text).sections.length > 0 };
+      const needsCoverage = !job.coverage;
+      if (needsCoverage) job.coverage = sourceCoverage(requirementSections(text));
       stage = "saveDocument";
-      if (!existing) await env.DATA.put(keyOf(id), JSON.stringify(job));
+      if (!existing || needsCoverage) await env.DATA.put(keyOf(id), JSON.stringify(job));
       return json({ id, total: job.chunks.length, order: priorityOrder(job.chunks), focused: !!job.focused });
     }
     if (action !== "step") throw fail("알 수 없는 분석 요청입니다.");
@@ -191,64 +207,74 @@ export async function handleEcr(request, env) {
     if (cached) items = await cached.json();
     else {
       const workKey = `_ecr/refine/${id}/${index}.json`;
-      const savedWork = await env.DATA.get(workKey);
-      const work = savedWork ? await savedWork.json() : { pending: [{ source: job.chunks[index], depth: 0 }], items: [] };
-      // 더 손쓸 수 없다고 판정한 구간은 그 판정을 적어 둔다. 적어 두지 않으면 재개할 때마다
-      // 같은 추론을 다시 돌리고 같은 자리에서 멈춘다 — 답은 그대로인데 비용만 다시 든다.
-      if (work.failed) throw fail(work.failed, 422);
       // 같은 구간을 두 탭이나 재전송이 동시에 밀면 둘 다 모델을 부른다. 먼저 잡은 요청만
       // 진행하고 나머지는 되돌려 보낸다. 오래된 표식은 중단된 요청의 것이라 넘겨받는다.
       const leaseKey = `_ecr/lease/${id}/${index}.json`;
       const heldBy = await env.DATA.get(leaseKey);
       const held = heldBy ? await heldBy.json() : null;
-      if (held && Date.now() - held.at < LEASE_MS) return json({ retry: true, total: job.chunks.length, message: `${index + 1}번째 구간을 이미 분석하고 있습니다. 잠시 후 이어집니다.` });
-      const lease = await env.DATA.put(leaseKey, JSON.stringify({ at: Date.now() }), heldBy ? { onlyIf: { etagMatches: heldBy.etag } } : { onlyIf: { etagDoesNotMatch: "*" } });
-      if (!lease) return json({ retry: true, total: job.chunks.length, message: `${index + 1}번째 구간을 이미 분석하고 있습니다. 잠시 후 이어집니다.` });
-      const task = work.pending[0];
-      const budgetTokens = task.tokens || OUTPUT_TOKENS;
+      if (held && Date.now() - held.at < LEASE_MS) return json({ retry: true, retryAfterMs: 3000, total: job.chunks.length, message: `${index + 1}번째 구간을 이미 분석하고 있습니다. 잠시 후 이어집니다.` });
+      const started = Date.now();
+      const lease = await env.DATA.put(leaseKey, JSON.stringify({ at: started, owner: crypto.randomUUID() }), heldBy ? { onlyIf: { etagMatches: heldBy.etag } } : { onlyIf: { etagDoesNotMatch: "*" } });
+      if (!lease) return json({ retry: true, retryAfterMs: 3000, total: job.chunks.length, message: `${index + 1}번째 구간을 이미 분석하고 있습니다. 잠시 후 이어집니다.` });
       try {
-        const result = await runBudgeted(env, ECR_MODEL, {
-          messages: [{ role: "system", content: system }, { role: "user", content: `${numberedSource(task.source)}\n/no_think` }],
-          // 모델은 규격 문장을 쓰지 않고 줄 번호만 돌려주므로 보통은 짧게 끝난다. 예산이 출력
-          // 한도로 잡히니 기본을 낮게 두고, 모자라는 구간에서만 한도를 올린다.
-          response_format: { type: "json_schema", json_schema: schema }, temperature: 0, max_tokens: budgetTokens,
-        }, (currentStage) => { stage = currentStage; });
-        stage = "parse";
-        if (result?.choices?.[0]?.finish_reason === "length") {
-          // 잘림은 출력이 모자란 것이지 입력이 큰 것이 아니다. 규격 행이 많은 표는 반으로 갈라도
-          // 양쪽이 다시 잘린다. 한도를 먼저 올려 보고, 끝까지 모자랄 때만 표를 나눈다.
-          if (budgetTokens < OUTPUT_TOKENS_MAX) {
-            work.pending[0] = { ...task, tokens: budgetTokens * 2 };
+        // 잠금을 기다리는 사이 앞선 요청이 완료했을 수 있으므로 취득 후 다시 읽는다.
+        const completed = await env.DATA.get(partKey);
+        if (completed) {
+          items = await completed.json();
+        } else {
+          const savedWork = await env.DATA.get(workKey);
+          const work = savedWork ? await savedWork.json() : { pending: [{ source: job.chunks[index], depth: 0 }], items: [] };
+          if (work.failed) throw fail(work.failed, 422);
+          const task = work.pending[0];
+          const budgetTokens = task.tokens || OUTPUT_TOKENS;
+          const result = await runBudgeted(env, ECR_MODEL, {
+            messages: [{ role: "system", content: system }, { role: "user", content: `${numberedSource(task.source)}\n/no_think` }],
+            // 모델은 규격 문장을 쓰지 않고 줄 번호만 돌려주므로 보통은 짧게 끝난다. 예산이 출력
+            // 한도로 잡히니 기본을 낮게 두고, 모자라는 구간에서만 한도를 올린다.
+            response_format: { type: "json_schema", json_schema: schema }, temperature: 0, max_tokens: budgetTokens,
+          }, (currentStage) => { stage = currentStage; });
+          if (Date.now() - started >= LEASE_MS) throw fail("분석 대기 시간이 초과되었습니다. 같은 파일로 다시 시작해 주세요.", 409);
+          stage = "parse";
+          if (result?.choices?.[0]?.finish_reason === "length") {
+            // 잘림은 출력이 모자란 것이지 입력이 큰 것이 아니다. 규격 행이 많은 표는 반으로 갈라도
+            // 양쪽이 다시 잘린다. 한도를 먼저 올려 보고, 끝까지 모자랄 때만 표를 나눈다.
+            if (budgetTokens < OUTPUT_TOKENS_MAX) {
+              work.pending[0] = { ...task, tokens: budgetTokens * 2 };
+              stage = "savePart";
+              await env.DATA.put(workKey, JSON.stringify(work));
+              return json({ retry: true, total: job.chunks.length, message: `출력이 잘려 ${index + 1}번째 구간을 더 넉넉한 한도로 다시 읽습니다.` });
+            }
+            if (task.depth >= 3 || task.source.length < 500) {
+              work.failed = `${index + 1}번째 구간은 한도를 끝까지 올리고 작게 나눠도 모델 출력이 잘립니다. 해당 표를 별도 파일로 나누어 분석해 주세요.`;
+              await env.DATA.put(workKey, JSON.stringify(work));
+              throw fail(work.failed, 422);
+            }
+            const middle = Math.floor(task.source.length / 2);
+            const header = task.source.split("\n")[0].slice(0, 200);
+            // 나눈 조각은 올려 둔 한도를 물려받는다. 기본값으로 되돌리면 같은 사다리를 다시 탄다.
+            work.pending.splice(0, 1, { source: task.source.slice(0, middle + 120), depth: task.depth + 1, tokens: budgetTokens }, { source: `${header}\n${task.source.slice(middle - 120)}`, depth: task.depth + 1, tokens: budgetTokens });
             stage = "savePart";
             await env.DATA.put(workKey, JSON.stringify(work));
-            return json({ retry: true, total: job.chunks.length, message: `출력이 잘려 ${index + 1}번째 구간을 더 넉넉한 한도로 다시 읽습니다.` });
+            return json({ retry: true, total: job.chunks.length, message: "출력 한도에 맞춰 해당 구간을 더 작게 나누었습니다." });
           }
-          if (task.depth >= 3 || task.source.length < 500) {
-            work.failed = `${index + 1}번째 구간은 한도를 끝까지 올리고 작게 나눠도 모델 출력이 잘립니다. 해당 표를 별도 파일로 나누어 분석해 주세요.`;
-            await env.DATA.put(workKey, JSON.stringify(work));
-            throw fail(work.failed, 422);
-          }
-          const middle = Math.floor(task.source.length / 2);
-          const header = task.source.split("\n")[0].slice(0, 200);
-          // 나눈 조각은 올려 둔 한도를 물려받는다. 기본값으로 되돌리면 같은 사다리를 다시 탄다.
-          work.pending.splice(0, 1, { source: task.source.slice(0, middle + 120), depth: task.depth + 1, tokens: budgetTokens }, { source: `${header}\n${task.source.slice(middle - 120)}`, depth: task.depth + 1, tokens: budgetTokens });
+          work.items.push(...parseResult(result, task.source, job.name, index));
+          work.pending.shift();
           stage = "savePart";
-          await env.DATA.put(workKey, JSON.stringify(work));
-          return json({ retry: true, total: job.chunks.length, message: "출력 한도에 맞춰 해당 구간을 더 작게 나누었습니다." });
+          if (work.pending.length) {
+            await env.DATA.put(workKey, JSON.stringify(work));
+            return json({ retry: true, total: job.chunks.length, message: "세분화한 표의 다음 부분을 분석합니다." });
+          }
+          items = work.items;
+          await env.DATA.put(partKey, JSON.stringify(items));
         }
-        work.items.push(...parseResult(result, task.source, job.name, index));
-        work.pending.shift();
-        stage = "savePart";
-        if (work.pending.length) {
-          await env.DATA.put(workKey, JSON.stringify(work));
-          return json({ retry: true, total: job.chunks.length, message: "세분화한 표의 다음 부분을 분석합니다." });
-        }
-        items = work.items;
       } finally {
-        // 표식을 반드시 거둔다. 남겨 두면 실패한 구간이 만료될 때까지 재시도를 막는다.
-        await env.DATA.delete(leaseKey);
+        // 내 ETag일 때만 해제한다. 무조건 삭제하면 새 소유자의 잠금까지 지울 수 있다.
+        try {
+          await env.DATA.put(leaseKey, JSON.stringify({ at: 0 }), { onlyIf: { etagMatches: lease.etag } });
+        } catch {
+          console.warn("ECR lease release deferred; lease will expire");
+        }
       }
-      await env.DATA.put(partKey, JSON.stringify(items));
     }
     const final = url.searchParams.has("finalize") ? url.searchParams.get("finalize") === "1" : index === job.chunks.length - 1;
     if (!final) return json({ completed: index + 1, total: job.chunks.length });
@@ -264,6 +290,9 @@ export async function handleEcr(request, env) {
     }
     const errors = ecr.flatMap((item) => item.불확실.map((message) => `${item.id}: ${message}`));
     const analysis = { schemaVersion: 2, provider: "workers-ai", model: ECR_MODEL, analyzedAt: new Date().toISOString(), sourceFiles: [job.name], ecr, verified: false, 누락: [], verification: { errors, warnings: ["구간별 추출 결과입니다. ECR 총괄표 대비 누락과 구간 경계의 조건은 원문 확인이 필요합니다."] } };
+    analysis.coverage = compareCoverage(job.coverage, ecr);
+    analysis.누락 = analysis.coverage.missingIds || [];
+    analysis.verification.warnings.push(...analysis.coverage.warnings);
     if (job.focused) analysis.verification.warnings.push("ECR·장비 번호가 붙은 상세 요구사항 표를 우선 선별했습니다. 번호 없는 본문과 별첨은 분석 범위에서 제외될 수 있습니다.");
     // 검증된 문자열 근거와 문서 전체 완전성은 별개다. verified를 과장하지 않는다.
     stage = "saveResult";

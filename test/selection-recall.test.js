@@ -3,7 +3,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { evaluate, readDocument, report, DOCUMENTS, NEURONS_PER_CHUNK } from "../tools/eval-selection.mjs";
+import { evaluate, readDocument, report, DOCUMENTS, NEURONS_PER_CHUNK, selectionFailures } from "../tools/eval-selection.mjs";
+
+test("엄격한 선별 관문은 없는 표본·누락·오검출·미라벨·분할 실패를 거부한다", () => {
+  const document = { file: "fixture.txt", estimated: false };
+  const clean = { missed: [], wrong: [], unknown: [], error: null };
+  assert.equal(selectionFailures([]).length, 1);
+  assert.equal(selectionFailures([{ document, metrics: null }]).length, 1);
+  for (const field of ["missed", "wrong", "unknown"]) {
+    assert.equal(selectionFailures([{ document, metrics: { ...clean, [field]: ["ECR-001"] } }]).length, 1);
+  }
+  assert.equal(selectionFailures([{ document, metrics: { ...clean, error: "too large" } }]).length, 1);
+  assert.deepEqual(selectionFailures([{ document, metrics: clean }]), []);
+});
+
+test("추정 라벨만 있는 평가를 확정 정확도 통과로 간주하지 않는다", () => {
+  assert.equal(selectionFailures([{ document: { estimated: true }, metrics: { missed: [], wrong: [], unknown: [] } }]).length, 1);
+});
 
 const row = (number, name, detail) =>
   `| 요구사항 고유번호 | ${number} |\n| 요구사항 명칭 | ${name} |\n| 세부 내용 | ${detail} |\n`;

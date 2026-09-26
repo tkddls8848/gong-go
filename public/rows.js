@@ -23,10 +23,12 @@
         cell = "";
         for (;;) {
           const quote = text.indexOf('"', index);
-          if (quote === -1) { cell += text.slice(start); index = length; break; }
+          if (quote === -1) throw new Error("CSV 인용 필드가 닫히지 않았습니다.");
           if (text.charCodeAt(quote + 1) === QUOTE) { cell += text.slice(start, quote + 1); index = quote + 2; start = index; continue; }
           cell += text.slice(start, quote);
           index = quote + 1;
+          const next = text.charCodeAt(index);
+          if (index < length && next !== COMMA && next !== LF && next !== CR) throw new Error("CSV 인용 필드 뒤 구분자가 올바르지 않습니다.");
           break;
         }
       } else {
@@ -38,7 +40,7 @@
       row.push(unformula(cell));
       pending = true;
       const code = text.charCodeAt(index);
-      if (code === COMMA) { index += 1; continue; }
+      if (code === COMMA) { index += 1; if (index === length) row.push(""); continue; }
       if (code === LF || code === CR) {
         if (code === CR && text.charCodeAt(index + 1) === LF) index += 1;
         index += 1;
@@ -221,6 +223,12 @@
   function scanText(text, mode, criteria, checkDate) {
     const table = parseTable(text);
     const columns = columnsFor(table.header, mode);
+    // 수집 결과가 비어 헤더도 없는 파일은 기존처럼 0건으로 취급한다.
+    // 내용이 있는데 공고 식별 열이 없으면 HTML/다른 종류/손상된 파일이지 정상 0건이 아니다.
+    if (table.header.length && (!columns.number.length || new Set(table.header).size !== table.header.length)) {
+      throw new Error("CSV 공고번호 열이 없거나 헤더가 중복되었습니다.");
+    }
+    if (table.rows.some((row) => row.length > table.header.length)) throw new Error("CSV 데이터 열 수가 헤더보다 많습니다.");
     const matched = [];
     for (const cells of table.rows) if (accepts(criteria, cells, columns, checkDate)) matched.push(buildRow(cells, columns));
     return { matched, scanned: table.rows.length };
@@ -240,10 +248,25 @@
     return { matched, scanned: records.length };
   }
 
-  async function fetchCsvText(url, init) {
-    const response = await fetch(url, init);
-    if (!response.ok || !response.body) throw new Error(`${url} 응답 오류 (${response.status})`);
-    return new Response(response.body.pipeThrough(new DecompressionStream("gzip"))).text();
+  async function fetchCsvText(url, init, timeoutMs = 60000) {
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    if (init?.signal?.aborted) cancel();
+    else init?.signal?.addEventListener("abort", cancel, { once: true });
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error("CSV 응답 대기 시간이 초과되었습니다."));
+        controller.abort();
+      }, timeoutMs);
+    });
+    const read = async () => {
+      const response = await fetch(url, { ...init, signal: controller.signal });
+      if (!response.ok || !response.body) throw new Error(`${url} 응답 오류 (${response.status})`);
+      return new Response(response.body.pipeThrough(new DecompressionStream("gzip"), { signal: controller.signal })).text();
+    };
+    try { return await Promise.race([read(), timeout]); }
+    finally { clearTimeout(timer); init?.signal?.removeEventListener("abort", cancel); }
   }
 
   scope.GongRows = { parseTable, columnsFor, first, makeCriteria, accepts, buildRow, scanText, scanObjects, fetchCsvText, norm, dateKey, typeMatches };

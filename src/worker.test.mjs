@@ -266,9 +266,15 @@ test("바깥으로 튕기는 redirect는 /로 되돌린다", async () => {
 });
 
 test("로그아웃은 쿠키를 지운다", async () => {
-  const response = await worker.fetch(request("/__gate/logout"), envOf());
+  const response = await worker.fetch(request("/api/logout"), envOf());
   assert.equal(response.status, 302);
   assert.match(response.headers.get("Set-Cookie"), /gong_gate=;.*Max-Age=0/);
+});
+
+test("기존 로그아웃 주소는 AI 쿠키를 받을 수 있는 경로로 연결한다", async () => {
+  const response = await worker.fetch(request("/__gate/logout"), envOf());
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get("Location"), "/api/logout");
 });
 
 // ── R2 데이터 ───────────────────────────────────────────────────────────────
