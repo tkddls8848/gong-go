@@ -1,5 +1,6 @@
 .env
 node_modules/
+test-results/
 .wrangler/
 /data/
 # 분석 시험용으로 내려받은 제안요청서. 발주처 문서라 저장소에 올리지 않는다.

@@ -27,7 +27,8 @@ export const DOCUMENTS = [
   {
     file: "4dae.txt",
     name: "4대보험 고객센터 노후장비 교체",
-    // 장비는 서버 셋과 스토리지 하나뿐이고 나머지 ECR-001~015는 전부 비장비다.
+    // 선별 대상은 ECR-004·009·010·012. 제공 PDF의 ECR-012는 PoE 스위치다.
+    // 이 라벨은 번호 선별용이며 서버/스토리지 종류별 정답이나 필드 정답이 아니다.
     equipment: DAE_EQUIPMENT,
     other: ids("ECR-", 1, 15, 3).filter((id) => !DAE_EQUIPMENT.includes(id)),
   },
@@ -119,17 +120,38 @@ export function report(results) {
   const sum = (pick) => measured.reduce((total, entry) => total + pick(entry.metrics), 0);
   if (measured.length) rows.push(["합계", "", "", "", "", "", "", "", "", String(sum((m) => m.chunks)), String(sum((m) => m.neurons))]);
   out.push(table(["문서", "라벨", "정답", "선별", "적중", "누락", "오검출", "재현율", "오검출률", "구간", "예상뉴런"], rows));
-  out.push("", `구간당 ${NEURONS_PER_CHUNK}뉴런 기준. 일일 무료 예산은 8,000뉴런이다.`);
+  out.push("", `구간당 ${NEURONS_PER_CHUNK}뉴런 가정의 참고 추정치. 실제 입력 길이·출력 확대·재시도·문서 변환 비용을 반영하지 않는다. 앱의 일일 예약 한도는 8,000뉴런이며 계정 무료 한도 보장이 아니다.`);
   return out.join("\n");
 }
 
-function main(dir = process.argv[2] || EVAL_DIR) {
+// 확정 라벨 표본이 없거나 오검출·누락이 있으면 품질 관문을 통과시키지 않는다.
+// 추정 라벨은 보고하되 확정 정확도의 근거로 쓰지 않는다.
+export function selectionFailures(results) {
+  const confirmed = results.filter(({ document }) => !document.estimated);
+  if (!confirmed.length) return ["확정 라벨 문서가 없습니다."];
+  return confirmed.flatMap(({ document, metrics }) => {
+    if (!metrics) return [`${document.file}: 텍스트 없음`];
+    const reasons = [];
+    if (metrics.error) reasons.push(`분할 실패: ${metrics.error}`);
+    if (metrics.missed.length) reasons.push(`누락 ${metrics.missed.length}건`);
+    if (metrics.wrong.length) reasons.push(`오검출 ${metrics.wrong.length}건`);
+    if (metrics.unknown.length) reasons.push(`미라벨 ${metrics.unknown.length}건`);
+    return reasons.map((reason) => `${document.file}: ${reason}`);
+  });
+}
+
+function main(dir = process.argv.slice(2).find((arg) => !arg.startsWith("--")) || EVAL_DIR) {
   console.log(`텍스트 디렉터리: ${dir}\n`);
   const results = DOCUMENTS.map((document) => {
     const text = readDocument(dir, document.file);
     return { document, metrics: text === null ? null : evaluate(text, document) };
   });
   console.log(report(results));
+  if (process.argv.includes("--strict")) {
+    const failures = selectionFailures(results);
+    console.log(failures.length ? `\nFAIL\n${failures.join("\n")}` : "\nPASS: 확정 라벨 표본의 번호 선별 관문 통과 (필드 추출 품질 검증 아님)");
+    if (failures.length) process.exitCode = 1;
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
