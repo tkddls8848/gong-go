@@ -74,3 +74,35 @@ test("이름이 같아도 장비 표만 남기고 소프트웨어·PC·UPS 표�
     + table("ECR-046", "백신(PC용/서버용)") + table("ECR-033", "PC 및 복합기") + table("ECR-026", "SAN 스위치");
   assert.deepEqual(requirementSections(text).sections.map((section) => section.id), ["ECR-010", "ECR-012", "ECR-026"]);
 });
+
+test("쪽이 갈려 번호만 남은 표는 명칭으로 본문을 잇는다", () => {
+  const source = [
+    "요구사항 고유번호 ECR-018",
+    "요구사항 분류 시스템 장비구성 요구사항",
+    "요구사항 명칭 유해사이트차단",
+    "요구사항 고유번호 ECR-016",
+    "요구사항 명칭 문서보안서버",
+    "세부 내용 CPU 8core, 메모리 16GB",
+    "- 21 -",
+    "정의 유해사이트차단 규격",
+    "세부 내용 CPU 16core, 메모리 32GB",
+  ].join("\n");
+  const 선별 = requirementSections(source).sections;
+  assert.deepEqual(선별.map((section) => section.id).sort(), ["ECR-016", "ECR-018"]);
+  assert.ok(선별.find((section) => section.id === "ECR-018").text.includes("CPU 16core"), "다음 쪽의 규격을 이어 붙인다");
+});
+
+test("꼬리 없는 이름이 같은 문서의 장비 이름 앞부분이면 소프트웨어로 본다", () => {
+  const table = (id, name) => `요구사항 고유번호 ${id}\n요구사항 명칭 ${name}\n세부 내용 CPU 8core, 메모리 16GB\n`;
+  const source = table("ECR-041", "서버보안") + table("ECR-015", "서버보안서버")
+    + table("ECR-023", "백본 스위치(내부망)") + table("ECR-024", "백본 스위치(인터넷망)");
+  const 선별 = requirementSections(source).sections.map((section) => section.id);
+  assert.ok(!선별.includes("ECR-041"), "서버보안은 서버보안서버의 앞부분이라 뺀다");
+  assert.deepEqual(선별.sort(), ["ECR-015", "ECR-023", "ECR-024"], "둘 다 장비인 이름끼리는 서로를 떨어뜨리지 않는다");
+});
+
+test("이름이 랙 하나인 표는 빼되 트랜시버를 함께 적은 표는 남긴다", () => {
+  const table = (id, name) => `요구사항 고유번호 ${id}\n요구사항 명칭 ${name}\n세부 내용 42U, 포트 48개, 메모리 16GB\n`;
+  const 선별 = requirementSections(table("ECR-031", "서버 RACK") + table("ECR-NW-12", "SFP & Rack")).sections.map((section) => section.id);
+  assert.deepEqual(선별, ["ECR-NW-12"]);
+});

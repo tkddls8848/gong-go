@@ -10,10 +10,18 @@ const detail = /세부\s*내용|상세\s*내용|요구사항\s*정의|CPU|메모
 // 분류로는 갈리지 않지만 명칭으로는 갈린다 — 같은 이름이 장비와 소프트웨어 양쪽에 있어도
 // 장비 쪽만 꼬리에 서버/스토리지/스위치를 달고 있다(NMS/SMS서버와 NMS/SMS, 백신관리서버와
 // 백신(PC용/서버용)). 그래서 이름이 걸려도 꼬리가 장비면 남긴다.
-const NOT_EQUIPMENT = /\bPC\b|복합기|\bUPS\b|\bDBMS\b|그룹웨어|포털|백신|메신저|전자결재|기안기|오피스|Office|미들웨어|솔루션|소프트웨어|\bSW\b|S\/W|\bWAS\b|\bNMS\b|\bSMS\b|\bDRM\b|UI\/UX|공통|교환기|IP-?PBX|IP\s?Phone/i;
-const DEVICE_TAIL = /(?:서버|스토리지|스위치|장치|장비)\s*$/;
+const NOT_EQUIPMENT = /\bPC\b|복합기|\bUPS\b|\bDBMS\b|그룹웨어|포털|백신|메신저|전자결재|기안기|오피스|Office|미들웨어|솔루션|소프트웨어|\bSW\b|S\/W|\bWAS\b|\bNMS\b|\bSMS\b|\bDRM\b|UI\/UX|공통|교환기|IP-?PBX|IP\s?Phone|한글|웹메일|레포팅|리포팅|툴\b|\bTool\b|\bWEB\b/i;
+// 랙은 분석 대상이 아니지만 "SFP & Rack"처럼 트랜시버를 함께 적은 표는 스위치 자료다.
+// 이름이 랙 하나로 끝나는 표만 내려놓는다("서버 RACK", "스위치 RACK").
+const RACK_ONLY = /^(?:서버|스위치|네트워크|통신)?\s*(?:랙|RACK)\s*$/i;
+// 장비 이름 뒤의 괄호는 용도를 덧붙인 것이다("PMS서버(내부/외부)"). 꼬리 판정에서 괄호는
+// 걷어내되, 괄호 앞이 장비어일 때만 장비로 본다 — "백신(PC용/서버용)"은 백신 소프트웨어다.
+const DEVICE_TAIL = /(?:서버|스토리지|스위치|장치|장비)\s*(?:\([^)]*\))?\s*$/;
+// "…요건"으로 장비 표를 가려내려다 되돌렸다. 4대보험 본공고의 ECR-009 상담요약시스템 요건,
+// ECR-010 녹음시스템 요건, ECR-012 PoE 스위치 요건이 모두 실제 장비 표다 — 이름 끝의 "요건"은
+// 장비인지 아닌지를 가르지 않는다. 같은 유혹이 다시 오면 이 세 건을 먼저 보라.
 const LICENSE_ONLY = /^(?:(?:장비|서버|시스템|SW|S\/W)\s*)?(?:라이선스|라이센스|licen[cs]es?)(?:\s*(?:요건|요구사항|도입|구매|제공))?$/i;
-function equipmentTable(text) {
+function equipmentTable(text, naming = {}) {
   // 명칭 칸이 옆 칸과 엇갈려 분류 문구만 잡히는 표가 있다(양산선 ECR-034 UPS). 그때는
   // 이름을 못 읽은 것으로 보고 표 머리를 본다.
   const name = (text.match(/요구사항\s*명칭\s*([^\n]{0,40})/) || [])[1];
@@ -22,7 +30,23 @@ function equipmentTable(text) {
   const subject = (usable ? name : text.slice(0, 300)).replace(/\s+/g, " ").replace(/^[\s|]+|[\s|]+$/g, "");
   // 별도 라이선스 조건 표와 '라이선스 포함 서버'는 다르다. 명칭 전체가 라이선스일 때만 제외한다.
   if (usable && LICENSE_ONLY.test(subject)) return false;
+  if (usable && RACK_ONLY.test(subject)) return false;
+  // 같은 문서에 "서버보안"과 "서버보안서버"가 함께 있으면 꼬리 없는 쪽이 소프트웨어다.
+  // 짝을 볼 때는 꼬리가 없는 이름만 내려놓는다 — "백본 스위치(내부망)"과 "(인터넷망)"처럼
+  // 둘 다 장비인 이름끼리 서로를 떨어뜨리면 안 된다.
+  const base = baseName(subject);
+  if (usable && !DEVICE_TAIL.test(subject) && naming.devices?.some((device) => {
+    const other = baseName(device);
+    return other.length > base.length && other.startsWith(base) && DEVICE_TAIL.test(device);
+  })) return false;
   return !NOT_EQUIPMENT.test(subject) || DEVICE_TAIL.test(subject);
+}
+// 괄호로 덧붙인 용도를 떼어 낸 이름. 짝을 찾을 때는 이 형태로 견준다.
+const baseName = (name) => name.replace(/\s*\([^)]*\)\s*$/, "").trim();
+function tableName(text) {
+  const name = (text.match(/요구사항\s*명칭\s*([^\n]{0,40})/) || [])[1];
+  if (!name || /^\s*(?:시스템\s*장비구성|요구사항|정의)/.test(name)) return "";
+  return name.replace(/\s+/g, " ").replace(/^[\s|]+|[\s|]+$/g, "");
 }
 // 제안요청서는 요구사항 표 둘을 한 쪽에 좌우로 붙여 싣기도 한다(SR-MaaS 본공고). 평문으로
 // 풀면 한 줄에 왼쪽 표와 오른쪽 표가 같이 오므로, 줄 단위로 읽는 선별기는 그런 줄을 통째로
@@ -95,12 +119,31 @@ export function requirementRanges(text) {
   return boundaries.map((boundary, index) => ({ ...boundary, end: boundaries[index + 1]?.start ?? text.length }))
     .map((section) => ({ ...section, text: text.slice(section.start, section.end) }));
 }
+// 쪽 끝에서 번호만 찍히고 규격은 다음 쪽에서 "정의 <명칭> 규격"으로 다시 시작하는 표가 있다.
+// 그 본문에는 번호가 없어 번호로는 이을 수 없다 — 이름으로 잇는다. 추출기에 따라 이 어긋남이
+// 드러나기도 하고 아니기도 하지만, "정의 … 규격"은 문서가 쓰는 표기라 어느 쪽이든 통한다.
+const DEFINITION = (name) => new RegExp(`정의\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*규격`);
+function bodyByName(text, section) {
+  const name = (section.text.match(/요구사항\s*명칭\s*([^\n|]{1,30})/) || [])[1];
+  if (!name || !name.trim()) return null;
+  const found = DEFINITION(name.trim()).exec(text);
+  if (!found || found.index < section.end) return null;
+  const rest = text.slice(found.index);
+  const stop = rest.slice(1).search(/요구사항\s*(?:고유\s*)?(?:번호|ID|코드)|정의\s*\S[^\n]{0,28}규격/);
+  return rest.slice(0, stop < 0 ? rest.length : stop + 1);
+}
 export function requirementSections(source) {
   // 좌우로 붙은 표를 먼저 위아래로 편다. 이미 편 글은 번호 칸이 한 열에 모여 그대로 돌아온다.
-  const ranges = requirementRanges(unfoldColumns(source));
-  const sections = ranges.filter((section) => target(section.id))
-    .filter((section) => detail.test(section.text) && equipmentTable(section.text));
-  return { sections, ids: [...new Set(ranges.filter((entry) => target(entry.id)).map((entry) => entry.id))] };
+  const text = unfoldColumns(source);
+  const ranges = requirementRanges(text).filter((section) => target(section.id));
+  // 이름 짓는 방식은 문서마다 다르다. 한 표만 보지 말고 문서 전체의 이름을 모아 견준다.
+  const naming = { devices: ranges.map((entry) => tableName(entry.text)).filter(Boolean) };
+  const sections = ranges.map((section) => {
+    if (detail.test(section.text)) return section;
+    const body = bodyByName(text, section);
+    return body ? { ...section, text: `${section.text}\n${body}` } : section;
+  }).filter((section) => detail.test(section.text) && equipmentTable(section.text, naming));
+  return { sections, ids: [...new Set(ranges.map((entry) => entry.id))] };
 }
 export function priorityOrder(chunks) {
   const rank = (text) => requirementSections(text).sections.length ? 0 : /ECR[-–]|장비\s*[-–]?\s*\d/i.test(text) ? 1 : 2;
