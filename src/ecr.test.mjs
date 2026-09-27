@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "./worker.js";
-import { handleEcr as rawHandleEcr, parseResult, splitDocument, ECR_MODEL } from "./ecr.js";
+import { handleEcr as rawHandleEcr, parseResult, splitDocument, purgeStaleJobs, JOB_RETENTION_MS, ECR_MODEL } from "./ecr.js";
 import { handleAiAccess } from "./ai-access.js";
 import { reserveNeurons, runBudgeted } from "./ai-budget.js";
 const ORIGIN = "https://example.workers.dev";
@@ -25,9 +25,15 @@ function bucket() {
     async put(key, body, { onlyIf } = {}) {
       const prior = store.get(key);
       if (onlyIf?.etagMatches && prior?.etag !== onlyIf.etagMatches || onlyIf?.etagDoesNotMatch === "*" && prior) return null;
-      const value = { body, etag: String(++version) }; store.set(key, value); return value;
+      const value = { body, etag: String(++version), uploaded: new Date() }; store.set(key, value); return value;
     },
-    async delete(key) { store.delete(key); },
+    // R2는 키 배열을 한 번에 지운다. 정리가 그 형태를 쓰므로 모의도 같게 받는다.
+    async delete(keys) { for (const key of [].concat(keys)) store.delete(key); },
+    async list({ prefix = "", limit = 1000 } = {}) {
+      const objects = [...store.entries()].filter(([key]) => key.startsWith(prefix))
+        .slice(0, limit).map(([key, value]) => ({ key, uploaded: value.uploaded }));
+      return { objects, truncated: false };
+    },
   };
 }
 const request = (params, body, headers = {}) => new Request(`${ORIGIN}/api/ecr?${new URLSearchParams(params)}`, { method: "POST", body, headers: { Origin: ORIGIN, ...headers } });
@@ -322,4 +328,35 @@ test("사용량이 없거나 이상하면 예약을 그대로 둔다", async () 
   await runBudgeted(env, ECR_MODEL, { messages: [], max_tokens: 2048 });
   const 장부 = await (await store.get(예산키)).json();
   assert.ok(장부.reserved > 50, "덜 썼다는 증거가 없으면 되돌리지 않는다");
+});
+
+test("완주하면 원문 사본을 지우고 결과만 남긴다", async () => {
+  const env = { DATA: bucket(), AI: { run: async () => modelResult() } };
+  const job = await (await handleEcr(request({ action: "upload", notice: "R26-900", name: "rfp.md" }, source), env)).json();
+  const done = await (await handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "1" }), env)).json();
+  assert.ok(done.analysis, "먼저 결과가 저장돼야 한다");
+  const 남은키 = [...env.DATA.store.keys()].filter((key) => key.startsWith("_ecr/")).sort();
+  assert.deepEqual(남은키, [`_ecr/jobs/${job.id}.json`, "_ecr/notices/R26-900.json"], "구간·세분화·표식은 남지 않는다");
+  const 묘비 = JSON.parse(env.DATA.store.get(`_ecr/jobs/${job.id}.json`).body);
+  assert.equal(묘비.done, true);
+  assert.equal(묘비.chunks, undefined, "작업 자리에 원문은 남지 않는다");
+  assert.ok(!JSON.stringify(묘비).includes("메모리"), "원문 조각이 표식에 섞이지 않는다");
+  const 결과 = await (await handleEcr(new Request(`${ORIGIN}/api/ecr?notice=R26-900`), env)).json();
+  assert.equal(결과.ecr.length, 1, "정리 뒤에도 결과는 읽힌다");
+  const 재요청 = await (await handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "1" }), env)).json();
+  assert.equal(재요청.analysis.ecr.length, 1, "마지막 요청을 다시 보내도 추론 없이 결과를 돌려준다");
+});
+
+test("보존 기간이 지난 작업 자료만 걷어 가고 결과는 남긴다", async () => {
+  const store = bucket();
+  const 지금 = Date.now();
+  await store.put("_ecr/jobs/abc.json", "{}");
+  await store.put("_ecr/parts/abc/0.json", "[]");
+  await store.put("_ecr/notices/R26-901.json", "{}");
+  // 작업 자료만 이레 하루 전으로 돌린다
+  for (const key of ["_ecr/jobs/abc.json", "_ecr/parts/abc/0.json"]) store.store.get(key).uploaded = new Date(지금 - JOB_RETENTION_MS - 86400000);
+  const 지운수 = await purgeStaleJobs({ DATA: store }, 지금);
+  assert.equal(지운수, 2);
+  assert.deepEqual([...store.store.keys()], ["_ecr/notices/R26-901.json"], "결과는 기간과 무관하게 남는다");
+  assert.equal(await purgeStaleJobs({ DATA: store }, 지금), 0, "갓 만든 자료는 건드리지 않는다");
 });

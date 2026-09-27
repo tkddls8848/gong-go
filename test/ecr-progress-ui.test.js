@@ -1,28 +1,29 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
+
+const { createEcr } = require("../public/ecr-ui.js");
+const { createAiAccess } = require("../public/ai-access.js");
+const { createModal } = require("../public/notice-modal.js");
 function screen() {
-  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
-  const start = app.indexOf("let ecrBusy = false, aiUnlocked = false;");
-  const end = app.indexOf("// 제외 사유", start);
-  assert.ok(start >= 0 && end > start);
   const nodes = new Map(), requests = [];
   const $ = (id) => {
     if (!nodes.has(id)) nodes.set(id, { hidden: false, disabled: false, textContent: "", value: "", files: [{ name: "rfp.md", size: 100 }], querySelectorAll: () => [] });
     return nodes.get(id);
   };
-  const context = vm.createContext({ $, URLSearchParams, setTimeout: (fn) => fn(), currentRow: { mode: "bid", number: "test" }, currentAnalysis: null,
-    numberOf: (row) => row.number, analyses: new Map(), modal: { style: {} }, restoreModalFocus() {},
-    fetch: (url) => new Promise((resolve) => requests.push({ url, resolve })) });
-  vm.runInContext(app.slice(start, end), context);
-  context.GongHttp = { requestJson: async (url, options) => { const response = await context.fetch(url, options); return { response, data: await response.json() }; } };
-  const close = app.split("\n").find((line) => line.startsWith("function closeModal()"));
-  vm.runInContext(close, context);
-  context.showAiAccess(true);
-  return { $, requests, context, start: () => $("#ecr-upload-form").onsubmit({ preventDefault() {} }), stop: () => $("#ecr-stop-btn").onclick() };
+  const context = { currentRow: { mode: "bid", number: "test" }, currentAnalysis: null,
+    ecrBusy: false, aiUnlocked: false, ecrRun: 0, ecrLoadRevision: 0,
+    GongHttp: { requestJson: (url, options) => new Promise((resolve) => requests.push({
+      url, resolve: async (response) => resolve({ response, data: await response.json() })
+    })) } };
+  const access = createAiAccess({ $, state: context, GongHttp: context.GongHttp });
+  const controller = createEcr({ $, model: context, state: context, numberOf: (row) => row.number,
+    analyses: new Map(), GongHttp: context.GongHttp, showAiAccess: access.showAiAccess });
+  const modal = createModal({ $, model: context, modal: { style: {} }, stopEcrAnalysis: controller.stopEcrAnalysis });
+  context.closeModal = modal.closeModal;
+  access.showAiAccess(true);
+  return { $, requests, context, start: () => controller.startEcrAnalysis({ preventDefault() {} }), stop: controller.stopEcrAnalysis };
 }
+
 const reply = (data) => ({ ok: true, json: async () => data });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 

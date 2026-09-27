@@ -1,19 +1,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
+const { refreshScreen } = require("./helpers/refresh.js");
 function screen() {
-  const source = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
-  const start = source.indexOf("async function finishRefresh("), end = source.indexOf("function pollDelay", start);
-  const requests = [], statuses = [], searches = [], input = { value: "2026-09-01" };
-  const context = vm.createContext({ refreshRevision: 1, refreshRunId: "old", refreshRange: null, refreshSince: null,
-    fileIndex: [], totalCount: () => 1, dataRange: () => ({ end: "2026-09-10" }),
+  const requests = [], searches = [];
+  const ui = refreshScreen({
+    initial: { refreshRevision: 1, refreshRunId: "old" },
     loadIndex: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
-    setRefresh: (...args) => statuses.push(args), $: () => input, format: String, page: 2,
-    applyFilters: (options) => searches.push(options) });
-  vm.runInContext(source.slice(start, end), context);
-  return { context, requests, statuses, searches, input, finish: () => context.finishRefresh({}) };
+    applyFilters: (options) => searches.push(options),
+  });
+  return { ...ui, requests, searches, finish: () => ui.controller.finishRefresh({}) };
 }
 
 test("이전 갱신의 목록 재조회 성공·실패는 새 실행 UI를 덮어쓰지 않는다", async () => {

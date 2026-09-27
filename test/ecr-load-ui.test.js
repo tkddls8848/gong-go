@@ -1,24 +1,25 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
+
+const { createEcr } = require("../public/ecr-ui.js");
+const { createHttp } = require("../public/http.js");
 function screen(timeoutMs) {
-  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
-  const start = app.indexOf("let ecrLoadRevision = 0;");
-  const end = app.indexOf("function wireEcrEntrypoints", start);
-  assert.ok(start >= 0 && end > start);
   const requests = [], renders = [], nodes = new Map();
   const $ = (id) => { if (!nodes.has(id)) nodes.set(id, { innerHTML: "", textContent: "", insertAdjacentHTML() {} }); return nodes.get(id); };
-  const context = vm.createContext({ $, AbortController, clearTimeout, setTimeout: (fn, ms) => setTimeout(fn, timeoutMs ?? ms), DATA_BASE: "/data", currentRow: { announcementNumber: "one" }, currentAnalysis: null, ecrRun: 0,
+  const context = { $, currentRow: { announcementNumber: "one" }, currentAnalysis: null,
+    ecrBusy: false, aiUnlocked: false, ecrRun: 0, ecrLoadRevision: 0,
     analyses: new Map(), numberOf: (row) => row.announcementNumber, html: (value) => value,
-    fetch: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
     document: { querySelectorAll: () => [] },
-    renderEcr: (data) => renders.push(data), EquipmentSummary: { ...require("../public/equipment.js"), render: () => "" } });
-  vm.runInContext(fs.readFileSync(path.join(__dirname, "../public/http.js"), "utf8"), context);
-  vm.runInContext(app.slice(start, end), context);
-  return { context, requests, renders, $, load: () => context.loadEcr() };
+    renderEcr: (data) => renders.push(data), EquipmentSummary: { ...require("../public/equipment.js"), render: () => "" } };
+  const GongHttp = createHttp({
+    setTimeout: (fn, ms) => setTimeout(fn, timeoutMs ?? ms),
+    fetch: () => new Promise((resolve, reject) => requests.push({ resolve, reject }))
+  });
+  const controller = createEcr({ ...context, model: context, state: context, GongHttp });
+  Object.assign(context, controller);
+  return { context, requests, renders, $, load: controller.loadEcr };
 }
+
 const result = (name) => ({ provider: "workers-ai", ecr: [], name });
 const reply = (data) => ({ ok: true, json: async () => data });
 

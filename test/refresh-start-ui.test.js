@@ -1,20 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
+const { refreshScreen } = require("./helpers/refresh.js");
 function screen(timeoutMs) {
-  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
-  const start = app.indexOf("async function startRefresh("), end = app.indexOf("function refreshUrl", start);
-  const requests = [], statuses = [], button = { disabled: false }; let polls = 0;
-  const context = vm.createContext({ AbortController, setTimeout: (fn, ms) => setTimeout(fn, timeoutMs ?? ms), clearTimeout, REFRESH_API: "/api/refresh",
-    $: () => button, setRefresh: (busy, text) => { button.disabled = busy; statuses.push(text); },
-    pollRefresh: () => polls++, fetch: (_url, options) => new Promise((resolve, reject) => requests.push({ options, resolve, reject })),
-    refreshRunId: null, refreshSince: null, refreshRange: null, refreshRevision: 0 });
-  vm.runInContext(fs.readFileSync(path.join(__dirname, "../public/http.js"), "utf8"), context);
-  vm.runInContext(app.slice(start, end), context);
-  return { context, requests, statuses, button, polls: () => polls, start: () => context.startRefresh() };
+  let polls = 0;
+  const ui = refreshScreen({ timeoutMs, getJson: () => { polls++; return new Promise(() => {}); } });
+  return { ...ui, statuses: ui.texts, polls: () => polls, start: ui.controller.startRefresh };
 }
+
 test("갱신 시작 중 다른 진입점의 중복 요청을 차단한다", async () => {
   const ui = screen(), pending = ui.start();
   await ui.start();

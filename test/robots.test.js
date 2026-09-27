@@ -66,5 +66,5 @@ test("ROBOTS_PATH는 실제로 배포되는 파일을 가리킨다", () => {
 test("로그인 페이지는 헤더로도 색인하지 말라고 말한다", () => {
   // robots.txt를 읽지 않고 링크를 타고 들어온 크롤러가 실제로 받는 것은 이 401 페이지다.
   assert.match(WORKER, /"X-Robots-Tag":\s*"noindex, nofollow, noarchive"/);
-  assert.match(WORKER, /<meta name="robots" content="noindex, nofollow" \/>/);
+  assert.match(fs.readFileSync(path.join(root, "src", "gate.js"), "utf8"), /<meta name="robots" content="noindex, nofollow" \/>/);
 });

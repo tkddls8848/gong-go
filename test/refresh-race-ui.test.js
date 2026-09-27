@@ -1,18 +1,16 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
+const { refreshScreen } = require("./helpers/refresh.js");
 function screen() {
-  const source = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
-  const start = source.indexOf("function refreshUrl("), end = source.indexOf("async function finishRefresh", start);
-  const requests = [], statuses = [], finished = [], button = { disabled: false };
-  const context = vm.createContext({ refreshRevision: 0, refreshRunId: null, refreshSince: null, refreshRange: null, REFRESH_API: "/api/refresh", REFRESH_WAIT_LIMIT_MS: 10000,
-    $: () => button, getJson: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
-    setRefresh: (busy, text) => { button.disabled = busy; statuses.push(text); }, refreshText: () => "running", finishRefresh: (state) => finished.push(state), setTimeout, pollDelay: () => 1 });
-  vm.runInContext(source.slice(start, end), context);
-  return { context, requests, statuses, finished, button };
+  const requests = [], finished = [];
+  let received;
+  const ui = refreshScreen({
+    getJson: () => new Promise((resolve, reject) => requests.push({ reject, resolve(value) { received = value; resolve(value); } })),
+    applyFilters: () => finished.push(received),
+  });
+  return { ...ui, requests, finished, statuses: ui.texts };
 }
+
 test("지연된 초기 상태 복구는 새 갱신 실행을 덮어쓰지 않는다", async () => {
   const ui = screen(), pending = ui.context.resumeRefresh();
   ui.context.refreshRevision++; ui.context.refreshRunId = "new"; ui.button.disabled = true;
@@ -51,6 +49,6 @@ test("정상 완료 응답은 실행 번호를 보존하며 완료 처리한다"
     ui.requests[0].resolve({ running: false, runId }); await pending;
     assert.equal(ui.finished.length, 1);
     assert.equal(ui.finished[0].runId, runId);
-    assert.equal(ui.context.refreshRunId, String(runId));
+    assert.equal(ui.context.refreshRunId, null);
   }
 });

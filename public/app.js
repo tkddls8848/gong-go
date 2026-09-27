@@ -1,15 +1,7 @@
 // Cloudflare Worker가 R2 데이터를 중계한다.
-const $ = (s) => document.querySelector(s), DATA_BASE = "/data", REFRESH_API = "/api/refresh", ASK_API = "/api/ask", LIVE_API = "/api/live", POLL_SLOW_MS = 5000, POLL_FAST_MS = 2000, MAX_ROWS = 200000;
-// dispatch는 받아들여졌는데 실행이 끝내 목록에 뜨지 않는 경우의 한도. 이게 없으면 영원히 폴링한다.
-const REFRESH_WAIT_LIMIT_MS = 120000;
-// CSV 스캔은 search-worker.js가 맡는다. 여기서는 워커를 몇 개 띄우고 각자 몇 개씩
-// 동시에 받게 할지만 정한다(둘을 곱한 값이 예전 LOAD_CONCURRENCY 자리다).
-const POOL_SIZE = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)), FETCH_CONCURRENCY = 12;
-const LIVE_TYPES = ["물품", "외자", "용역", "공사"], LIVE_CONCURRENCY = 4, LIVE_MAX_PAGE = 200;
-// 결과가 쌓이는 동안에도 첫 페이지를 미리 그린다. 다만 건수가 커지면 미리보기마다
-// 정렬 비용이 붙으므로 이 한도를 넘으면 진행률만 갱신한다.
-const PREVIEW_LIMIT = 30000, PREVIEW_MS = 700;
+const $ = (s) => document.querySelector(s);
 const Rows = self.GongRows;
+const { numberOf, dateKey, dateFormat, format, localDate, html } = GongFormat;
 let pageSize = 50;
 // main 브랜치와 동일한 기본 관심 기관 목록. 코드를 비우면 기관명 정확 일치로 조회한다.
 const DEFAULT_INSTITUTIONS = [
@@ -22,13 +14,10 @@ const norm = Rows.norm;
 // 사용자별 저장소가 없고, 인증도 공유 비밀번호 하나뿐이라 서버에 둬도 "누구 것"인지 가릴 수 없다.
 const INST_STORAGE_KEY = "gong-go:institutions"; // 구 형식. 마이그레이션에서만 읽는다.
 const PRESET_STORAGE_KEY = "gong-go:institution-presets";
-const INDEX_STORAGE_KEY = "gong-go:index-updated-at";
 const DEFAULT_PRESET = "기본";
 // activePreset이 null이면 고급검색이 만든 임시 목록이다. 이때는 저장하지 않는다 — 자연어 질의가
 // 사용자가 공들여 만든 프리셋을 조용히 덮어쓰면 되돌릴 방법이 없다.
-let presets = [], activePreset = DEFAULT_PRESET, institutionList = [], searchTimer = null, refreshRunId = null, refreshRange = null, refreshSince = null, liveController = null;
-let refreshRevision = 0;
-let indexRevision = 0;
+let presets = [], activePreset = DEFAULT_PRESET, institutionList = [], searchTimer = null;
 function cleanInstitutions(list) { return Array.isArray(list) ? list.map((inst) => ({ name: String(inst?.name || ""), code: String(inst?.code || "") })).filter((inst) => inst.name || inst.code) : []; }
 function normalizePresets(list) { return Array.isArray(list) ? list.map((preset) => ({ name: String(preset?.name || "").trim(), institutions: cleanInstitutions(preset?.institutions) })).filter((preset) => preset.name) : []; }
 // 구 형식(단일 목록)이 남아 있으면 "기본" 프리셋으로 옮긴다. 기존 사용자의 칩이 그대로 살아난다.
@@ -60,35 +49,9 @@ function renderPresets() {
   select.innerHTML = `${transient ? '<option value="" selected>(고급검색)</option>' : ""}${presets.map((preset) => `<option value="${html(preset.name)}"${!transient && preset.name === activePreset ? " selected" : ""}>${html(preset.name)}</option>`).join("")}`;
   $("#preset-delete").disabled = transient || presets.length <= 1;
 }
-let filtered = [], fileIndex = [], dataSchemaVersion = "", page = 1, searchVersion = 0, currentRow = null, currentAnalysis = null, viewMode = "pre";
+let page = 1;
+const model = { filtered: [], fileIndex: [], dataSchemaVersion: "", searchVersion: 0, currentRow: null, currentAnalysis: null, viewMode: "pre" };
 const analyses = new Map(), modal = $("#file-modal");
-let modalOpener = null;
-function activateModalFocus() {
-  if (!modal.contains(document.activeElement)) modalOpener = document.activeElement;
-  $(".app").inert = true;
-  $("#modal-close").focus();
-}
-function restoreModalFocus() {
-  $(".app").inert = false;
-  if (!modalOpener) return;
-  const target = modalOpener.isConnected ? modalOpener : $(".mode-toggle-btn.active");
-  modalOpener = null;
-  target?.focus();
-}
-function modalKeydown(event) {
-  if (modal.style.display === "none") return;
-  if (event.key === "Escape") { event.preventDefault(); closeModal(); return; }
-  if (event.key !== "Tab") return;
-  const controls = [...modal.querySelectorAll("a[href], button, input, select, textarea, summary, [tabindex]")]
-    .filter((node) => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length);
-  const first = controls[0], last = controls[controls.length - 1];
-  if (!first) { event.preventDefault(); $(".modal").focus(); return; }
-  if (event.shiftKey && (document.activeElement === first || !controls.includes(document.activeElement))) {
-    event.preventDefault(); last.focus();
-  } else if (!event.shiftKey && (document.activeElement === last || !controls.includes(document.activeElement))) {
-    event.preventDefault(); first.focus();
-  }
-}
 const MODE_SUBTITLES = {
   pre: "로컬 CSV에 저장한 사전공고를 조회합니다.",
   bid: "로컬 CSV에 저장한 본공고를 조회합니다.",
@@ -98,57 +61,62 @@ const MODE_SUBTITLES = {
 };
 const MODE_NAMES = { pre: "사전공고", bid: "본공고", plan: "발주계획" };
 
+
+// 기능 모듈 조립. 요청 세대·취소 상태는 각 모듈 인스턴스에 속한다.
+const resetPage = () => { page = 1; };
+const { getJson } = GongHttp;
+const { modalSubtitle, detailLink, attachmentWarnings, planLinks, fileBadge,
+  renderBidSchedule, normalizeFiles, wireEcrEntrypoints } =
+  GongNoticeView.createNoticeView({ html, numberOf, format, document, openModal: (...args) => openModal(...args) });
+const { loadIndex } = GongIndex.createIndex({ model, analyses, $, getJson, renderDataStatus, defaultRange });
+const scanner = GongScan.createScanner({ model });
+const { applyFilters } = GongSearch.createSearch({
+  model, $, scanner, renderRows, collectInstitutions, todayFile, MODE_NAMES, format, numberOf
+});
+const { startRefresh, resumeRefresh } = GongRefresh.createRefresh({
+  model, $, getJson, totalCount, dataRange, loadIndex, format, resetPage, applyFilters
+});
+const { runNlQuery } = GongNlQuery.createNlQuery({
+  model, $, collectInstitutions, setNl, applyNlFilter, applyFilters, resetPage
+});
+const ecrState = { ecrBusy: false, aiUnlocked: false, ecrRun: 0, ecrLoadRevision: 0 };
+const { showAiAccess, refreshAiAccess, unlockAiAccess, lockAiAccess } =
+  GongAiAccess.createAiAccess({ $, state: ecrState });
+const { renderEcr } = GongEcrView.createEcrView({ $, html });
+const { loadEcr, stopEcrAnalysis, startEcrAnalysis } = GongEcr.createEcr({
+  model, state: ecrState, $, analyses, numberOf, html, renderEcr, showAiAccess
+});
+const { openModal, closeModal, selectTab, modalKeydown } = GongModal.createModal({
+  model, $, modal, analyses, html, normalizeFiles, numberOf, modalSubtitle, detailLink,
+  attachmentWarnings, planLinks, renderBidSchedule, stopEcrAnalysis, refreshAiAccess, loadEcr
+});
+const { downloadCsv, downloadEcr, downloadAll } = GongExports.createExports({
+  model, analyses, $, downloadRows, MODE_NAMES, normalizeFiles, numberOf
+});
+$("#ai-unlock-form").onsubmit = unlockAiAccess;
+$("#ai-lock-btn").onclick = lockAiAccess;
+$("#ecr-stop-btn").onclick = stopEcrAnalysis;
+$("#ecr-upload-form").onsubmit = startEcrAnalysis;
+function modeOf(file) { return file.mode || String(file.path || "").split("/")[0]; }
+
 if (location.protocol === "file:") { $("#status").textContent = "배포된 서비스 주소에서 접속해 주세요."; renderRows([]); }
 else { loadIndex(true).then(({ changed, stale }) => { if (!stale) return applyFilters({ revalidateRecent: changed }); }).catch((error) => { $("#status").textContent = error.message; renderRows([]); }); resumeRefresh(); }
 
-// index.json은 갱신 직후에도 최신이어야 하므로 매번 캐시를 우회한다. 파일 1개라 호출량에
-// 영향이 없다. 일반 수집 시각은 CSV URL에 붙이지 않는다 — 매시 모든 과거 캐시가 날아간다.
-// 대신 과거 백필처럼 봉인 파일의 스키마 자체가 바뀐 때만 schemaVersion이 한 번 바뀐다.
-async function loadIndex(initial) {
-  const revision = ++indexRevision;
-  let index, analysis;
-  try { [index, analysis] = await Promise.all([getJson(`${DATA_BASE}/index.json?t=${Date.now()}`), getJson(`${DATA_BASE}/analysis-index.json`).catch(() => null)]); }
-  catch (error) { if (revision !== indexRevision) return { stale: true, changed: false }; throw error; }
-  if (revision !== indexRevision) return { stale: true, changed: false };
-  const paths = new Set();
-  if (!index || !Array.isArray(index.files) || index.files.some((file) => {
-    if (!file || typeof file.path !== "string" || !/^(pre|bid|plan)\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.csv\.gz$/.test(file.path)) return true;
-    if (paths.has(file.path)) return true;
-    paths.add(file.path);
-    if (file.mode !== undefined && file.mode !== file.path.split("/")[0]) return true;
-    if (file.count !== undefined && (!Number.isSafeInteger(file.count) || file.count < 0)) return true;
-    try { GongDates.shiftDay(file.begin, 0); GongDates.shiftDay(file.end, 0); } catch { return true; }
-    return file.begin > file.end;
-  })) throw new Error("공고 데이터 목록 형식이 올바르지 않습니다. 기존 목록을 유지합니다. 잠시 후 다시 시도하세요.");
-  const notices = new Set();
-  const analysisValid = analysis && Array.isArray(analysis.entries) && analysis.entries.every((entry) => {
-    if (!entry || typeof entry.notice !== "string" || !entry.notice.trim() || typeof entry.path !== "string" || !entry.path.trim() || notices.has(entry.notice)) return false;
-    if (entry.verified !== undefined && typeof entry.verified !== "boolean") return false;
-    if (entry.ecrCount !== undefined && (!Number.isSafeInteger(entry.ecrCount) || entry.ecrCount < 0)) return false;
-    // 인덱스는 저장 결과만 가리켜야 한다. 다른 API·URL·경로 정규화 우회는 허용하지 않는다.
-    let cloudPath;
-    try { cloudPath = `/api/ecr?notice=${encodeURIComponent(entry.notice)}`; } catch { return false; }
-    const storedPath = entry.path.startsWith("analysis/") && entry.path.endsWith(".json")
-      && entry.path === entry.path.trim() && !/[\\%?#:\x00-\x1f\x7f]/.test(entry.path)
-      && entry.path.split("/").every((part) => part && part !== "." && part !== "..");
-    if (entry.path !== cloudPath && !storedPath) return false;
-    notices.add(entry.notice);
-    return true;
-  });
-  let previous = "";
-  try { previous = localStorage.getItem(INDEX_STORAGE_KEY) || ""; localStorage.setItem(INDEX_STORAGE_KEY, index.updatedAt || ""); } catch {}
-  fileIndex = index.files || [];
-  dataSchemaVersion = String(index.schemaVersion || "");
-  if (analysisValid) { analyses.clear(); analysis.entries.forEach((entry) => analyses.set(entry.notice, entry)); }
-  renderDataStatus(index);
-  if (!analysisValid) $("#data-count").textContent += " · ECR 저장 목록 확인 실패";
-  if (initial) { defaultRange(); $("#status").textContent = `${fileIndex.length}개 CSV를 찾았습니다.${analysisValid ? "" : " ECR 저장 목록은 확인하지 못했습니다. 공고에서 저장 결과를 직접 조회할 수 있습니다."}`; }
-  return { index, analysisUnavailable: !analysisValid, changed: Boolean(previous && index.updatedAt && previous !== index.updatedAt) };
-}
 // 실제 인덱스의 가장 이른 날짜를 조회 범위로 사용한다.
 // 날짜 입력의 min으로 그 바닥을 알려 준다. max는 두지 않는다 — 오늘치 파일이 아직 없어도
 // /api/live가 최신 공고를 얹으므로 오늘을 고를 수 있어야 한다.
-function renderDataStatus(index) { const { begin, end } = dataRange(), total = totalCount(); if (begin) { $("#begin").min = begin; $("#end").min = begin; } $("#data-range").textContent = end ? `${begin} ~ ${end}` : "없음"; $("#data-count").textContent = end ? `${format(fileIndex.length)}개 파일 · ${format(total)}건` : ""; $("#last-crawl").textContent = `마지막 크롤링 ${stamp(index?.updatedAt)}`; $("#updated-at").textContent = `updated ${stamp(index?.updatedAt)}`; renderTodaySummary(); }
+function renderDataStatus(index) {
+  const { begin, end } = dataRange(), total = totalCount();
+  if (begin) {
+    $("#begin").min = begin;
+    $("#end").min = begin;
+  }
+  $("#data-range").textContent = end ? `${begin} ~ ${end}` : "\uC5C6\uC74C";
+  $("#data-count").textContent = end ? `${format(model.fileIndex.length)}\uAC1C \uD30C\uC77C \xB7 ${format(total)}\uAC74` : "";
+  $("#last-crawl").textContent = `\uB9C8\uC9C0\uB9C9 \uD06C\uB864\uB9C1 ${stamp(index?.updatedAt)}`;
+  $("#updated-at").textContent = `updated ${stamp(index?.updatedAt)}`;
+  renderTodaySummary();
+}
 
 // 공고 데이터와 자연어 검색 서버 모두 한국시간 날짜를 사용한다.
 function today() { return GongDates.kstDate(); }
@@ -156,35 +124,35 @@ function todayKey() { return today().replaceAll("-", ""); }
 function isToday(value) { return dateKey(value) === todayKey(); }
 // 일별 인덱스 항목은 begin === end === 그 날짜다(collector/store.js의 indexEntry).
 // 그래서 파일을 하나도 내려받지 않고 오늘 건수를 세 모드 모두 셀 수 있다.
-function todayFile(mode) { const date = today(); return fileIndex.find((file) => modeOf(file) === mode && file.begin === date && file.end === date); }
+function todayFile(mode) { const date = today(); return model.fileIndex.find((file) => modeOf(file) === mode && file.begin === date && file.end === date); }
 // 오늘 건수는 레일의 유형 줄에 붙는다. 버튼은 index.html에 고정으로 있고 여기서는 숫자만
 // 갈아 끼운다 — 매번 다시 그리면 클릭 핸들러도 매번 다시 걸어야 한다.
 function renderTodaySummary() {
   const box = $("#today-summary");
-  box.hidden = !fileIndex.length;
-  if (fileIndex.length) box.textContent = `오늘 ${today()}`;
+  box.hidden = !model.fileIndex.length;
+  if (model.fileIndex.length) box.textContent = `오늘 ${today()}`;
   document.querySelectorAll(".today-jump").forEach((button) => {
     const file = todayFile(button.dataset.mode);
-    button.textContent = fileIndex.length && file ? format(Number(file.count) || 0) : "-";
+    button.textContent = model.fileIndex.length && file ? format(Number(file.count) || 0) : "-";
     button.title = `게시일을 오늘 하루로 좁혀 ${MODE_NAMES[button.dataset.mode]}를 봅니다`;
   });
 }
 // 게시일을 오늘 하루로 좁힌다. 모드를 함께 주면 그 모드로 갈아탄 뒤 한 번만 조회한다.
 function jumpToToday(mode) {
   $("#begin").value = today(); $("#end").value = today();
-  if (mode && mode !== viewMode) { setMode(mode); closeModal(); }
+  if (mode && mode !== model.viewMode) { setMode(mode); closeModal(); }
   page = 1; applyFilters();
 }
 // 항목이 구간이 된 뒤로 "며칠치"는 인덱스만으로 셀 수 없다(월별 봉인 항목 하나가 한 달을
 // 덮는다). 보유 범위는 begin의 최소·end의 최대로 낸다.
-function dataRange() { const begins = fileIndex.map((file) => file.begin).filter(Boolean).sort(), ends = fileIndex.map((file) => file.end).filter(Boolean).sort(); return { begin: begins[0] || "", end: ends.at(-1) || "" }; }
-function totalCount() { return fileIndex.reduce((sum, file) => sum + (Number(file.count) || 0), 0); }
+function dataRange() { const begins = model.fileIndex.map((file) => file.begin).filter(Boolean).sort(), ends = model.fileIndex.map((file) => file.end).filter(Boolean).sort(); return { begin: begins[0] || "", end: ends.at(-1) || "" }; }
+function totalCount() { return model.fileIndex.reduce((sum, file) => sum + (Number(file.count) || 0), 0); }
 function stamp(value) { const date = new Date(value), pad = (part) => String(part).padStart(2, "0"); return value && !Number.isNaN(date.valueOf()) ? `${localDate(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` : "-"; }
 
 $("#search").onclick = () => { page = 1; applyFilters(); }; $("#reset").onclick = () => { ["#q", "#business-type", "#nl-query"].forEach((s) => { $(s).value = ""; }); $("#inst-loose").checked = false; setNl(false, ""); defaultRange(); page = 1; applyFilters(); }; $("#q").onkeydown = (event) => { if (event.key === "Enter") { page = 1; applyFilters(); } };
 // 사전공고/본공고는 조회 조건이 아니라 레일의 유형 목록으로 전환한다. 초기화 버튼은 건드리지 않는다.
 // 오늘 건수는 같은 줄에 있지만 별개의 버튼이라 여기 걸린 위임에 잡히지 않는다(제 핸들러가 있다).
-$("#mode-toggle").onclick = (event) => { const button = event.target.closest(".mode-toggle-btn"); if (button && button.dataset.mode !== viewMode) applyMode(button.dataset.mode); };
+$("#mode-toggle").onclick = (event) => { const button = event.target.closest(".mode-toggle-btn"); if (button && button.dataset.mode !== model.viewMode) applyMode(button.dataset.mode); };
 document.querySelectorAll(".today-jump").forEach((button) => button.onclick = () => jumpToToday(button.dataset.mode));
 
 // 레일은 접을 수 있다. 넓은 화면에서는 접힌 상태를 기억하고(표에 248px을 더 주려고 접는
@@ -223,11 +191,21 @@ document.addEventListener("keydown", (event) => { if (event.key === "Escape") se
 // 조회해야 하므로 모드 전환이 그 자리에서 조회를 걸면 안 된다.
 // 켜짐 표시는 버튼을 감싼 줄(.mode-row)에도 건다. 오늘 건수가 버튼이라 유형 버튼 안에 넣을
 // 수 없어서, 줄 전체가 켜진 것처럼 보이게 하려면 부모가 그 상태를 알아야 한다.
-function setMode(key) { viewMode = key; document.querySelectorAll(".mode-toggle-btn").forEach((button) => { const active = button.dataset.mode === key; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); button.parentElement.classList.toggle("active", active); }); $("#app-subtitle").textContent = MODE_SUBTITLES[key]; $("#close-col").textContent = key === "plan" ? "발주예정" : "마감일"; }
+function setMode(key) {
+  model.viewMode = key;
+  document.querySelectorAll(".mode-toggle-btn").forEach((button) => {
+    const active = button.dataset.mode === key;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+    button.parentElement.classList.toggle("active", active);
+  });
+  $("#app-subtitle").textContent = MODE_SUBTITLES[key];
+  $("#close-col").textContent = key === "plan" ? "\uBC1C\uC8FC\uC608\uC815" : "\uB9C8\uAC10\uC77C";
+}
 function applyMode(key) { setMode(key); closeModal(); page = 1; applyFilters(); }
-$("#previous").onclick = () => { if (page > 1) { page -= 1; renderRows(filtered); } }; $("#next").onclick = () => { if (page * pageSize < filtered.length) { page += 1; renderRows(filtered); } }; $("#download-btn").onclick = downloadCsv; $("#download-ecr-btn").onclick = downloadEcr;
+$("#previous").onclick = () => { if (page > 1) { page -= 1; renderRows(model.filtered); } }; $("#next").onclick = () => { if (page * pageSize < model.filtered.length) { page += 1; renderRows(model.filtered); } }; $("#download-btn").onclick = downloadCsv; $("#download-ecr-btn").onclick = downloadEcr;
 $("#refresh-btn").onclick = startRefresh; $("#menu-refresh").onclick = startRefresh;
-$("#page-size").onchange = () => { pageSize = Number($("#page-size").value) || 50; page = 1; renderRows(filtered); };
+$("#page-size").onchange = () => { pageSize = Number($("#page-size").value) || 50; page = 1; renderRows(model.filtered); };
 $("#add-row-btn").onclick = addInstitution;
 $("#clear-inst-btn").onclick = () => { institutionList = []; renderInstitutions(); scheduleSearch(); };
 // 등록된 관심 기관들을 현재 게시일 조건으로 즉시 조회한다(디바운스 없이 바로).
@@ -291,403 +269,26 @@ function collectInstitutions() { return institutionList.filter((inst) => inst.na
 $("#modal-close").onclick = closeModal; modal.onclick = (event) => { if (event.target === modal) closeModal(); }; document.onkeydown = modalKeydown; $("#download-all-btn").onclick = downloadAll;
 document.querySelectorAll(".modal-tab").forEach((button) => button.onclick = () => selectTab(button.dataset.tab));
 
-// 보유 데이터가 수천 개 파일로 늘어난 뒤로는 전체를 한꺼번에 fetch할 수 없다.
-// (1) 동시 요청을 묶고 (2) 파일을 읽는 즉시 필터링해 일치 행만 남긴다.
-// 전부 메모리에 올린 뒤 거르면 수백만 행에서 브라우저가 죽는다.
-//
-// 그 일을 메인 스레드에서 하면 1년 조회 동안 화면이 통째로 멈춘다. 그래서 내려받기부터
-// 조건 검사까지는 search-worker.js가 맡고, 여기서는 조건을 만들어 넘기고 결과만 그린다.
-function modeOf(file) { return file.mode || String(file.path || "").split("/")[0]; }
-// localeCompare를 쓰지 않는다. 게시일은 고정 형식의 숫자·구분자 문자열이라 코드유닛 비교와
-// 결과가 같은데, localeCompare는 호출마다 ICU 대조를 타 20만 행 정렬에서 377ms가 걸렸다
-// (같은 입력에 일반 비교는 119ms, 정렬 결과는 동일).
-function byPublishedDesc(a, b) { const x = a.publishedAt, y = b.publishedAt; return x < y ? 1 : x > y ? -1 : 0; }
-
-async function applyFilters({ revalidateRecent = false } = {}) {
-  const version = ++searchVersion;
-  abortScan();
-  if (liveController) liveController.abort();
-  const mode = viewMode;
-  const begin = $("#begin").value || "0000-01-01", end = $("#end").value || "9999-12-31";
-  // 지금 보고 있는 모드의 파일만 받는다. 예전에는 날짜만 보고 골라 사전공고·본공고·발주계획을
-  // 모두 내려받아 gzip을 풀고 파싱한 뒤 버렸다 — 한 모드를 보는데 세 모드를 읽은 셈이다.
-  // 항목의 구간과 조회 구간이 겹치면 받는다. 월별 봉인 항목은 한 달을 통째로 끌어오지만,
-  // 워커가 행 단위로 다시 거르므로 결과는 정확하다 — 오버페치는 전송량 문제일 뿐이다.
-  const files = fileIndex
-    .filter((file) => modeOf(file) === mode && file.end >= begin && file.begin <= end)
-    // 갱신 직후에는 지금 조회할 최근 일별 파일만 같은 URL로 조건부 재검증한다. 쿼리 토큰을
-    // 붙이면 과거 파일까지 전부 새 캐시 키가 되지만 cache:no-cache는 기존 ETag를 써 304를 받을 수 있다.
-    .map((file) => revalidateRecent && isRecentDaily(file) ? { ...file, revalidate: true } : file);
-  const institutions = collectInstitutions();
-  const criteria = { q: $("#q").value.trim().toLowerCase(), type: $("#business-type").value, institutions, from: begin.replaceAll("-", ""), to: end.replaceAll("-", ""), loose: $("#inst-loose").checked };
-
-  const progress = (state) => { $("#status").textContent = `${format(files.length)}개 CSV 중 ${format(state.done)}개 처리 · ${format(state.rows.length)}건 일치`; };
-  let painted = 0;
-  const onProgress = (state) => {
-    progress(state);
-    if (state.rows.length > PREVIEW_LIMIT || Date.now() - painted < PREVIEW_MS) return;
-    painted = Date.now();
-    filtered = state.rows.slice().sort(byPublishedDesc);
-    renderRows(filtered);
-  };
-
-  progress({ done: 0, rows: [] });
-  const state = await scanFiles(files, criteria, { begin, end }, version, onProgress);
-  if (version !== searchVersion) return;
-
-  filtered = state.rows.sort(byPublishedDesc);
-  const parts = [`${format(files.length)}개 CSV에서 ${format(state.scanned)}건을 읽어 ${format(filtered.length)}건이 조건에 맞습니다.`];
-  parts.push(institutions.length ? `관심 기관 ${institutions.length}곳으로 좁혔습니다${criteria.loose ? "(부분일치)" : ""}.` : "기관 목록이 비어 있어 전체 기관을 조회했습니다.");
-  // 오늘 하루만 보는데 그 모드의 오늘 파일이 아직 없으면 0건이 나온다. 조건을 잘못 준 것으로
-  // 오해하지 않도록 사유를 밝힌다.
-  if (criteria.from === criteria.to && criteria.from === todayKey() && !todayFile(mode)) parts.push(`오늘(${today()}) ${MODE_NAMES[mode]} 데이터가 아직 없습니다. 수집은 09~18시 매시(KST)에 돕니다.`);
-  if (state.capped) parts.push(`저장 결과 표시 한도 ${format(MAX_ROWS)}건에 도달해 일부 결과가 생략될 수 있습니다. 기간을 좁히거나 관심 기관을 지정하세요.`);
-  if (state.failures) parts.push(`${format(state.failures)}개 파일을 읽지 못했습니다.`);
-  const storedStatus = parts.join(" ");
-  $("#status").textContent = storedStatus;
-  renderRows(filtered);
-  // 저장 데이터는 여기까지 기다린 즉시 확정해서 보여 준다. 최신 조회는 별도 요청으로 흘려
-  // 보내므로 나라장터가 느리거나 실패해도 이미 보이는 결과를 지우거나 막지 않는다.
-  void mergeLiveResults({ mode, begin, end, criteria, version, storedRows: filtered.slice(), storedStatus });
-}
-
-function recentLiveSpan(begin, end) {
-  const now = today(), yesterday = GongDates.shiftDay(now, -1);
-  const first = begin > yesterday ? begin : yesterday;
-  const last = end < now ? end : now;
-  return first <= last ? { begin: first, end: last } : null;
-}
-
-function liveItems(data) {
-  const body = data?.response?.body;
-  if (!body) throw new Error(data?.response?.header?.resultMsg || "공공 API 응답에 본문이 없습니다.");
-  const value = body.items;
-  const items = Array.isArray(value) ? value : Array.isArray(value?.item) ? value.item : value?.item ? [value.item] : [];
-  const size = Math.max(1, Number(body.numOfRows) || 100);
-  return { items, totalPages: Math.min(LIVE_MAX_PAGE, Math.max(1, Math.ceil((Number(body.totalCount) || 0) / size))) };
-}
-
-async function fetchLivePage(mode, businessType, span, pageNo, signal) {
-  const params = new URLSearchParams({ mode, businessType, begin: span.begin, end: span.end, pageNo: String(pageNo) });
-  const response = await fetch(`${LIVE_API}?${params}`, { signal });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.message || `최신 정보 응답 오류 (${response.status})`);
-  return liveItems(data);
-}
-
-function mergeRows(storedRows, liveRows) {
-  const rows = new Map(storedRows.map((row) => [`${row.mode}:${numberOf(row)}`, row]));
-  for (const row of liveRows) rows.set(`${row.mode}:${numberOf(row)}`, { ...row, live: true });
-  return [...rows.values()].sort(byPublishedDesc);
-}
-
-async function mergeLiveResults({ mode, begin, end, criteria, version, storedRows, storedStatus }) {
-  const span = recentLiveSpan(begin, end);
-  if (!span) return;
-  const controller = new AbortController();
-  liveController = controller;
-  const parsed = Rows.makeCriteria(criteria);
-  const types = criteria.type ? [criteria.type] : LIVE_TYPES;
-  const liveRows = [];
-  let pagesDone = 0, pagesTotal = types.length, failures = 0, scanned = 0, firstError = "";
-
-  const paint = () => {
-    if (version !== searchVersion || controller.signal.aborted) return;
-    filtered = mergeRows(storedRows, liveRows);
-    $("#status").textContent = `${storedStatus} 저장 결과를 먼저 표시했습니다. 최신 정보 확인 중 ${format(pagesDone)}/${format(pagesTotal)}페이지…`;
-    renderRows(filtered);
-  };
-  paint();
-
-  const first = await Promise.all(types.map(async (businessType) => {
-    try {
-      const result = await fetchLivePage(mode, businessType, span, 1, controller.signal);
-      const found = Rows.scanObjects(result.items, mode, parsed, true);
-      scanned += found.scanned;
-      for (const row of found.matched) liveRows.push(row);
-      pagesDone += 1;
-      pagesTotal += result.totalPages - 1;
-      paint();
-      return Array.from({ length: result.totalPages - 1 }, (_, index) => ({ businessType, pageNo: index + 2 }));
-    } catch (error) {
-      if (error.name === "AbortError") return [];
-      if (!firstError) firstError = error.message;
-      failures += 1; pagesDone += 1; paint();
-      return [];
-    }
-  }));
-
-  const pending = first.flat();
-  let cursor = 0;
-  const scan = async () => {
-    while (cursor < pending.length && !controller.signal.aborted) {
-      const task = pending[cursor++];
-      try {
-        const result = await fetchLivePage(mode, task.businessType, span, task.pageNo, controller.signal);
-        const found = Rows.scanObjects(result.items, mode, parsed, true);
-        scanned += found.scanned;
-        for (const row of found.matched) liveRows.push(row);
-      } catch (error) {
-        if (error.name === "AbortError") return;
-        if (!firstError) firstError = error.message;
-        failures += 1;
-      }
-      pagesDone += 1; paint();
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(LIVE_CONCURRENCY, pending.length || 1) }, scan));
-  if (version !== searchVersion || controller.signal.aborted) return;
-  filtered = mergeRows(storedRows, liveRows);
-  const storedIds = new Set(storedRows.map((row) => `${row.mode}:${numberOf(row)}`));
-  const liveIds = new Set(liveRows.map((row) => `${row.mode}:${numberOf(row)}`));
-  const added = [...liveIds].filter((id) => !storedIds.has(id)).length;
-  const note = failures
-    ? `최신 정보 일부만 반영 · 새 공고 ${format(added)}건, 실패 ${format(failures)}페이지 (${firstError}).`
-    : `최신 정보 확인 완료 · ${format(scanned)}건 확인, 조건 일치 ${format(liveIds.size)}건 중 새 공고 ${format(added)}건.`;
-  $("#status").textContent = `${storedStatus} ${note}`;
-  renderRows(filtered);
-  if (liveController === controller) liveController = null;
-}
-
-// 워커는 처음 검색할 때 만들어 두고 계속 쓴다. 만들지 못하는 환경에서는 빈 배열이 되고
-// scanFiles가 메인 스레드 경로로 되돌아간다 — 느리지만 결과는 같다.
-let workerPool = null, abortScan = () => {};
-function pool() {
-  if (workerPool) return workerPool;
-  const created = [];
-  try {
-    const url = new URL("search-worker.js", location.href);
-    for (let i = 0; i < POOL_SIZE; i++) created.push(new Worker(url));
-    workerPool = created;
-  } catch {
-    // 배열 대입 완료 전에 두 번째 이후 생성이 실패해도 이미 생성한 Worker를 정리한다.
-    for (const worker of created) worker.terminate();
-    workerPool = [];
-  }
-  return workerPool;
-}
-
-function scanFiles(files, criteria, span, version, onProgress) {
-  const workers = pool();
-  if (!workers.length) return scanInline(files, criteria, span, version, onProgress);
-  const state = { rows: [], done: 0, scanned: 0, failures: 0, capped: false };
-  const share = Math.max(1, Math.ceil(FETCH_CONCURRENCY / workers.length));
-  return new Promise((resolve) => {
-    let pending = 0;
-    const detach = () => { for (const worker of workers) { worker.onmessage = null; worker.onerror = null; } abortScan = () => {}; };
-    const finish = () => { detach(); resolve(state); };
-    abortScan = () => { for (const worker of workers) worker.postMessage({ type: "cancel", version }); finish(); };
-    // 워커 스크립트를 못 읽으면(구 배포본에 search-worker.js가 없는 경우 등) 아무 메시지도
-    // 오지 않아 화면이 "0개 처리"에서 멈춘다. 그때는 풀을 버리고 메인 스레드로 되돌아간다.
-    const fallback = () => { detach(); for (const worker of workers) worker.terminate(); workerPool = []; resolve(scanInline(files, criteria, span, version, onProgress)); };
-    workers.forEach((worker, slot) => {
-      // 날짜순 목록을 그대로 잘라 주면 한쪽 워커에만 큰 파일이 몰린다. 번갈아 나눠 준다.
-      const mine = files.filter((_, index) => index % workers.length === slot);
-      if (!mine.length) return;
-      pending += 1;
-      worker.onerror = fallback;
-      worker.onmessage = (event) => {
-        const message = event.data;
-        if (message.version !== version) return;
-        if (message.type === "done") { pending -= 1; if (!pending) finish(); return; }
-        state.done += message.done; state.scanned += message.scanned; state.failures += message.failures;
-        for (const row of message.rows) { if (state.rows.length >= MAX_ROWS) break; state.rows.push(row); }
-        if (state.rows.length >= MAX_ROWS) { state.capped = true; onProgress(state); abortScan(); return; }
-        onProgress(state);
-      };
-      worker.postMessage({ type: "search", version, base: DATA_BASE, dataSchemaVersion, files: mine, criteria, span, concurrency: share });
-    });
-    if (!pending) finish();
-  });
-}
-
-// 워커를 못 쓰는 환경의 폴백. 예전 경로와 같지만 파싱·조건 검사는 rows.js를 쓴다.
-async function scanInline(files, criteria, span, version, onProgress) {
-  const controller = new AbortController();
-  const cancel = () => controller.abort();
-  abortScan = cancel;
-  const parsed = Rows.makeCriteria(criteria);
-  const state = { rows: [], done: 0, scanned: 0, failures: 0, capped: false };
-  let cursor = 0;
-  const scan = async () => {
-    while (cursor < files.length && !state.capped) {
-      if (version !== searchVersion || controller.signal.aborted) return;
-      const file = files[cursor++];
-      try {
-        const suffix = dataSchemaVersion ? `?v=${encodeURIComponent(dataSchemaVersion)}` : "";
-        const text = await Rows.fetchCsvText(`${DATA_BASE}/${file.path}${suffix}`, { ...(file.revalidate ? { cache: "no-cache" } : {}), signal: controller.signal });
-        if (version !== searchVersion || controller.signal.aborted) return;
-        const result = Rows.scanText(text, modeOf(file), parsed, !(file.begin >= span.begin && file.end <= span.end));
-        state.scanned += result.scanned;
-        for (const row of result.matched) { if (state.rows.length >= MAX_ROWS) break; state.rows.push(row); }
-      } catch { if (version !== searchVersion || controller.signal.aborted) return; state.failures += 1; }
-      state.done += 1;
-      if (state.rows.length >= MAX_ROWS) { state.capped = true; cancel(); }
-      if (state.done % 16 === 0) { onProgress(state); await new Promise((resolve) => setTimeout(resolve, 0)); }
-    }
-  };
-  try { await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, files.length || 1) }, scan)); }
-  finally { if (abortScan === cancel) abortScan = () => {}; }
-  return state;
-}
 function defaultRange() { const last = dataRange().end; if (!last) return; $("#begin").value = GongDates.shiftDay(last, -6); $("#end").value = last; }
-
-// 로컬은 수집기를 직접 실행하고, 배포본은 Worker가 GitHub Actions 수집 작업을 시작한다.
-async function startRefresh() {
-  if ($("#refresh-btn").disabled) return;
-  refreshRevision++;
-  setRefresh(true, "갱신을 시작하는 중입니다.");
-  let received = false;
-  try {
-    const { response, data: state } = await GongHttp.requestJson(REFRESH_API, { method: "POST" }, 30000, "data");
-    received = true;
-    // 404는 두 가지다 — Worker에 /api/refresh가 없거나(구 배포본), Worker가 GitHub이 준 404를
-    // 그대로 전달한 것(워크플로 미등록·저장소 접근 실패). 뒤쪽은 message가 실려 오므로 그것을
-    // 먼저 보여준다. 404를 무조건 "API 없음"으로 덮으면 진짜 원인이 가려진다.
-    if (!response.ok && response.status !== 409) {
-      throw new Error(state.message || (response.status === 404 ? "갱신 API가 없습니다." : `갱신 요청이 실패했습니다 (${response.status}).`));
-    }
-    refreshRunId = state.runId || null;
-    // dispatch 시각. 상태 조회가 이 뒤에 만들어진 실행만 보게 해서, 아직 등록되지 않은 내
-    // 실행 대신 직전 실행(크론이나 앞선 버튼)의 결과를 받아 오는 일을 막는다.
-    refreshSince = state.dispatchedAt || null;
-    // 범위는 시작 응답에만 실려 온다. 상태 조회는 GitHub의 실행 정보만 되돌려주므로,
-    // 여기서 붙들지 않으면 진행·완료 문구의 구간이 계속 "-"로 남는다.
-    refreshRange = state.range || null;
-  } catch (error) { setRefresh(false, `${error.message}${received ? "" : " 서버 작업은 이미 시작됐을 수 있습니다. 다시 갱신을 요청하기 전에 새로고침하여 진행 상태를 확인하세요."}`, "error"); return; }
-  pollRefresh();
-}
-function refreshUrl() {
-  if (refreshRunId) return `${REFRESH_API}?runId=${refreshRunId}`;
-  return refreshSince ? `${REFRESH_API}?since=${encodeURIComponent(refreshSince)}` : REFRESH_API;
-}
-function checkRefreshState(state) {
-  if (!state || typeof state !== "object" || Array.isArray(state) || typeof state.running !== "boolean" ||
-      (state.waiting !== undefined && typeof state.waiting !== "boolean") ||
-      (state.waiting === true && state.running !== true) ||
-      (state.runId != null && typeof state.runId !== "string" && !(typeof state.runId === "number" && Number.isSafeInteger(state.runId)))) {
-    throw new Error("갱신 상태 응답 형식이 올바르지 않습니다. 완료 여부를 확인할 수 없습니다.");
-  }
-  return state;
-}
-function withRange(state) { return state.range || !refreshRange ? state : { ...state, range: refreshRange }; }
-function resumeRefresh() {
-  const revision = refreshRevision;
-  return getJson(REFRESH_API).then((state) => {
-    if (revision !== refreshRevision || $("#refresh-btn").disabled) return;
-    checkRefreshState(state);
-    if (state.running) {
-      refreshRevision++;
-      refreshRunId = state.runId || null;
-      setRefresh(true, refreshText(state)); pollRefresh();
-    }
-  }).catch(() => {});
-}
-async function pollRefresh() {
-  const revision = refreshRevision;
-  const startedAt = Date.now();
-  for (;;) {
-    if (revision !== refreshRevision) return;
-    let state;
-    try { state = withRange(checkRefreshState(await getJson(refreshUrl()))); } catch (error) { if (revision === refreshRevision) setRefresh(false, `갱신 상태를 확인하지 못했습니다: ${error.message}`, "error"); return; }
-    if (revision !== refreshRevision) return;
-    // 실행 id를 처음 본 순간 거기에 고정한다. 이후 폴링은 그 실행만 보므로, 도중에 매시
-    // 크론이 새 실행을 걸어도 대상이 갈아타지 않는다.
-    if (state.runId && !refreshRunId) refreshRunId = String(state.runId);
-    // waiting은 "dispatch는 됐는데 실행이 아직 목록에 없다"는 뜻이다. 보통 몇 초면 끝나지만
-    // 끝내 뜨지 않으면(워크플로 미등록 등) 여기서 끊는다.
-    if (state.waiting && Date.now() - startedAt > REFRESH_WAIT_LIMIT_MS) {
-      setRefresh(false, "갱신을 요청했지만 GitHub Actions 실행이 등록되지 않았습니다. Actions 탭에서 확인하세요.", "error");
-      return;
-    }
-    if (!state.running) return finishRefresh(state);
-    setRefresh(true, refreshText(state));
-    await new Promise((resolve) => setTimeout(resolve, pollDelay(state)));
-  }
-}
-async function finishRefresh(state) {
-  const revision = refreshRevision;
-  // state.range는 pollRefresh가 이미 채워 넘겼으므로 여기서 비워도 아래 문구는 온전하다.
-  refreshRunId = null; refreshRange = null; refreshSince = null;
-  if (state.error) { setRefresh(false, `갱신 실패: ${state.error}`, "error"); return; }
-  const beforePaths = new Set(fileIndex.map((file) => file.path)), beforeTotal = totalCount(), beforeLast = dataRange().end;
-  let loaded;
-  try { loaded = await loadIndex(false); } catch (error) { if (revision === refreshRevision) setRefresh(false, `갱신은 끝났지만 목록을 다시 읽지 못했습니다: ${error.message}`, "error"); return; }
-  if (revision !== refreshRevision) return;
-  if (loaded?.stale) { setRefresh(false, "갱신 작업은 끝났지만 다른 목록 조회가 진행되어 이 완료 응답을 적용하지 않았습니다."); return; }
-  const added = fileIndex.filter((file) => !beforePaths.has(file.path)).length, diff = totalCount() - beforeTotal, last = dataRange().end;
-  // 새로 들어온 날짜가 현재 조회 종료일보다 뒤라면, 갱신 결과가 바로 보이도록 종료일을 늘린다.
-  if (last && last > ($("#end").value || "")) $("#end").value = last;
-  setRefresh(false, `갱신 완료 · ${state.range ? `${state.range.begin} ~ ${state.range.end}` : "-"} · 새 파일 ${format(added)}개 · 총 ${format(totalCount())}건 (${diff >= 0 ? "+" : ""}${format(diff)})${last > beforeLast ? ` · 최신 ${last}` : ""}`, "done");
-  page = 1; applyFilters({ revalidateRecent: true });
-}
-// 초반을 촘촘히 보고, 길어진 실행만 느슨하게 본다. 예전에는 이게 뒤집혀 있어 60초를 넘겨야
-// 촘촘해졌는데, 버튼 실행(어제~오늘)은 30초대에 끝나므로 사실상 언제나 5초 간격만 썼다 —
-// 이미 끝난 실행을 최대 5초 늦게 봤다. 60초를 넘기는 것은 35일 재수집이거나 큐에 걸린 쪽이라
-// 그때는 느슨해도 된다. startedAt이 아직 없는 동안(dispatch 직후 실행 등록 대기)도 촘촘한
-// 쪽으로 떨어진다 — 그 구간이야말로 빨리 찾아야 하는 자리다.
-function pollDelay(state) { const started = Date.parse(state.startedAt || ""); return !Number.isNaN(started) && Date.now() - started >= 60000 ? POLL_SLOW_MS : POLL_FAST_MS; }
-function isRecentDaily(file) { const cutoff = GongDates.shiftDay(today(), -40); return /^(pre|bid|plan)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/.test(file.path || "") && file.end >= cutoff; }
-function refreshText(state) { return `수집 중입니다 · ${state.range ? `${state.range.begin} ~ ${state.range.end}` : "-"}${state.lastLine ? ` · ${state.lastLine}` : ""}`; }
-function setRefresh(busy, text, kind = "") { const button = $("#refresh-btn"), box = $("#refresh-status"); button.disabled = busy; button.setAttribute("aria-busy", String(busy)); button.textContent = busy ? "갱신 중…" : "보유데이터 갱신"; box.hidden = !text; box.className = `refresh-status ${kind}`.trim(); box.textContent = text || ""; document.querySelectorAll(".empty-refresh, #menu-refresh").forEach((other) => { other.disabled = busy; other.textContent = button.textContent; }); }
 
 // 고급검색. Worker의 Workers AI가 자연어를 조회 조건으로만 바꾸고, 조회 자체는 평소와 똑같이
 // 워커 스캔이 한다 — 데이터가 R2의 gzip CSV 수십만 건이라 모델에 먹일 수 있는 대상이 아니다.
 $("#advanced-toggle").onclick = () => { const panel = $("#advanced-panel"), open = panel.hidden; panel.hidden = !open; $("#advanced-toggle").setAttribute("aria-pressed", String(open)); $("#advanced-toggle").classList.toggle("active", open); if (open) $("#nl-query").focus(); };
 $("#nl-run").onclick = runNlQuery;
 $("#nl-query").onkeydown = (event) => { if (event.key === "Enter") runNlQuery(); };
-function setNl(busy, text, kind = "") { const button = $("#nl-run"), box = $("#nl-status"); button.disabled = busy; button.setAttribute("aria-busy", String(busy)); button.textContent = busy ? "해석 중…" : "해석해서 조회"; box.hidden = !text; box.className = `nl-status ${kind}`.trim(); box.textContent = text || ""; }
-let nlPending = false;
-function validNlResponse(state) {
-  const filter = state?.filter;
-  if (!filter || typeof filter !== "object" || Array.isArray(filter)) return false;
-  if (state.explain !== undefined && typeof state.explain !== "string") return false;
-  if (state.notes !== undefined && (!Array.isArray(state.notes) || state.notes.some((note) => typeof note !== "string"))) return false;
-  if (filter.mode !== undefined && !["pre", "bid", "plan"].includes(filter.mode)) return false;
-  if (filter.type !== undefined && !["", "물품", "외자", "용역", "공사"].includes(filter.type)) return false;
-  if (filter.q !== undefined && typeof filter.q !== "string") return false;
-  if (filter.looseInstitution !== undefined && typeof filter.looseInstitution !== "boolean") return false;
-  if (filter.institutions !== undefined && (!Array.isArray(filter.institutions) || filter.institutions.some((name) => typeof name !== "string"))) return false;
-  for (const key of ["begin", "end"]) {
-    if (filter[key] === undefined || filter[key] === "") continue;
-    if (typeof filter[key] !== "string") return false;
-    try { GongDates.shiftDay(filter[key], 0); } catch { return false; }
-  }
-  // 서버는 기간을 양쪽 모두 반환하거나 둘 다 비운다. 일부 날짜만 적용하면 기존 날짜와 섞인다.
-  return Boolean(filter.begin) === Boolean(filter.end) && (!filter.begin || filter.begin <= filter.end);
-}
-function nlSearchContext() {
-  return JSON.stringify([searchVersion, viewMode, ...["#nl-query", "#q", "#begin", "#end", "#business-type"].map((id) => $(id).value), $("#inst-loose").checked, collectInstitutions()]);
-}
-async function runNlQuery() {
-  // Enter 이벤트는 disabled 버튼을 우회하므로 요청 자체를 직렬화한다.
-  if (nlPending) return;
-  const query = $("#nl-query").value.trim();
-  if (query.length < 2) { setNl(false, "찾고 싶은 내용을 한 문장으로 적어 주세요.", "error"); return; }
-  const context = nlSearchContext();
-  nlPending = true;
-  setNl(true, "질의를 해석하는 중입니다.");
-  let state;
-  try {
-    const { response, data } = await GongHttp.requestJson(ASK_API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ q: query, mode: viewMode }) }, 60000, "search");
-    state = data;
-    // 서버가 준 message를 항상 먼저 보여준다(startRefresh와 같은 규칙). 404는 구 배포본이다.
-    if (!response.ok) throw new Error(state.message || (response.status === 404 ? "고급검색 API가 없습니다. 배포본이 오래된 것 같습니다." : `고급검색이 실패했습니다 (${response.status}).`));
-    if (!validNlResponse(state)) {
-      throw new Error("검색 조건 응답 형식이 올바르지 않습니다. 일반 검색을 이용하거나 잠시 후 다시 시도하세요.");
-    }
-  } catch (error) {
-    setNl(false, context === nlSearchContext() ? error.message : "검색 조건이 변경되어 이전 해석 응답을 적용하지 않았습니다.", context === nlSearchContext() ? "error" : "");
-    return;
-  } finally { nlPending = false; }
-  if (context !== nlSearchContext()) { setNl(false, "검색 조건이 변경되어 이전 해석 응답을 적용하지 않았습니다."); return; }
-  applyNlFilter(state);
-  page = 1; applyFilters();
+function setNl(busy, text, kind = "") {
+  const button = $("#nl-run"), box = $("#nl-status");
+  button.disabled = busy;
+  button.setAttribute("aria-busy", String(busy));
+  button.textContent = busy ? "\uD574\uC11D \uC911\u2026" : "\uD574\uC11D\uD574\uC11C \uC870\uD68C";
+  box.hidden = !text;
+  box.className = `nl-status ${kind}`.trim();
+  box.textContent = text || "";
 }
 // 해석 결과를 실제 컨트롤에 그대로 채운다. 사용자가 무엇으로 검색됐는지 눈으로 보고 고칠 수 있어야 한다.
 function applyNlFilter(state) {
   const filter = state.filter || {}, notes = [...(state.notes || [])];
-  if (filter.mode && MODE_NAMES[filter.mode] && filter.mode !== viewMode) { setMode(filter.mode); closeModal(); }
+  if (filter.mode && MODE_NAMES[filter.mode] && filter.mode !== model.viewMode) { setMode(filter.mode); closeModal(); }
   if (filter.begin) $("#begin").value = filter.begin;
   if (filter.end) $("#end").value = filter.end;
   $("#business-type").value = filter.type || "";
@@ -702,334 +303,33 @@ function applyNlFilter(state) {
   }
   $("#inst-loose").checked = Boolean(filter.looseInstitution);
   // 보유 범위 밖을 물으면 0건이 나온다. 해석 실패로 오해하지 않도록 미리 알린다(특히 발주계획).
-  if (!fileIndex.some((file) => modeOf(file) === viewMode && file.end >= $("#begin").value && file.begin <= $("#end").value)) notes.push(`${MODE_NAMES[viewMode]}에는 이 기간의 보유 데이터가 없습니다.`);
+  if (!model.fileIndex.some((file) => modeOf(file) === model.viewMode && file.end >= $("#begin").value && file.begin <= $("#end").value)) notes.push(`${MODE_NAMES[model.viewMode]}에는 이 기간의 보유 데이터가 없습니다.`);
   setNl(false, [`해석: ${state.explain || "-"}`, ...notes].join(" · "), "done");
 }
-function renderRows(rows) { const pages = Math.max(1, Math.ceil(rows.length / pageSize)); page = Math.min(page, pages); const visible = rows.slice((page - 1) * pageSize, page * pageSize); $("#result-summary").textContent = `${format(rows.length)}건`; $("#page-label").textContent = `${page} / ${pages}`; $("#previous").disabled = page === 1; $("#next").disabled = page === pages; $("#download-btn").disabled = !rows.length; $("#download-ecr-btn").disabled = !analyses.size; $("#results").innerHTML = visible.length ? visible.map((row, i) => { const files = normalizeFiles(row.files), analysis = analyses.get(numberOf(row)); return `<tr><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(사업명 없음)")}</button>${row.live ? '<span class="live-badge">최신 확인</span>' : ""}${fileBadge(row, files)}${analysis ? `<span class="ecr-badge ${analysis.verified ? "" : "warning"}">ECR ${analysis.ecrCount}${analysis.verified ? "" : " · 확인 필요"}</span>` : ""}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">오늘</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`; }).join("") : $("#empty-row").innerHTML; document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)])); wireEcrEntrypoints(visible); wireEmptyRefresh(); }
+function renderRows(rows) {
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  page = Math.min(page, pages);
+  const visible = rows.slice((page - 1) * pageSize, page * pageSize);
+  $("#result-summary").textContent = `${format(rows.length)}\uAC74`;
+  $("#page-label").textContent = `${page} / ${pages}`;
+  $("#previous").disabled = page === 1;
+  $("#next").disabled = page === pages;
+  $("#download-btn").disabled = !rows.length;
+  $("#download-ecr-btn").disabled = !analyses.size;
+  $("#results").innerHTML = visible.length ? visible.map((row, i) => {
+    const files = normalizeFiles(row.files), analysis = analyses.get(numberOf(row));
+    return `<tr><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(\uC0AC\uC5C5\uBA85 \uC5C6\uC74C)")}</button>${row.live ? '<span class="live-badge">\uCD5C\uC2E0 \uD655\uC778</span>' : ""}${fileBadge(row, files)}${analysis ? `<span class="ecr-badge ${analysis.verified ? "" : "warning"}">ECR ${analysis.ecrCount}${analysis.verified ? "" : " \xB7 \uD655\uC778 \uD544\uC694"}</span>` : ""}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">\uC624\uB298</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`;
+  }).join("") : $("#empty-row").innerHTML;
+  document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)]));
+  wireEcrEntrypoints(visible);
+  wireEmptyRefresh();
+}
 // 빈 결과 안내에도 갱신 버튼이 있다. 템플릿을 통째로 다시 그리므로 매번 다시 걸고, 지금
 // 갱신이 도는 중이면 레일의 버튼과 같이 잠가 둔다 — 둘을 눌러 두 번 dispatch되면 안 된다.
 function wireEmptyRefresh() { document.querySelectorAll(".empty-refresh").forEach((button) => { button.onclick = startRefresh; button.disabled = $("#refresh-btn").disabled; button.textContent = $("#refresh-btn").textContent; }); }
-function modalSubtitle(row, files) {
-  if (row.mode !== "plan") return `${row.institution || "-"} · ${row.businessType || "-"} · 번호 ${numberOf(row) || "-"} · 첨부 ${files.length}건`;
-  const parts = [row.institution || "-", row.businessType || "-", `계획번호 ${numberOf(row) || "-"}`];
-  if (row.orderMonth) parts.push(`발주예정 ${row.orderMonth}`);
-  if (row.amount && Number(row.amount)) parts.push(`발주금액 ${format(Number(row.amount))}원`);
-  if (row.contractMethod) parts.push(row.contractMethod);
-  if (row.procureMethod) parts.push(row.procureMethod);
-  return parts.join(" · ");
+function downloadRows(rows, prefix) {
+  const csv = GongCsv.serialize(rows);
+  downloadBlob(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }), `${prefix}_${localDate(/* @__PURE__ */ new Date()).replaceAll("-", "")}.csv`);
 }
-// 본공고와 발주계획은 나라장터 상세화면 링크를 API가 필드로 준다(bidNtceDtlUrl/orderPlanDtlUrl).
-// 사전규격정보서비스에는 그 필드가 없어 사전공고에서는 늘 빈 문자열이 된다.
-// 번호를 매기지 않는 이유: 본공고는 첨부 1..N과 한 목록에 서므로 "1."이 두 번 나온다.
-function detailLink(row) {
-  if (!row.detailUrl) return "";
-  const url = safeExternalUrl(row.detailUrl);
-  if (!url) return '<li><span class="warning-text">상세 링크 형식이 올바르지 않아 비활성화했습니다.</span></li>';
-  const label = row.mode === "plan" ? "나라장터 발주계획 상세 열기" : "나라장터 공고 상세 열기";
-  return `<li><span class="file-no">&#8599;</span><a href="${html(url)}" target="_blank" rel="noopener noreferrer">${label}</a></li>`;
-}
-function safeExternalUrl(value) {
-  if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value)) return "";
-  const text = value.trim();
-  if (!/^https?:\/\//i.test(text)) return "";
-  try {
-    const url = new URL(text);
-    return ["http:", "https:"].includes(url.protocol) && url.hostname && !url.username && !url.password ? text : "";
-  } catch { return ""; }
-}
-function attachmentWarnings(files) {
-  const rejected = Array.isArray(files) ? files.length - normalizeFiles(files).length : 0;
-  return rejected ? `<li><span class="warning-text">사용할 수 없는 첨부 링크 ${rejected}건을 제외했습니다. 나라장터 원문에서 확인하세요.</span></li>` : "";
-}
-// 발주계획은 첨부 URL이 없으므로 이어진 공고번호와 첨부 유무만 덧붙인다(상세 링크는 detailLink가 그린다).
-function planLinks(row) {
-  const items = [];
-  const notices = String(row.linkedNotices || "").split(/[,\s]+/).filter(Boolean);
-  if (notices.length) items.push(`<li><span class="empty-msg">연계 공고번호: ${notices.map(html).join(", ")}</span></li>`);
-  items.push(`<li><span class="empty-msg">${row.hasAttachment ? "첨부파일이 있지만 API로는 제공되지 않습니다. 상세 페이지에서 받으세요." : "이 계획에는 첨부파일이 없습니다."}</span></li>`);
-  return items.join("");
-}
-// 발주계획 API는 첨부파일 URL을 주지 않고 "첨부가 있는지"(atchFileExistnceYn)만 알려준다.
-// 실제 파일은 상세 페이지에서 받아야 하므로 건수 대신 유무를 표시한다.
-function fileBadge(row, files) {
-  if (row.mode === "plan") return `<span class="file-badge ${row.hasAttachment ? "" : "empty"}">${row.hasAttachment ? "첨부 있음" : "첨부 없음"}</span>`;
-  return `<span class="file-badge ${files.length ? "" : "empty"}">${files.length ? `첨부 ${files.length}` : "첨부 0"}</span>`;
-}
-function scheduleItems(row) {
-  const schedule = row.bidSchedule || {};
-  return [
-    ["공고 게시", schedule.bidNtceDt],
-    ["입찰참가자격 등록 마감", schedule.bidQlfctRgstDt],
-    ["공동수급협정 마감", schedule.cmmnSpldmdAgrmntClseDt],
-    ["입찰서 제출 시작", schedule.bidBeginDt],
-    ["입찰서 제출 마감", schedule.bidClseDt || row.closeAt],
-    ["개찰 예정", schedule.opengDt],
-  ].filter((item) => item[1]);
-}
-function renderBidSchedule(row) {
-  const items = scheduleItems(row);
-  if (!items.length) return '<p class="schedule-empty">저장된 입찰 일정이 없습니다. 다음 데이터 갱신부터 공공 API의 일정 정보가 함께 저장됩니다.</p>';
-  return `<ol class="schedule-list">${items.map(([label, value]) => `<li class="schedule-item"><span class="schedule-dot" aria-hidden="true"></span><span class="schedule-label">${html(label)}</span><time class="schedule-time">${html(value)}</time></li>`).join("")}</ol><p class="schedule-note">개찰 예정은 실제 개찰 처리 시각이 아니라 개찰을 시작할 수 있는 최초 시각입니다.</p>`;
-}
-function openModal(row, initialTab = "files") { stopEcrAnalysis(); currentRow = row; currentAnalysis = null; const files = normalizeFiles(row.files), entry = analyses.get(numberOf(row)); $("#modal-title").textContent = row.title || "(사업명 없음)"; $("#modal-subtitle").textContent = modalSubtitle(row, files); $("#modal-file-list").innerHTML = detailLink(row) + attachmentWarnings(row.files) + (files.length ? files.map((file, i) => `<li><span class="file-no">${i + 1}.</span><a href="${html(file.url)}" target="_blank" rel="noopener noreferrer">${html(file.name)}</a></li>`).join("") : row.mode === "plan" ? planLinks(row) : '<li><span class="empty-msg">이 공고에는 API로 제공되는 첨부파일이 없습니다.</span></li>'); $("#download-all-btn").disabled = !files.length; $("#download-all-btn").textContent = files.length ? `전체 다운로드 (${files.length}건)` : "전체 다운로드"; $("#schedule-tab").disabled = row.mode !== "bid"; $("#schedule-content").innerHTML = row.mode === "bid" ? renderBidSchedule(row) : ""; $("#ecr-tab").disabled = row.mode !== "bid"; $("#ecr-tab").textContent = entry ? `ECR 분석 (${entry.ecrCount})` : "ECR 분석"; $("#ecr-content").innerHTML = entry ? '<p class="hint">ECR 규격을 불러오려면 탭을 선택하세요.</p>' : '<p class="hint">이 공고에는 분석된 ECR 규격이 없습니다.</p>'; $("#ecr-file").value = ""; $("#ecr-progress").textContent = ""; selectTab(initialTab); modal.style.display = "flex"; activateModalFocus(); }
-function closeModal() { stopEcrAnalysis(); modal.style.display = "none"; currentRow = null; currentAnalysis = null; restoreModalFocus(); }
-function selectTab(tab) { if (tab !== "ecr") stopEcrAnalysis(); document.querySelectorAll(".modal-tab").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab)); $("#files-content").hidden = tab !== "files"; $("#schedule-content").hidden = tab !== "schedule"; $("#ecr-content").hidden = tab !== "ecr"; $("#ecr-tab").disabled = currentRow?.mode !== "bid"; $("#ecr-upload-form").hidden = tab !== "ecr"; $("#ai-access-panel").hidden = tab !== "ecr"; if (tab === "ecr") { refreshAiAccess(); loadEcr(); } }
-let ecrLoadRevision = 0;
-function rememberEcr(row, data, path) {
-  const notice = numberOf(row), verified = EquipmentSummary.isVerified(data);
-  analyses.set(notice, { notice, path, ecrCount: data.ecr.length, verified });
-  // 목록 전체를 다시 그리면 모달을 연 버튼이 사라져 키보드 포커스 복원이 깨진다.
-  document.querySelectorAll("#results tr").forEach((tr) => {
-    if (tr.firstElementChild?.textContent !== notice) return;
-    const title = tr.querySelector("td.title");
-    if (!title) return;
-    let badge = title.querySelector(".ecr-badge");
-    if (!badge) { badge = document.createElement("span"); title.append(badge); }
-    badge.className = `ecr-badge ${verified ? "" : "warning"}`;
-    badge.textContent = `ECR ${data.ecr.length}${verified ? "" : " · 확인 필요"}`;
-  });
-}
-async function loadEcr() {
-  const row = currentRow;
-  if (!row) return;
-  const revision = ++ecrLoadRevision, run = ecrRun;
-  const isCurrent = () => currentRow === row && revision === ecrLoadRevision && run === ecrRun;
-  const entry = analyses.get(numberOf(row));
-  if (!currentAnalysis) {
-    $("#ecr-content").innerHTML = '<p class="hint">ECR 규격을 불러오는 중입니다.</p>';
-    try {
-      const { response: remote, data: remoteData } = await GongHttp.requestJson(`/api/ecr?notice=${encodeURIComponent(numberOf(row))}`, { cache: "no-store" }, 30000, "read");
-      if (!isCurrent()) return;
-      let data;
-      if (remote.ok) data = remoteData;
-      else if (remote.status === 404 && entry) {
-        const saved = await GongHttp.requestJson(entry.path.startsWith("/api/") ? entry.path : `${DATA_BASE}/${entry.path}`, { cache: "no-store" }, 30000, "read");
-        if (!saved.response.ok) throw new Error("저장 결과 조회에 실패했습니다. 잠시 후 다시 조회하세요.");
-        data = saved.data;
-      }
-      else if (remote.status === 404) {
-        if (isCurrent()) $("#ecr-content").innerHTML = '<p class="hint">제안요청서 파일을 올려 서버·스토리지 요구사항을 분석하세요.</p>';
-        return;
-      } else throw new Error(remoteData.message || "분석 조회 실패");
-      if (!isCurrent()) return;
-      EquipmentSummary.validate(data);
-      currentAnalysis = data;
-      if (entry || data.provider === "workers-ai") rememberEcr(row, data, data.provider === "workers-ai" ? `/api/ecr?notice=${encodeURIComponent(numberOf(row))}` : entry.path);
-      if (data.provider === "workers-ai") {
-        $("#download-ecr-btn").disabled = false;
-        $("#ecr-tab").textContent = `ECR 규격 (${data.ecr.length})`;
-      }
-    } catch (error) {
-      if (isCurrent()) $("#ecr-content").innerHTML = `<p class="warning-text">ECR 규격을 불러오지 못했습니다: ${html(error.message)}</p>`;
-      return;
-    }
-  }
-  renderEcr(currentAnalysis);
-  $("#ecr-content").insertAdjacentHTML("afterbegin", EquipmentSummary.render(currentAnalysis));
-}
-function wireEcrEntrypoints(rows) {
-  document.querySelectorAll(".title-link").forEach((title) => {
-    const row = rows[Number(title.dataset.index)];
-    if (row?.mode !== "bid") return;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "ecr-entry-btn";
-    button.textContent = "ECR 분석";
-    button.setAttribute("aria-label", `${row.title || "이 공고"} ECR 분석 열기`);
-    button.onclick = () => openModal(row, "ecr");
-    title.parentElement.append(button);
-  });
-}
-let ecrBusy = false, aiUnlocked = false;
-let ecrRun = 0;
-function stopEcrAnalysis() {
-  ecrRun++;
-  if (!ecrBusy) return;
-  $("#ecr-stop-btn").disabled = true;
-  $("#ecr-progress").textContent = "추가 분석을 중지했습니다. 이미 전송한 요청은 완료될 수 있으며 사용량이 발생할 수 있습니다. 요청 종료 후 같은 파일로 다시 시작하면 저장된 구간을 재사용합니다.";
-}
-$("#ecr-stop-btn").onclick = stopEcrAnalysis;
-let aiAccessRevision = 0, aiAccessChanging = false;
-function setAiAccessChanging(changing) {
-  aiAccessChanging = changing;
-  $("#ai-unlock-form").querySelectorAll("input, button").forEach((control) => { control.disabled = changing; });
-  $("#ai-lock-btn").disabled = changing;
-}
-function showAiAccess(unlocked, message) {
-  aiAccessRevision++;
-  aiUnlocked = unlocked;
-  $("#ai-unlock-form").hidden = unlocked;
-  $("#ai-lock-btn").hidden = !unlocked;
-  $("#ai-lock-btn").textContent = "AI 분석 다시 잠그기";
-  $("#ecr-file").disabled = !unlocked || ecrBusy;
-  $("#ecr-analyze-btn").disabled = !unlocked || ecrBusy;
-  $("#ai-access-status").textContent = message || (unlocked ? "AI 분석 잠금이 해제되었습니다. 30분 후 자동으로 잠깁니다." : "AI 분석이 잠겨 있습니다. 전용 비밀번호를 입력하세요.");
-}
-async function refreshAiAccess() {
-  if (aiAccessChanging) return;
-  showAiAccess(false, "분석 잠금 상태를 확인하고 있습니다.");
-  const revision = aiAccessRevision;
-  try {
-    const { response, data } = await GongHttp.requestJson("/api/ai-access", { cache: "no-store" }, 30000, "access");
-    if (!response.ok) throw new Error("잠금 상태 조회 실패");
-    if (revision !== aiAccessRevision) return;
-    showAiAccess(data.unlocked === true, !data.configured ? data.message || "AI 분석이 비활성화되어 있습니다. 운영자의 전용 비밀번호 설정이 필요합니다." : "");
-  } catch { if (revision === aiAccessRevision) showAiAccess(false, "분석 잠금 상태를 확인하지 못했습니다. 잠시 후 다시 시도하세요."); }
-}
-$("#ai-unlock-form").onsubmit = async (event) => {
-  event.preventDefault();
-  if (aiAccessChanging) return;
-  const password = $("#ai-password").value;
-  $("#ai-password").value = "";
-  setAiAccessChanging(true);
-  showAiAccess(false, "AI 분석 잠금을 해제하고 있습니다.");
-  const revision = aiAccessRevision;
-  try {
-    const { response, data } = await GongHttp.requestJson("/api/ai-access", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) }, 30000, "access");
-    if (revision !== aiAccessRevision) return;
-    showAiAccess(response.ok && data.unlocked === true, data.message);
-  } catch {
-    if (revision === aiAccessRevision) {
-      showAiAccess(false, "잠금 해제 응답을 확인하지 못했습니다. 추가 분석은 중지했습니다. 잠금 상태를 다시 확인하거나 서버 잠금을 시도하세요.");
-      $("#ai-lock-btn").hidden = false;
-      $("#ai-lock-btn").textContent = "서버 잠금 다시 시도";
-    }
-  }
-  finally { setAiAccessChanging(false); }
-};
-$("#ai-lock-btn").onclick = async () => {
-  if (aiAccessChanging) return;
-  setAiAccessChanging(true);
-  showAiAccess(false, "AI 분석을 잠그고 있습니다. 진행 중인 요청 이후의 추가 분석은 중지됩니다.");
-  const revision = aiAccessRevision;
-  try {
-    const { response, data } = await GongHttp.requestJson("/api/ai-access", { method: "DELETE" }, 30000, "access");
-    if (!response.ok || data.unlocked !== false) throw new Error("lock");
-    if (revision === aiAccessRevision) showAiAccess(false);
-  } catch {
-    if (revision === aiAccessRevision) {
-      showAiAccess(false, "서버 잠금 요청에 실패했습니다. 추가 분석은 중지했습니다. 서버 잠금을 다시 시도하세요.");
-      $("#ai-lock-btn").hidden = false;
-      $("#ai-lock-btn").textContent = "서버 잠금 다시 시도";
-    }
-  }
-  finally { setAiAccessChanging(false); }
-};
-$("#ecr-upload-form").onsubmit = async (event) => {
-  event.preventDefault();
-  if (ecrBusy || !aiUnlocked) return;
-  const row = currentRow, file = $("#ecr-file").files[0];
-  if (!file || row?.mode !== "bid") return;
-  const run = ++ecrRun;
-  const progress = (message) => { if (currentRow === row && run === ecrRun) $("#ecr-progress").textContent = message; };
-  if (file.size > 8 * 1024 * 1024) { progress("파일은 8MB까지 지원합니다."); return; }
-  ecrBusy = true;
-  $("#ecr-stop-btn").hidden = false;
-  $("#ecr-stop-btn").disabled = false;
-  $("#ecr-file").disabled = true;
-  $("#ecr-analyze-btn").disabled = true;
-  let completedParts = 0;
-  try {
-    progress("문서를 변환하고 있습니다.");
-    const send = async (params, body) => {
-      const { response, data } = await GongHttp.requestJson(`/api/ecr?${new URLSearchParams(params)}`, { method: "POST", body });
-      if (data.locked) showAiAccess(false, data.message);
-      if (!response.ok) throw new Error(data.message || "분석 요청 실패");
-      return data;
-    };
-    const job = await send({ action: "upload", notice: numberOf(row), name: file.name }, file);
-    const order = job.order || Array.from({ length: job.total }, (_, index) => index);
-    for (let position = 0; position < order.length; position++) {
-      const index = order[position];
-      // 다른 공고로 이동하면 추가 뉴런을 쓰지 않는다. 이미 완료된 구간은 서버에 남는다.
-      if (currentRow !== row || !aiUnlocked || run !== ecrRun) break;
-      progress(`${job.focused ? "ECR·장비 상세 표 분석" : "장비 요구사항 우선 분석"} 중 · ${position + 1} / ${job.total} 구간`);
-      const result = await send({ action: "step", id: job.id, index: String(index), finalize: position === order.length - 1 ? "1" : "0" });
-      if (result.retry) {
-        progress(result.message);
-        // 다른 탭이 같은 구간을 처리하는 동안 R2를 연속 호출하지 않는다.
-        const delay = Number(result.retryAfterMs);
-        await new Promise((resolve) => setTimeout(resolve, Math.min(10000, Math.max(500, Number.isFinite(delay) ? delay : 500))));
-        position--; continue;
-      }
-      completedParts = position + 1;
-      if (result.analysis) {
-        const data = result.analysis;
-        EquipmentSummary.validate(data);
-        rememberEcr(row, data, `/api/ecr?notice=${encodeURIComponent(numberOf(row))}`);
-        if (currentRow === row && run === ecrRun) {
-          currentAnalysis = data;
-          $("#download-ecr-btn").disabled = false;
-          $("#ecr-tab").textContent = `ECR 규격 (${data.ecr.length})`;
-          renderEcr(data);
-          $("#ecr-content").insertAdjacentHTML("afterbegin", EquipmentSummary.render(data));
-          progress("분석이 완료되었습니다. 근거와 원문을 확인하세요.");
-        }
-      }
-    }
-  } catch (error) { progress(`${error.message}${completedParts > 0 ? ` 완료된 ${completedParts}개 구간은 저장되었습니다. 같은 파일로 다시 시작할 수 있습니다.` : ""}`); }
-  finally { ecrBusy = false; $("#ecr-stop-btn").hidden = true; $("#ecr-analyze-btn").disabled = !aiUnlocked; $("#ecr-file").disabled = !aiUnlocked; }
-};
-// 제외 사유("… 제외함")는 EquipmentSummary가 결과 머리의 전용 상자에 모아 그린다. 여기 경고 묶음에
-// 또 넣으면 같은 문장이 화면에 두 번 나오고, 정작 다른 불확실 메시지가 그 사이에 묻힌다.
-function renderEcr(data) {
-  const hasItems = Array.isArray(data.ecr) && data.ecr.length > 0;
-  const verified = EquipmentSummary.isVerified(data);
-  const alerts = [...new Set([...(data.누락 || []), ...(data.coverage?.missingIds || [])])].map((id) => `누락: ${id}`).concat(data.verification?.errors || [], ...(data.ecr || []).map((item) => (item.불확실 || []).filter((text) => !String(text).includes("제외함")).map((text) => `${item.id}: ${text}`)));
-  const rows = (data.ecr || []).map((item, i) => `<tr class="ecr-row" data-index="${i}"><td><button type="button" class="ecr-detail-toggle" aria-expanded="false" aria-controls="detail-${i}" aria-label="${html(`${item.id || "ECR"} ${item.명칭 || ""} 원문 상세`)}">${html(item.id || "상세")}</button></td><td>${html(item.분류)}</td><td>${html(item.명칭)}</td><td>${html((item.기본규격 || []).map((spec) => spec.수량).filter(Boolean).join(", ") || "-")}</td><td>${html((item.산출물 || []).join(", ") || "-")}</td></tr><tr id="detail-${i}" class="ecr-detail" hidden><td colspan="5"><p><strong>세부내용 원문</strong></p><div class="detail-text">${html(item.세부내용_원문 || "-")}</div>${specTable(item.기본규격 || [])}</td></tr>`).join("");
-  $("#ecr-content").innerHTML = `${alerts.length ? `<div class="ecr-alert">${alerts.map(html).join("<br>")}</div>` : ""}<p class="ecr-status ${verified ? "verified" : "unverified"}">${!hasItems ? "추출 결과 없음 — 요구사항이 없다는 뜻은 아닙니다. 원문 확인 필요" : verified ? "자동 검증 통과" : "자동 검증 미통과 — 원문 확인 필요"}</p><div class="ecr-scroll"><table class="ecr-table"><thead><tr><th>ID</th><th>분류</th><th>명칭</th><th>수량</th><th>산출물</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">추출된 ECR이 없습니다.</td></tr>'}</tbody></table></div>`;
-  document.querySelectorAll(".ecr-row").forEach((row) => row.onclick = () => {
-    const detail = $(`#detail-${row.dataset.index}`);
-    detail.hidden = !detail.hidden;
-    row.classList.toggle("expanded", !detail.hidden);
-    row.querySelector(".ecr-detail-toggle").setAttribute("aria-expanded", String(!detail.hidden));
-  });
-}
-function specTable(specs) { return specs.length ? `<p><strong>기본규격</strong></p><div class="ecr-scroll"><table class="nested-spec"><thead><tr><th>구분</th><th>항목</th><th>요구사항</th><th>수량</th></tr></thead><tbody>${specs.map((spec) => `<tr><td>${html(spec.구분)}</td><td>${html(spec.항목)}</td><td>${html(spec.요구사항)}</td><td>${html(spec.수량)}</td></tr>`).join("")}</tbody></table></div>` : ""; }
-// 발주계획은 마감일이 없고 발주예정월이 그 자리를 대신하며, 첨부 URL도 없어 그 칸이 빈다.
-// 나라장터 링크는 모드마다 자리가 달라지지 않도록 전용 열로 뺐다.
-function downloadCsv() { downloadRows([["유형", "공고번호", "업무", "수요기관", "사업명(공고명)", "게시일", "마감일/발주예정", "첨부파일", "나라장터 링크"], ...filtered.map((row) => [MODE_NAMES[row.mode] || row.mode, numberOf(row), row.businessType, row.institution, row.title, row.publishedAt, row.mode === "plan" ? row.orderMonth : row.closeAt, row.mode === "plan" ? "" : normalizeFiles(row.files).map((file) => `${file.name} (${file.url})`).join(" | "), row.detailUrl || ""])], "gong-go"); }
-async function downloadEcr() {
-  const rows = [["공고번호", "사업명", "ID", "분류", "명칭", "수량", "산출물", "세부내용 원문", "검증", "장비 요구사항", "근거", "미추출 번호", "제외/불확실", "검증 오류", "검증 경고", "번호 대조", "분석일", "분석 모델", "출처"]];
-  // 내보내기 중 화면 검색/분석 목록이 바뀌어도 시작 시점의 대상과 경로를 유지한다.
-  const targets = filtered.flatMap((row) => { const entry = analyses.get(numberOf(row)); return entry ? [{ row: { ...row }, path: entry.path }] : []; });
-  if (!targets.length) { window.alert("현재 검색 결과에 저장된 ECR 분석이 없습니다."); return; }
-  for (const { row, path } of targets) {
-    try {
-      const { response, data } = await GongHttp.requestJson(path.startsWith("/api/") ? path : `${DATA_BASE}/${path}`, { cache: "no-store" }, 30000, "read");
-      if (!response.ok) throw new Error("저장 결과를 조회하지 못했습니다. 잠시 후 다시 시도하세요.");
-      EquipmentSummary.validate(data);
-      const items = data.ecr;
-      // 0건 분석도 공고 행과 경고를 남긴다. 빈 파일을 '요구사항 없음'으로 오인하지 않게 한다.
-      for (const item of items.length ? items : [{ 명칭: "추출된 ECR 없음" }]) {
-        // 동일 요구사항 안의 여러 장비를 평탄화하면 수량·근거의 소속이 사라진다.
-        // CSV 열과 요구사항당 한 행은 유지하되 장비 순번·종류·명칭으로 연결한다.
-        const equipment = (item.장비요약 || []).map((entry, index) => ({ entry, label: `[장비 ${index + 1} | ${entry.종류 || "분류 확인 필요"} | ${entry.명칭 || "명칭 확인 필요"}]` }));
-        const facts = equipment.flatMap(({ entry, label }) => entry.규격.map((fact) => ({ fact, label })));
-        const requirements = equipment.length
-          ? equipment.map(({ entry, label }) => `${label}\n${entry.규격.length ? entry.규격.map((fact) => `${fact.항목 || "항목 확인 필요"}: ${fact.값 || "미기재"}`).join("\n") : "추출 규격 없음 — 원문 확인 필요"}`).join("\n\n")
-          : (item.기본규격 || []).map((spec) => `${spec.구분 || "구분 미기재"} | ${spec.항목 || "항목 미기재"}: ${spec.요구사항 || "미기재"}`).join("\n");
-        rows.push([numberOf(row), row.title, item.id, item.분류, item.명칭,
-          facts.filter(({ fact }) => fact.항목 === "수량").map(({ fact, label }) => `${label} ${fact.값 || "미기재"}`).join("\n") || (item.기본규격 || []).map((spec) => spec.수량).filter((value) => value !== undefined && value !== "").join(", "),
-          (item.산출물 || []).join(", "), item.세부내용_원문, !items.length ? "추출 결과 없음 — 원문 확인 필요" : EquipmentSummary.isVerified(data) ? "통과" : "원문 확인 필요",
-          requirements, equipment.map(({ entry, label }) => `${label}\n출처: ${entry.출처 || item.출처 || (data.sourceFiles || []).join(", ") || "확인 필요"}\n${entry.규격.map((fact) => `${fact.항목 || "항목 확인 필요"}: ${fact.근거 || "근거 없음"} (${fact.검증 || "확인 필요"})`).join("\n")}`).join("\n\n"),
-          [...new Set([...(data.누락 || []), ...(data.coverage?.missingIds || [])])].join(", "),
-          (item.불확실 || []).join("\n"), (data.verification?.errors || []).join("\n"), (data.verification?.warnings || []).join("\n"),
-          data.coverage?.status === "matched" ? "번호 일치 — 규격 완전성 미검증" : data.coverage?.status === "partial" ? "미추출 번호 있음" : "번호 대조 불가",
-          data.analyzedAt || "", data.model || "", item.출처 || (data.sourceFiles || []).join(", ")]);
-      }
-    } catch (error) { window.alert(`ECR 내보내기 실패: ${error.message}`); return; }
-  }
-  downloadRows(rows, "gong-go-ecr");
-}
-function downloadRows(rows, prefix) { const csv = GongCsv.serialize(rows); downloadBlob(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }), `${prefix}_${localDate(new Date()).replaceAll("-", "")}.csv`); }
 // CSV\uC640 \uD504\uB9AC\uC14B JSON\uC774 \uD568\uAED8 \uC4F4\uB2E4.
 function downloadBlob(blob, filename) { const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = filename; document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url); }
-async function downloadAll() { const files = normalizeFiles(currentRow?.files), button = $("#download-all-btn"); if (!files.length) return; button.disabled = true; for (let i = 0; i < files.length; i += 1) { button.textContent = `다운로드 중... (${i + 1}/${files.length})`; window.open(files[i].url, "_blank", "noopener,noreferrer"); if (i < files.length - 1) await new Promise((resolve) => setTimeout(resolve, 700)); } button.textContent = `전체 다운로드 완료 (${files.length}건)`; button.disabled = false; }
-async function getJson(url) {
-  const { response, data } = await GongHttp.requestJson(url, {}, 30000, "data");
-  if (!response.ok) throw new Error(response.status === 401 ? "로그인이 만료되었습니다. 다시 로그인하세요." : `데이터 조회에 실패했습니다 (HTTP ${response.status}). 잠시 후 다시 시도하세요.`);
-  return data;
-}
-// CSV 파싱과 행 모델(예전 parseCsv/displayRow/planRow/guess)은 rows.js로 옮겼다. 워커도 같은 것을 쓴다.
-function normalizeFiles(files) { return Array.isArray(files) ? files.filter((file) => file && typeof file === "object" && safeExternalUrl(file.url)).map((file) => ({ ...file, name: typeof file.name === "string" ? file.name : "첨부파일", url: safeExternalUrl(file.url) })) : []; } function numberOf(row) { return row.announcementNumber || ""; } function dateKey(value) { return Rows.dateKey(value); } function dateFormat(value) { const v = dateKey(value); return v.length === 8 ? `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}` : "-"; } function format(value) { return new Intl.NumberFormat("ko-KR").format(value); } function localDate(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; } function html(value) { return String(value || "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]); }

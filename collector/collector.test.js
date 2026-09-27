@@ -8,10 +8,9 @@ const {
   clearLegacySources,
   recordsForWrite,
   sourceEndpoint,
-  serverTimingDuration,
-  isRetryable,
   parseArgs,
 } = require("./collector");
+const { serverTimingDuration, isRetryable } = require("./api");
 
 test("백필은 CLI에서 사전공고와 본공고만 선택할 수 있다", () => {
   assert.deepEqual(parseArgs(["--begin=2020-01-01", "--end=2020-03-31", "--no-resume", "--modes=pre,bid,bid"]), {

@@ -68,7 +68,7 @@ async function main() {
         await page.goto("http://gong-go.test/");
         await page.waitForFunction(() => document.querySelector("#status").textContent !== "");
         assert.equal(await page.evaluate(() => today()), "2026-09-26", `KST date in ${timezoneId}`);
-        assert.deepEqual(await page.evaluate(() => recentLiveSpan("2026-09-01", "2026-09-30")), { begin: "2026-09-25", end: "2026-09-26" });
+        assert.deepEqual(await page.evaluate(() => GongSearch.createSearch().recentLiveSpan("2026-09-01", "2026-09-30")), { begin: "2026-09-25", end: "2026-09-26" });
         // 저장 프리셋과 무관한 전체 기관 조건에서 실제 압축 CSV 검색 파이프라인을 검증한다.
         await page.evaluate(() => { institutionList = []; renderInstitutions(); });
         await page.locator("#menu-btn").click();
@@ -108,8 +108,7 @@ async function main() {
         csvMalformed = false;
         // Worker 생성 실패를 주입해 실제 pool()의 복구 경로로 대체 검색에 진입한다.
         await page.evaluate(() => {
-          for (const worker of workerPool || []) worker.terminate();
-          workerPool = null;
+          scanner.dispose();
           window.benchmarkNativeWorker = window.Worker;
           window.Worker = class { constructor() { throw new Error("fixture Worker construction failure"); } };
         });
@@ -117,15 +116,15 @@ async function main() {
         await page.waitForFunction(() => document.querySelector("#status").textContent.includes("4건을 읽어 1건"));
         assert.equal(await page.locator("#results .title-link").count(), 1);
         assert.doesNotMatch(await page.locator("#status").textContent(), /읽지 못했습니다/);
-        assert.equal(await page.evaluate(() => workerPool.length), 0);
+        assert.equal(await page.evaluate(() => scanner.pool().length), 0);
         await page.evaluate(() => { window.Worker = window.benchmarkNativeWorker; delete window.benchmarkNativeWorker; });
         await page.locator("#menu-btn").click();
         await page.locator("#advanced-toggle").click();
         // 검색 데이터 파이프라인이 아니라 실제 ECR 진입 동선 검증용 공고 fixture다.
         await page.evaluate(() => {
           setMode("bid");
-          filtered = [{ mode: "bid", announcementNumber: "R26-test", title: "테스트 서버 도입 제안요청", institution: "검증기관", detailUrl: "javascript:alert(1)", files: [null, { name: "실행 불가", url: "javascript:alert(1)" }, { name: "제안요청서.pdf", url: "https://example.go.kr/rfp.pdf" }] }];
-          renderRows(filtered);
+          model.filtered = [{ mode: "bid", announcementNumber: "R26-test", title: "테스트 서버 도입 제안요청", institution: "검증기관", detailUrl: "javascript:alert(1)", files: [null, { name: "실행 불가", url: "javascript:alert(1)" }, { name: "제안요청서.pdf", url: "https://example.go.kr/rfp.pdf" }] }];
+          renderRows(model.filtered);
         });
         await page.locator(".ecr-entry-btn").click();
         assert.match(await page.locator("#modal-file-list").textContent(), /첨부 링크 2건을 제외/);
@@ -209,7 +208,7 @@ async function main() {
         console.log(`PASS long ECR ${viewport.width}: 100 cards, render+layout ${longLayout.renderMs}ms, no modal horizontal overflow`);
         await fs.mkdir(path.resolve(__dirname, "../test-results"), { recursive: true });
         await page.screenshot({ path: path.resolve(__dirname, `../test-results/ecr-long-${viewport.width}.png`), fullPage: true });
-        await page.evaluate(() => renderEcr(currentAnalysis));
+        await page.evaluate(() => renderEcr(model.currentAnalysis));
         const bounds = await page.locator(".modal").boundingBox();
         assert.ok(bounds && bounds.x >= -1 && bounds.x + bounds.width <= viewport.width + 1, "modal must fit viewport width");
         await fs.mkdir(path.resolve(__dirname, "../test-results"), { recursive: true });

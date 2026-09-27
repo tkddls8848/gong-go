@@ -72,14 +72,11 @@ test("인덱스 데이터 조회 시간 초과는 재분석이 아닌 새로고�
 });
 
 test("공통 데이터 조회는 30초 제한을 사용하고 HTTP 실패를 성공 데이터로 반환하지 않는다", async () => {
-  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
-  const start = app.indexOf("async function getJson("), end = app.indexOf("// CSV 파싱", start);
-  assert.ok(start >= 0 && end > start);
   for (const status of [200, 401, 503]) {
-    const read = new Function("GongHttp", `${app.slice(start, end)}; return getJson;`)({ requestJson: async (_url, _options, timeout, purpose) => {
-      assert.equal(timeout, 30000); assert.equal(purpose, "data");
-      return { response: { ok: status === 200, status }, data: { files: [] } };
-    } });
+    const { getJson: read } = require("../public/http.js").createHttp({
+      setTimeout(fn, timeout) { assert.equal(timeout, 30000); return setTimeout(fn, timeout); },
+      fetch: async () => ({ ok: status === 200, status, json: async () => ({ files: [] }) })
+    });
     if (status === 200) assert.deepEqual(await read("/data/index.json"), { files: [] });
     else await assert.rejects(read("/data/index.json"), status === 401 ? /로그인이 만료/ : /HTTP 503/);
   }

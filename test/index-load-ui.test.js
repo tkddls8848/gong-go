@@ -1,20 +1,20 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
+
+const { createIndex } = require("../public/data-index.js");
+require("../public/dates.js");
 function screen(index, analysis) {
-  const source = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
-  const start = source.indexOf("async function loadIndex("), end = source.indexOf("function renderDataStatus", start);
   const status = { textContent: "" }, writes = [];
-  const context = vm.createContext({ DATA_BASE: "/data", INDEX_STORAGE_KEY: "index", indexRevision: 0, fileIndex: ["existing"], dataSchemaVersion: "old", analyses: new Map([["old", { path: "old.json" }]]),
+  const context = { fileIndex: ["existing"], dataSchemaVersion: "old", analyses: new Map([["old", { path: "old.json" }]]) };
+  const { loadIndex } = createIndex({
+    model: context, analyses: context.analyses, $: () => status,
     getJson: async (url) => url.includes("analysis-index") ? analysis : typeof index === "function" ? index() : index,
     localStorage: { getItem: () => "old", setItem: (...args) => writes.push(args) },
-    renderDataStatus() {}, defaultRange() {}, $: () => status });
-  vm.runInContext(fs.readFileSync(path.join(__dirname, "../public/dates.js"), "utf8"), context);
-  vm.runInContext(source.slice(start, end), context);
-  return { context, status, writes, load: () => context.loadIndex(true) };
+    renderDataStatus() {}, defaultRange() {}, INDEX_STORAGE_KEY: "index"
+  });
+  return { context, status, writes, load: () => loadIndex(true) };
 }
+
 const file = { path: "bid/2026/09.csv.gz", begin: "2026-09-01", end: "2026-09-30" };
 
 test("ECR 인덱스의 문자열 검증 상태나 HTML·음수 건수는 목록에 적용하지 않는다", async () => {

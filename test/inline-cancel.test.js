@@ -1,21 +1,21 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
+
+const { createScanner } = require("../public/search-scan.js");
 function screen(maxRows = 100, matchedCount = 1) {
-  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
-  const start = app.indexOf("async function scanInline("), end = app.indexOf("function defaultRange", start);
-  assert.ok(start >= 0 && end > start);
-  const requests = [], progress = [];
-  const context = vm.createContext({ AbortController, setTimeout, searchVersion: 1, abortScan() {}, dataSchemaVersion: "", DATA_BASE: "/data", FETCH_CONCURRENCY: 2, MAX_ROWS: maxRows,
+  const requests = [], progress = [], context = { searchVersion: 1, dataSchemaVersion: "" };
+  const scanner = createScanner({
+    model: context, POOL_SIZE: 0, workerUrl: "", FETCH_CONCURRENCY: 2, MAX_ROWS: maxRows,
     modeOf: () => "bid", Rows: { makeCriteria: (value) => value,
       fetchCsvText: (_url, options) => new Promise((resolve, reject) => {
         requests.push({ resolve, reject, signal: options.signal });
         options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
-      }), scanText: () => ({ scanned: matchedCount, matched: Array.from({ length: matchedCount }, () => ({ title: "result" })) }) } });
-  vm.runInContext(app.slice(start, end), context);
-  return { context, requests, progress, scan: (count = 2) => context.scanInline(Array.from({ length: count }, () => ({ path: "file.gz", begin: "2026-09-01", end: "2026-09-01" })), {}, { begin: "2026-09-01", end: "2026-09-01" }, context.searchVersion, (state) => progress.push(state)) };
+      }), scanText: () => ({ scanned: matchedCount, matched: Array.from({ length: matchedCount }, () => ({ title: "result" })) }) }
+  });
+  context.abortScan = scanner.cancel;
+  return { context, requests, progress, scan: (count = 2) => scanner.scanInline(
+    Array.from({ length: count }, () => ({ path: "file.gz", begin: "2026-09-01", end: "2026-09-01" })),
+    {}, { begin: "2026-09-01", end: "2026-09-01" }, context.searchVersion, (state) => progress.push(state)) };
 }
 
 test("대체 검색 취소는 동시 다운로드를 중단하고 실패로 집계하지 않는다", async () => {

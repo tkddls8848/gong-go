@@ -1,24 +1,20 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
+
+const { createScanner } = require("../public/search-scan.js");
 function pool(failAt) {
-  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
-  const start = app.indexOf("let workerPool = null"), end = app.indexOf("function scanFiles", start);
-  assert.ok(start >= 0 && end > start);
   const workers = []; let calls = 0;
-  class Worker {
-    constructor(url) {
+  const scanner = createScanner({
+    model: {}, POOL_SIZE: 3, workerUrl: new URL("https://local.test/search-worker.js"),
+    createWorker(url) {
       calls++;
       if (calls === failAt) throw new Error("Worker unavailable");
-      this.url = String(url); this.terminated = false; workers.push(this);
+      const worker = { url: String(url), terminated: false, terminate() { this.terminated = true; } };
+      workers.push(worker);
+      return worker;
     }
-    terminate() { this.terminated = true; }
-  }
-  const context = vm.createContext({ URL, location: { href: "https://local.test/" }, POOL_SIZE: 3, Worker });
-  vm.runInContext(app.slice(start, end), context);
-  return { get: () => context.pool(), workers, calls: () => calls };
+  });
+  return { get: scanner.pool, workers, calls: () => calls };
 }
 
 test("Worker 일부 생성 후 실패하면 생성된 Worker를 모두 정리한다", () => {

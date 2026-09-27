@@ -1,26 +1,24 @@
-// 실제 화면 핸들러를 응답 순서를 제어할 수 있는 DOM/통신 모형에서 실행한다.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
+
+const { createAiAccess } = require("../public/ai-access.js");
+const { createHttp } = require("../public/http.js");
 function screen(timeoutMs) {
-  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
-  const start = app.indexOf("let ecrBusy = false, aiUnlocked = false;");
-  const end = app.indexOf('$("#ecr-upload-form").onsubmit', start);
-  assert.ok(start >= 0 && end > start);
-  const nodes = new Map(), requests = [];
+  const nodes = new Map(), requests = [], state = { ecrBusy: false, aiUnlocked: false };
   const $ = (id) => {
     if (!nodes.has(id)) nodes.set(id, { hidden: false, disabled: false, value: "test-password", textContent: "", querySelectorAll: () => [$("#ai-password"), $("#submit")] });
     return nodes.get(id);
   };
-  const context = vm.createContext({ $, AbortController, clearTimeout, setTimeout: (fn, ms) => setTimeout(fn, timeoutMs ?? ms), fetch: (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject })) });
-  vm.runInContext(fs.readFileSync(path.join(__dirname, "../public/http.js"), "utf8"), context);
-  vm.runInContext(app.slice(start, end), context);
-  return { $, requests, refresh: () => context.refreshAiAccess(), show: (unlocked) => context.showAiAccess(unlocked),
-    unlock: () => $("#ai-unlock-form").onsubmit({ preventDefault() {} }), lock: () => $("#ai-lock-btn").onclick(),
-    unlocked: () => vm.runInContext("aiUnlocked", context) };
+  const GongHttp = createHttp({
+    setTimeout: (fn, ms) => setTimeout(fn, timeoutMs ?? ms),
+    fetch: (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject }))
+  });
+  const access = createAiAccess({ $, state, GongHttp });
+  return { $, requests, refresh: access.refreshAiAccess, show: access.showAiAccess,
+    unlock: () => access.unlockAiAccess({ preventDefault() {} }), lock: access.lockAiAccess,
+    unlocked: () => state.aiUnlocked };
 }
+
 const response = (unlocked, ok = true) => ({ ok, json: async () => ({ unlocked, configured: true }) });
 
 test("잠근 뒤 늦게 도착한 조회 응답은 분석 버튼을 다시 활성화하지 않는다", async () => {

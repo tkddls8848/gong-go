@@ -1,26 +1,26 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
 
+const { createNlQuery } = require("../public/nl-query.js");
+const { createHttp } = require("../public/http.js");
+require("../public/dates.js");
 function screen(timeoutMs) {
-  const app = fs.readFileSync(path.join(__dirname, "../public/app.js"), "utf8");
-  const start = app.indexOf("let nlPending = false;");
-  const end = app.indexOf("function applyNlFilter", start);
-  assert.ok(start >= 0 && end > start);
   const nodes = new Map(), requests = [], applied = [], statuses = [];
   const $ = (id) => { if (!nodes.has(id)) nodes.set(id, { value: "", checked: false }); return nodes.get(id); };
   $("#nl-query").value = "서버 공고";
-  const context = vm.createContext({ $, setTimeout: (fn, ms) => setTimeout(fn, timeoutMs ?? ms), clearTimeout, AbortController, searchVersion: 0, viewMode: "pre", page: 1, ASK_API: "/api/ask",
-    collectInstitutions: () => [], setNl: (...args) => statuses.push(args),
-    applyNlFilter: (state) => applied.push(state), applyFilters: () => { context.searchVersion++; },
-    fetch: () => new Promise((resolve, reject) => requests.push({ resolve, reject })) });
-  vm.runInContext(fs.readFileSync(path.join(__dirname, "../public/http.js"), "utf8"), context);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, "../public/dates.js"), "utf8"), context);
-  vm.runInContext(app.slice(start, end), context);
-  return { $, context, requests, applied, statuses, run: () => context.runNlQuery() };
+  const context = { searchVersion: 0, viewMode: "pre", page: 1 };
+  const GongHttp = createHttp({
+    setTimeout: (fn, ms) => setTimeout(fn, timeoutMs ?? ms),
+    fetch: () => new Promise((resolve, reject) => requests.push({ resolve, reject }))
+  });
+  const { runNlQuery } = createNlQuery({
+    model: context, $, GongHttp, collectInstitutions: () => [],
+    setNl: (...args) => statuses.push(args), applyNlFilter: (state) => applied.push(state),
+    applyFilters: () => { context.searchVersion++; }, resetPage: () => { context.page = 1; }
+  });
+  return { $, context, requests, applied, statuses, run: runNlQuery };
 }
+
 const response = { ok: true, json: async () => ({ filter: { q: "서버" } }) };
 test("자연어 검색 Enter 반복은 하나의 요청만 전송한다", async () => {
   const ui = screen(), pending = ui.run();

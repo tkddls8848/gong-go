@@ -5,18 +5,14 @@ const zlib = require("node:zlib");
 const { promisify } = require("node:util");
 const gzip = promisify(zlib.gzip);
 const { serializeCsv, parseCsv } = require("./csv-record");
-const { ROOT, DATA_DIR, loadEnv, mapPool, sleep, buildIndexEntries } = require("./store");
+const { ROOT, DATA_DIR, loadEnv, mapPool, buildIndexEntries } = require("./store");
 const { project } = require("./service-columns");
+const { MODES, sourceEndpoint, createClient } = require("./api");
 
 const CONFIG_FILE = path.join(__dirname, "sync.config.json");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
 const STATE_FILE = path.join(DATA_DIR, "sync-state.json");
-const PAGE_SIZE = 999;
 const RANGE_DAYS = 28;
-const RETRIES = 3;
-// 요청 하나의 전체 시한. 본문을 다 받는 시간까지 포함한다. 본공고 한 페이지가 5~6MB라
-// 동시 8요청에서는 정상 응답도 15~30초가 걸려, 30초로는 멀쩡한 페이지가 시한에 잘렸다.
-const REQUEST_TIMEOUT_MS = 90_000;
 const FILE_CONCURRENCY = 16;
 const WRITE_CONCURRENCY = 8;
 // 재개용 중간 저장 주기(완료 작업 수). 저장 자체는 수집을 멈추지 않으므로 자주 해도 싸다.
@@ -37,28 +33,6 @@ const SERVICE_KEY = process.env.SERVICE_KEY || "";
 // (docs/프로젝트-통합-문서.md 2부)
 const API_BASE = (process.env.API_BASE || "https://apis.data.go.kr").replace(/\/+$/, "");
 const RELAY_TOKEN = process.env.RELAY_TOKEN || "";
-const MODES = {
-  pre: {
-    base: "/1230000/ao/HrcspSsstndrdInfoService",
-    ops: { 물품: "getPublicPrcureThngInfoThngPPSSrch", 외자: "getPublicPrcureThngInfoFrgcptPPSSrch", 용역: "getPublicPrcureThngInfoServcPPSSrch", 공사: "getPublicPrcureThngInfoCnstwkPPSSrch" },
-  },
-  bid: {
-    base: "/1230000/ad/BidPublicInfoService",
-    ops: { 물품: "getBidPblancListInfoThngPPSSrch", 외자: "getBidPblancListInfoFrgcptPPSSrch", 용역: "getBidPblancListInfoServcPPSSrch", 공사: "getBidPblancListInfoCnstwkPPSSrch" },
-  },
-  // 발주계획현황(15129462). 앞의 둘과 달리 조회 범위를 지정할 수 없다 — orderBgnYm/orderEndYm과
-  // inqryBgnDt/inqryEndDt를 모두 받아 형식까지 검증하면서도(잘못된 포맷은 "DATE Format 에러")
-  // 어떤 값을 넣든 결과가 바뀌지 않는다. 실제로 돌아오는 것은 최근 며칠 안에 게시된 계획뿐이다.
-  //
-  // 그래서 이 모드는 snapshot으로 둔다. 과거를 소급해 받을 수 없고, 매 실행이 "지금 열려 있는
-  // 창"을 한 번 떠 오는 것이다. 보유 데이터는 그 스냅샷이 nticeDt(게시일시) 기준으로 쌓여 만들어진다.
-  plan: {
-    base: "/1230000/ao/OrderPlanSttusService",
-    ops: { 물품: "getOrderPlanSttusListThngPPSSrch", 외자: "getOrderPlanSttusListFrgcptPPSSrch", 용역: "getOrderPlanSttusListServcPPSSrch", 공사: "getOrderPlanSttusListCnstwkPPSSrch" },
-    snapshot: true,
-  },
-};
-
 if (require.main === module) main().catch((error) => { console.error(`수집 실패: ${error.message}`); process.exitCode = 1; });
 
 async function main() {
@@ -87,7 +61,8 @@ async function main() {
     const ranges = MODES[mode].snapshot ? [{ begin: iso(begin), end: iso(end) }] : chunks(begin, end);
     for (const range of ranges) for (const type of types) jobs.push({ range, mode, type });
   }
-  httpLimit = Math.max(1, Number(config.concurrency));
+  const httpLimit = Math.max(1, Number(config.concurrency));
+  const { fetchJob } = createClient({ SERVICE_KEY, API_BASE, RELAY_TOKEN, concurrency: httpLimit });
   const store = await readStore(begin, end);
   const errors = [];
   const completed = new Set(state.completedJobs);
@@ -153,137 +128,6 @@ async function main() {
   console.log(`완료: ${store.location.size}건 저장, 실패 ${errors.length}건`);
 }
 
-async function fetchJob(job) {
-  // 1페이지로 전체 페이지 수를 확인한 뒤 나머지 페이지를 동시에 받는다.
-  const first = await fetchPage(job, 1);
-  if (first.totalPages <= 1) return first.items;
-  const rest = await Promise.all(Array.from({ length: first.totalPages - 1 }, (_, index) => fetchPage(job, index + 2)));
-  return [...first.items, ...rest.flatMap((page) => page.items)];
-}
-
-async function fetchPage(job, pageNo) {
-  const definition = MODES[job.mode];
-  const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(PAGE_SIZE), inqryDiv: "1", ...rangeParams(job), ServiceKey: SERVICE_KEY });
-  const data = await requestJson(`${API_BASE}${definition.base}/${definition.ops[job.type]}?${params}`, {
-    mode: job.mode,
-    type: job.type,
-    range: `${job.range.begin}~${job.range.end}`,
-    page: pageNo,
-  });
-  const body = data?.response?.body;
-  if (!body) throw new Error(data?.response?.header?.resultMsg || JSON.stringify(data));
-  const items = Array.isArray(body.items) ? body.items : body.items?.item ? (Array.isArray(body.items.item) ? body.items.item : [body.items.item]) : [];
-  return { items, totalPages: Math.max(1, Math.ceil(Number(body.totalCount || 0) / Number(body.numOfRows || PAGE_SIZE))) };
-}
-
-// 조회 범위 파라미터는 서비스마다 이름이 다르다. 발주계획은 일시(inqryBgnDt)가 아니라
-// 발주년월(orderBgnYm)을 받는다 — 지금은 어느 쪽도 결과를 거르지 않지만, 포털이 필터를
-// 고치면 그때는 요청한 구간만 오는 것이 맞으므로 명세대로 실어 보낸다.
-function rangeParams(job) {
-  if (MODES[job.mode].snapshot) return { orderBgnYm: ym(job.range.begin), orderEndYm: ym(job.range.end) };
-  return { inqryBgnDt: `${ymd(job.range.begin)}0000`, inqryEndDt: `${ymd(job.range.end)}2359` };
-}
-
-// 전역 HTTP 동시 실행 제한. 작업·페이지 병렬을 모두 이 세마포어 하나로 묶어
-// 나라장터 API에 동시에 나가는 요청 수를 한 값으로 통제한다.
-let httpLimit = 1;
-let httpActive = 0;
-const httpQueue = [];
-function acquireHttp() { if (httpActive < httpLimit) { httpActive += 1; return Promise.resolve(); } return new Promise((resolve) => httpQueue.push(resolve)); }
-function releaseHttp() { const next = httpQueue.shift(); if (next) next(); else httpActive -= 1; }
-
-async function requestJson(url, meta) {
-  let lastError;
-  for (let retry = 0; retry <= RETRIES; retry += 1) {
-    const queuedAt = performance.now();
-    await acquireHttp();
-    const startedAt = performance.now();
-    let status = 0;
-    let bytes = 0;
-    let upstreamMs = null;
-    let error = null;
-    try {
-      const response = await fetch(url, {
-        headers: { Accept: "application/json", ...(RELAY_TOKEN ? { Authorization: `Bearer ${RELAY_TOKEN}` } : {}) },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-      status = response.status;
-      upstreamMs = serverTimingDuration(response.headers.get("Server-Timing"), "upstream");
-      const body = await response.text();
-      bytes = Buffer.byteLength(body);
-      if (!response.ok) {
-        error = new Error(`HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`);
-        error.httpStatus = response.status;
-        error.retryAfterMs = retryAfterMs(response.headers.get("Retry-After"));
-        throw error;
-      }
-      const data = JSON.parse(body);
-      logRequest(meta, { queueWaitMs: startedAt - queuedAt, fetchMs: performance.now() - startedAt, status, bytes, retry, upstreamMs });
-      return data;
-    } catch (caught) {
-      error = withCause(caught);
-      lastError = error;
-      logRequest(meta, {
-        queueWaitMs: startedAt - queuedAt,
-        fetchMs: performance.now() - startedAt,
-        status,
-        bytes,
-        retry,
-        upstreamMs,
-        error: errorClass(error),
-      }, true);
-    } finally {
-      // 재시도 backoff 중에는 HTTP permit을 잡고 있지 않는다. 느린 한 페이지가 다른 페이지의
-      // 첫 시도까지 줄 세우지 않게 attempt 하나만 세마포어로 센다.
-      releaseHttp();
-    }
-    if (retry >= RETRIES || !isRetryable(error)) throw lastError;
-    await sleep(Math.max(error?.retryAfterMs || 0, retryDelay(retry)));
-  }
-  throw lastError;
-}
-
-function logRequest(meta, timing, failed = false) {
-  const value = { ...meta, ...roundTiming(timing) };
-  // URL에는 ServiceKey가 있으므로 어떤 경우에도 URL 자체는 로그에 넣지 않는다.
-  (failed ? console.warn : console.log)(`HTTP ${JSON.stringify(value)}`);
-}
-function roundTiming(value) {
-  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== null && item !== undefined).map(([key, item]) => [key, typeof item === "number" && !Number.isInteger(item) ? Number(item.toFixed(1)) : item]));
-}
-function serverTimingDuration(header, name) {
-  const match = String(header || "").match(new RegExp(`(?:^|,)\\s*${name}\\s*;\\s*dur=([0-9.]+)`, "i"));
-  return match ? Number(match[1]) : null;
-}
-function retryAfterMs(value) {
-  if (!value) return 0;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-  const date = Date.parse(value);
-  return Number.isNaN(date) ? 0 : Math.max(0, date - Date.now());
-}
-function retryDelay(retry) { return 800 * 2 ** retry * (0.75 + Math.random() * 0.5); }
-// 재시도 여부는 응답 상태가 아니라 오류 자체로 가린다. 상태로 가리면 본문을 받는 도중
-// 끊긴 요청이 재시도에서 빠진다 — 그때는 헤더에서 읽은 200이 이미 기록돼 있어 "성공한
-// 응답"으로 보이기 때문이다. 6MB짜리 본공고 페이지 세 장이 이렇게 한 번의 timeout으로
-// 재시도 없이 실패해 수집 전체가 멈췄다. 상태가 실제 실패 사유인 것은 !response.ok로
-// 던진 오류뿐이고, 그것만 httpStatus를 달고 온다. 나머지(timeout, 연결 끊김, 잘린 JSON)는
-// 모두 전송·해석 단계의 일시적 실패이므로 재시도한다.
-function isRetryable(error) {
-  const status = error?.httpStatus;
-  return status ? status === 408 || status === 429 || status >= 500 : true;
-}
-function errorClass(error) { return error?.cause?.code || error?.code || error?.name || "Error"; }
-
-// fetch가 네트워크 단계에서 실패하면 message는 "fetch failed" 한 줄뿐이고 실제 사유는
-// cause에 들어간다. 로컬에서는 재현되지 않고 GitHub Actions에서만 터지는 경우가 있어,
-// DNS(ENOTFOUND)·연결 거부(ECONNREFUSED)·타임아웃·인증서 오류를 구분할 수 있어야 한다.
-function withCause(error) {
-  const cause = error?.cause;
-  if (!cause) return error;
-  const detail = [cause.code, cause.message].filter(Boolean).join(": ");
-  return detail ? new Error(`${error.message} (${detail})`, { cause }) : error;
-}
 // 레코드를 (공고구분|일자) 버킷으로 나눠 들고 있어, 저장할 때 전체 배열을 다시
 // 훑지 않고 바뀐 버킷의 파일만 건드린다. counts는 index.json을 매번 다시 만들지
 // 않기 위한 메모리 상의 파일별 건수 캐시다.
@@ -493,7 +337,6 @@ function clearLegacySources(store, entries, succeeded, types, changed) {
   }
   return removed;
 }
-function sourceEndpoint(job) { return `${MODES[job.mode].base}/${MODES[job.mode].ops[job.type]}`; }
 function legacyBusinessType(record) { return TYPES.find((type) => String(record.bsnsDivNm || "").includes(type)) || ""; }
 function recordsForWrite(bucket) {
   return [...(bucket?.values() ?? [])].sort((left, right) => {
@@ -523,8 +366,6 @@ function parseArgs(values = process.argv.slice(2)) {
 function parseDate(value) { const result = new Date(`${value}T00:00:00`); return Number.isNaN(result.valueOf()) ? null : result; }
 function addDays(value, days) { const result = new Date(value); result.setDate(result.getDate() + days); return result; }
 function iso(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
-function ymd(value) { return String(value).replaceAll("-", ""); }
-function ym(value) { return ymd(value).slice(0, 6); }
 function today() { return iso(new Date()); }
 
-module.exports = { applyItems, checkpointState, clearJobRange, clearLegacySources, recordsForWrite, sourceEndpoint, serverTimingDuration, isRetryable, parseArgs };
+module.exports = { applyItems, checkpointState, clearJobRange, clearLegacySources, recordsForWrite, sourceEndpoint, parseArgs };

@@ -25,5 +25,5 @@ test("화면은 CSV 보안 모듈을 먼저 로드하고 모든 다운로드가 
   const html = read("index.html");
   assert.ok(html.indexOf('src="csv.js"') >= 0);
   assert.ok(html.indexOf('src="csv.js"') < html.indexOf('src="app.js"'));
-  assert.match(read("app.js"), /function downloadRows\(rows, prefix\) \{ const csv = GongCsv.serialize\(rows\)/);
+  assert.match(read("app.js"), /function downloadRows\(rows, prefix\) \{\s+const csv = GongCsv.serialize\(rows\)/);
 });
