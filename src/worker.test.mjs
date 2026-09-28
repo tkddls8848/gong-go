@@ -71,7 +71,9 @@ async function authed(path, options = {}, env = envOf()) {
 }
 
 // ── 중계 ────────────────────────────────────────────────────────────────────
-// README의 응답 표가 그대로 계약이다. 상태 코드 셋이 각각 다른 원인을 가리킨다.
+// docs/operations.md "공공데이터 API 중계 > 확인"의 응답 표가 그대로 계약이다.
+// 상태 코드 셋이 각각 다른 원인을 가리킨다 — 401 JSON은 정상, 401 HTML은 구 배포본,
+// 501은 시크릿 미설정이다. 표를 고치면 아래 테스트도 함께 고친다.
 
 test("중계는 비밀번호 게이트보다 먼저 처리된다", async (t) => {
   const calls = stubFetch(t, () => new Response("upstream", { status: 200, headers: { "Content-Type": "application/json" } }));
