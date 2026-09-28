@@ -91,9 +91,13 @@ test("조회 줄에는 매번 바꾸는 것만 남기고 나머지는 ☰ 메뉴
   // 조회 줄이 버튼으로 붐비면 게시일 칸이 먼저 눌려 "오늘"이 두 줄로 접힌다. 자주 쓰지 않는
   // 동작은 메뉴로 내리고, 줄에는 검색어·업무·게시일과 검색 버튼만 남긴다.
   const panel = HTML.slice(at('id="menu-panel"'), at('class="filter-q"'));
-  for (const id of ["rail-open", "advanced-toggle", "reset", "download-btn", "download-ecr-btn", "menu-refresh"]) {
+  for (const id of ["rail-open", "advanced-toggle", "reset", "download-btn", "menu-refresh"]) {
     assert.ok(panel.includes(`id="${id}"`), `${id}는 메뉴 안에 있어야 한다`);
   }
+  // ECR 결과는 서버에 저장하지 않으므로 목록 전체 내보내기가 없다. 분석한 모달에서만 내려받는다.
+  assert.ok(!panel.includes('id="download-ecr-btn"'), "ECR 내보내기는 메뉴에 두지 않는다");
+  const upload = HTML.slice(at('id="ecr-upload-form"'), at('id="ecr-content"'));
+  assert.ok(upload.includes('id="download-ecr-btn"'), "ECR 내보내기는 분석 모달에 있어야 한다");
   // 검색은 메뉴로 내리지 않는다. 조회 줄의 유일한 주 동작이다.
   assert.ok(!panel.includes('id="search"'), "검색 버튼은 조회 줄에 남아야 한다");
 });

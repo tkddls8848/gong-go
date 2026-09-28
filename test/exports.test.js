@@ -4,16 +4,15 @@ const { createExports } = require("../public/exports.js");
 const { createEcrView } = require("../public/ecr-view.js");
 const { html, numberOf, format } = require("../public/format.js");
 const EquipmentSummary = require("../public/equipment.js");
-function exportEcr(filtered, analyses, GongHttp, downloadRows, numberOf, DATA_BASE, window, EquipmentSummary) {
-  return createExports({ model: { filtered }, analyses, GongHttp, downloadRows, numberOf, DATA_BASE, window, EquipmentSummary }).downloadEcr;
-}
-function runEcrExport(data, fail = false, count = 1) {
-  const captured = { rows: null, errors: [] };
-  const run = exportEcr;
-  let calls = 0;
-  const execute = run(Array.from({ length: count }, (_, i) => ({ announcementNumber: `test${i}`, title: "테스트 공고" })), new Map(Array.from({ length: count }, (_, i) => [`test${i}`, { path: `/api/ecr?notice=test${i}` }])),
-    { requestJson: async (_url, _options, timeout, purpose) => { assert.equal(timeout, 30000); assert.equal(purpose, "read"); calls++; if (fail && calls === count) throw new Error("load failed"); return { response: { ok: true }, data }; } }, (rows) => { captured.rows = rows; }, (row) => row.announcementNumber, "/data", { alert: (message) => captured.errors.push(message) }, require("../public/equipment.js"));
-  return execute().then(() => captured);
+// 서버 저장 결과는 없다. 모달에 열린 공고와 이번 분석 결과만 내보낸다.
+function runEcrExport(data, row = { announcementNumber: "test0", title: "테스트 공고" }) {
+  const captured = { rows: null, name: null, errors: [] };
+  createExports({
+    model: { currentRow: row, currentAnalysis: data }, numberOf: (item) => item.announcementNumber,
+    downloadRows: (rows, name) => { captured.rows = rows; captured.name = name; },
+    window: { alert: (message) => captured.errors.push(message) }, EquipmentSummary: require("../public/equipment.js"),
+  }).downloadEcr();
+  return Promise.resolve(captured);
 }
 
 test("내려받은 CSV는 머리글과 칸 수가 같다", () => {
@@ -91,12 +90,6 @@ test("ECR 추출 0건도 경고를 포함한 행으로 내보낸다", async () =
   assert.equal(rows[1][rows[0].indexOf("미추출 번호")], "ECR-001");
 });
 
-test("ECR 조회 실패 시 일부 결과만 성공 파일로 내보내지 않는다", async () => {
-  const output = await runEcrExport({ ecr: [{ id: "ECR-001" }] }, true, 2);
-  assert.equal(output.rows, null);
-  assert.match(output.errors[0], /내보내기 실패/);
-});
-
 test("ECR 배열이 없는 응답을 추출 0건으로 내보내지 않는다", async () => {
   for (const data of [{}, { ecr: {} }, { ecr: "" }]) {
     const output = await runEcrExport(data);
@@ -105,28 +98,18 @@ test("ECR 배열이 없는 응답을 추출 0건으로 내보내지 않는다", 
   }
 });
 
-test("현재 검색에 저장 분석이 없으면 헤더만 있는 CSV를 만들지 않는다", async () => {
-  const output = await runEcrExport({}, false, 0);
+test("분석 결과가 없으면 헤더만 있는 CSV를 만들지 않는다", async () => {
+  const output = await runEcrExport(null);
   assert.equal(output.rows, null);
-  assert.match(output.errors[0], /저장된 ECR 분석이 없/);
+  assert.match(output.errors[0], /내보낼 ECR 분석 결과가 없/);
 });
 
-test("ECR 내보내기 도중 목록이 바뀌어도 최초 대상의 경로와 제목을 사용한다", async () => {
-  const filtered = [{ announcementNumber: "one", title: "원래 제목" }, { announcementNumber: "two", title: "두 번째" }];
-  const analyses = new Map([["one", { path: "/api/one" }], ["two", { path: "/api/two" }]]);
-  const urls = []; let release, output;
-  const run = exportEcr;
-  const execute = run(filtered, analyses, { requestJson: async (url) => {
-    urls.push(url);
-    if (urls.length === 1) await new Promise((resolve) => { release = resolve; });
-    return { response: { ok: true }, data: { ecr: [] } };
-  } }, (rows) => { output = rows; }, (row) => row.announcementNumber, "/data", { alert: assert.fail }, require("../public/equipment.js"));
-  const pending = execute();
-  analyses.delete("two"); filtered[0].title = "변경된 제목"; filtered.pop();
-  release(); await pending;
-  assert.deepEqual(urls, ["/api/one", "/api/two"]);
-  assert.equal(output.length, 3);
-  assert.equal(output[1][1], "원래 제목");
+test("이번 분석 결과는 열린 공고의 번호와 제목으로 네트워크 조회 없이 내보낸다", async () => {
+  const output = await runEcrExport({ ecr: [{ id: "ECR-001", 명칭: "서버" }] }, { announcementNumber: "R26-1", title: "원래 제목" });
+  assert.equal(output.rows.length, 2);
+  assert.equal(output.rows[1][0], "R26-1");
+  assert.equal(output.rows[1][1], "원래 제목");
+  assert.equal(output.name, "gong-go-ecr-R26-1");
 });
 
 test("누락·오류·불확실 정보는 저장된 통과 플래그보다 화면과 CSV에서 우선한다", async () => {

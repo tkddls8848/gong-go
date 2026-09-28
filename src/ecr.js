@@ -144,27 +144,23 @@ export function parseResult(result, source, filename, index) {
   });
 }
 
-// 끝난 작업의 원문 사본은 남길 이유가 없다. 결과는 notices에 있고 재개할 일도 없다.
-// 키를 모아 한 번에 지운다 — 병합 요청은 이미 구간 수만큼 R2를 읽어 여유가 없다.
-// 정리 실패는 저장된 결과를 되돌릴 이유가 아니다. 남은 것은 보존 기간이 걷어 간다.
-export async function purgeJob(env, job, id, total) {
-  const keys = [];
+// 분석 결과는 서버에 남기지 않는다. 화면이 받은 응답이 유일한 사본이다. 끝난 작업은
+// 원문·구간·표식을 모두 지운다 — 키를 모아 한 번에 지운다. 병합 요청은 이미 구간 수만큼
+// R2를 읽어 여유가 없다. 정리 실패는 응답을 막을 이유가 아니다. 남은 것은 보존 기간이 걷어 간다.
+export async function purgeJob(env, id, total) {
+  const keys = [keyOf(id)];
   for (let part = 0; part < total; part++) keys.push(`_ecr/parts/${id}/${part}.json`, `_ecr/refine/${id}/${part}.json`, `_ecr/lease/${id}/${part}.json`);
-  try {
-    await env.DATA.delete(keys);
-    // 작업 자리에는 원문 없이 표식만 남긴다. 마지막 요청이 유실되어 화면이 다시 보내도
-    // 저장된 결과를 그대로 돌려주려면 이 공고가 끝났다는 사실은 남아 있어야 한다.
-    await env.DATA.put(keyOf(id), JSON.stringify({ notice: job.notice, name: job.name, total, done: true }));
-  } catch { console.warn(JSON.stringify({ event: "ecr_purge_deferred", keys: keys.length })); }
+  try { await env.DATA.delete(keys); }
+  catch { console.warn(JSON.stringify({ event: "ecr_purge_deferred", keys: keys.length })); }
 }
 // 완주하지 못한 작업은 정리를 못 받는다. 중단한 분석을 며칠 안에 이어서 할 수는 있어야 하니
-// 바로 지우지 않고 기간을 둔다. 결과(_ecr/notices)는 산출물이라 기간과 무관하게 남긴다.
+// 바로 지우지 않고 기간을 둔다. 예전에 저장하던 결과(_ecr/notices)도 같은 기간으로 걷어 간다.
 export const JOB_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export async function purgeStaleJobs(env, now = Date.now()) {
   if (typeof env.DATA?.list !== "function") return 0;
   const listed = await env.DATA.list({ prefix: "_ecr/", limit: 1000 });
   const stale = (listed?.objects || [])
-    .filter((object) => !object.key.startsWith("_ecr/notices/") && now - new Date(object.uploaded).getTime() > JOB_RETENTION_MS)
+    .filter((object) => now - new Date(object.uploaded).getTime() > JOB_RETENTION_MS)
     .map((object) => object.key);
   if (stale.length) await env.DATA.delete(stale);
   return stale.length;
@@ -174,14 +170,7 @@ export async function handleEcr(request, env) {
   try {
     const url = new URL(request.url);
     if (!env.DATA || !env.AI) throw fail("Workers AI 또는 R2 바인딩이 없습니다.", 501);
-    if (request.method === "GET") {
-      stage = "read";
-      const notice = url.searchParams.get("notice") || "";
-      if (!noticeOK.test(notice)) throw fail("공고번호가 올바르지 않습니다.");
-      const saved = await env.DATA.get(`_ecr/notices/${notice}.json`);
-      return saved ? json(await saved.json()) : json({ message: "저장된 분석이 없습니다." }, 404);
-    }
-    if (request.method !== "POST") return json({ message: "GET 또는 POST만 지원합니다." }, 405);
+    if (request.method !== "POST") return json({ message: "POST만 지원합니다." }, 405);
     if (request.headers.get("Origin") !== url.origin) throw fail("같은 사이트에서만 분석할 수 있습니다.", 403);
     stage = "access";
     const locked = await requireAiAccess(request, env);
@@ -206,10 +195,10 @@ export async function handleEcr(request, env) {
       stage = "prepare";
       const id = await hash(`${VERSION}\n${notice}\n${name}\n${text}`);
       const existing = await env.DATA.get(keyOf(id));
-      // 이미 저장된 구간 번호와 결과를 유지한다. 구형 작업도 표가 있는 구간부터 재개한다.
+      // 중단한 작업은 구간 번호와 완료 구간을 유지한다. 구형 작업도 표가 있는 구간부터 재개한다.
       // 구간 나누기는 저장이 아니라 준비 단계다. 여기서 실패하면 "분석 문서 저장"이라고
       // 잘못 알린다(SR-MaaS 본공고에서 실제로 그렇게 나왔다).
-      // 끝나서 원문을 지운 작업은 다시 나눈다. 원문 사본을 남기지 않기로 한 대가다.
+      // 예전 방식이 남긴 완료 표식(done)은 원문이 없으므로 다시 나눈다.
       const prior = existing ? await existing.json() : null;
       const job = prior && !prior.done ? prior : { notice, name, chunks: splitDocument(text), focused: requirementSections(text).sections.length > 0 };
       const needsCoverage = !job.coverage;
@@ -226,13 +215,7 @@ export async function handleEcr(request, env) {
     const stored = await env.DATA.get(keyOf(id));
     if (!stored) throw fail("문서를 다시 올려 주세요.", 404);
     const job = await stored.json();
-    // 끝난 작업은 원문 없이 표식만 남는다. 화면이 마지막 요청을 다시 보내도 저장된 결과를
-    // 그대로 돌려준다 — 다시 추론하지 않는다.
-    if (job.done) {
-      const finished = await env.DATA.get(`_ecr/notices/${job.notice}.json`);
-      if (finished) return json({ completed: job.total, total: job.total, analysis: await finished.json() });
-      throw fail("이 문서의 분석은 끝났지만 저장된 결과를 찾지 못했습니다. 다시 올려 주세요.", 404);
-    }
+    if (job.done) throw fail("문서를 다시 올려 주세요.", 404);
     if (index >= job.chunks.length) throw fail("분석 구간을 벗어났습니다.");
     const partKey = `_ecr/parts/${id}/${index}.json`;
     stage = "loadPart";
@@ -329,10 +312,8 @@ export async function handleEcr(request, env) {
     analysis.verification.warnings.push(...analysis.coverage.warnings);
     if (job.focused) analysis.verification.warnings.push("ECR·장비 번호가 붙은 상세 요구사항 표를 우선 선별했습니다. 번호 없는 본문과 별첨은 분석 범위에서 제외될 수 있습니다.");
     // 검증된 문자열 근거와 문서 전체 완전성은 별개다. verified를 과장하지 않는다.
-    stage = "saveResult";
-    await env.DATA.put(`_ecr/notices/${job.notice}.json`, JSON.stringify(analysis));
     stage = "cleanup";
-    await purgeJob(env, job, id, job.chunks.length);
+    await purgeJob(env, id, job.chunks.length);
     return json({ completed: job.chunks.length, total: job.chunks.length, analysis });
   } catch (error) {
     const report = ecrError(error, stage, crypto.randomUUID());

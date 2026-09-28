@@ -21,7 +21,7 @@ data/
 ├─ pre|bid|plan/YYYY/MM.csv.gz      봉인된 월 데이터
 ├─ raw/pre|bid|plan/...             원본 컬럼 백업(2020년~, 보존 기한 없음)
 ├─ files|norm|text/bid/...     첨부와 변환 결과
-└─ analysis/bid/...            ECR 분석 결과
+└─ analysis/bid/...            로컬 ECR 분석 결과(업로드하지 않음)
 ```
 
 ### 모듈 경계 — 공유 코드를 두지 않는다

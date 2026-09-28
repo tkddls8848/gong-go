@@ -17,12 +17,12 @@
 | 수집 시작·폴링·완료 반영 | [refresh.js](../public/refresh.js) | refresh-start-ui, refresh-race-ui, refresh-finish-ui |
 | 자연어 응답 검증·적용 시점 | [nl-query.js](../public/nl-query.js) | [nl-query-ui.test.js](../test/nl-query-ui.test.js) |
 | AI 잠금·해제 | [ai-access.js](../public/ai-access.js) | [ai-access-ui.test.js](../test/ai-access-ui.test.js) |
-| 저장 ECR·업로드·중단 | [ecr-ui.js](../public/ecr-ui.js) | ecr-load-ui, ecr-progress-ui |
+| ECR 업로드·중단·이번 결과 표시 | [ecr-ui.js](../public/ecr-ui.js) | ecr-load-ui, ecr-progress-ui |
 | ECR 표·경고·원문 상세 | [ecr-view.js](../public/ecr-view.js) | ecr-view, exports |
 | 장비 요약·결과 검증 | [equipment.js](../public/equipment.js) | equipment, ecr-data |
 | 공고 링크·첨부·입찰 일정 | [notice-view.js](../public/notice-view.js) | notice-view |
 | 상세 모달·포커스·탭 | [notice-modal.js](../public/notice-modal.js) | notice-modal, ecr-progress-ui, 브라우저 검증 |
-| 공고·ECR 내보내기 | [exports.js](../public/exports.js), [csv.js](../public/csv.js) | exports, csv |
+| 공고·이번 ECR 결과 내보내기 | [exports.js](../public/exports.js), [csv.js](../public/csv.js) | exports, csv |
 | 통신 시간 제한·오류 | [http.js](../public/http.js) | http |
 | KST 날짜·표시·HTML 이스케이프 | [dates.js](../public/dates.js), [format.js](../public/format.js) | dates, notice-view |
 | 테마·레이아웃·반응형 화면 | [style.css](../public/style.css) | ui-contract, 브라우저 검증 |
@@ -45,7 +45,7 @@
 | 수집기용 API 중계 | [relay.js](../src/relay.js) |
 | 자연어 HTTP·모델 호출 | [ask-handler.js](../src/ask-handler.js) |
 | 자연어 스키마·규칙 파서·날짜 해석 | [ask.js](../src/ask.js) |
-| ECR 작업·추론·결과 저장 | [ecr.js](../src/ecr.js) |
+| ECR 작업·추론·결과 응답(저장 없음) | [ecr.js](../src/ecr.js) |
 | ECR 원문 선별·번호 대조·오류 | ecr-source.js, ecr-coverage.js, ecr-errors.js |
 | AI 권한·예산 | ai-access.js, ai-budget.js |
 

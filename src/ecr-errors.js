@@ -1,4 +1,4 @@
-const stages = { request: "요청 확인", access: "분석 권한 확인", read: "저장 결과 조회", upload: "파일 업로드", convert: "PDF 텍스트 변환", prepare: "분석 문서 준비", saveDocument: "분석 문서 저장", loadDocument: "분석 문서 조회", loadPart: "완료 구간 조회", budget: "AI 예산 예약", inference: "AI 규격 추출", parse: "분석 응답 확인", savePart: "분석 구간 저장", merge: "분석 결과 병합", saveResult: "최종 결과 저장" };
+const stages = { request: "요청 확인", access: "분석 권한 확인", upload: "파일 업로드", convert: "PDF 텍스트 변환", prepare: "분석 문서 준비", saveDocument: "분석 문서 저장", loadDocument: "분석 문서 조회", loadPart: "완료 구간 조회", budget: "AI 예산 예약", inference: "AI 규격 추출", parse: "분석 응답 확인", savePart: "분석 구간 저장", merge: "분석 결과 병합", cleanup: "작업 자료 정리" };
 const codes = {
   3036: [429, "Cloudflare의 오늘 무료 뉴런 할당량을 모두 사용했습니다. 한국시간 오전 9시 이후 다시 시도하세요."],
   3040: [503, "Cloudflare 모델 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도하세요."],

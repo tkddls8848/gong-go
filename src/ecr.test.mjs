@@ -54,7 +54,7 @@ test("예산 저장 실패와 소진시 AI 호출을 하지 않는다", async ()
   await assert.rejects(runBudgeted({ ...env, DATA: null }, ECR_MODEL, { messages: [], max_tokens: 4096 }), /저장소/);
   assert.equal(calls, 0);
 });
-test("업로드부터 Workers AI 분석·저장·재조회까지 연결하고 재시도는 캐시를 사용한다", async () => {
+test("업로드부터 Workers AI 분석까지 연결하고 결과는 응답으로만 돌려준다", async () => {
   let calls = 0;
   const env = { DATA: bucket(), AI: { run: async (model, options) => { calls++; assert.equal(model, ECR_MODEL); assert.equal(options.max_tokens, 2048); return modelResult(); } } };
   const upload = await handleEcr(request({ action: "upload", notice: "R26-001", name: "rfp.md" }, source), env);
@@ -65,10 +65,11 @@ test("업로드부터 Workers AI 분석·저장·재조회까지 연결하고 �
   assert.equal(result.analysis.provider, "workers-ai");
   assert.equal(result.analysis.ecr[0].장비요약[0].규격[0].검증, "원문 확인");
   assert.equal(result.analysis.verified, false, "문서 전체의 완전성은 별도로 확인해야 한다");
-  assert.equal((await step()).status, 200);
-  assert.equal(calls, 1);
+  assert.equal((await step()).status, 404, "끝난 작업은 지워져 다시 올려야 한다");
+  assert.equal(calls, 1, "다시 보낸 요청으로 추론하지 않는다");
+  assert.deepEqual([...env.DATA.store.keys()].filter((key) => key.startsWith("_ecr/")), [], "결과도 작업 자료도 남기지 않는다");
   const saved = await handleEcr(new Request(`${ORIGIN}/api/ecr?notice=R26-001`), env);
-  assert.equal((await saved.json()).ecr.length, 1);
+  assert.equal(saved.status, 405, "저장 결과 조회 경로는 없다");
 });
 test("인증 전 분석 경로와 다른 사이트의 업로드는 차단한다", async () => {
   const env = { GATE_PASSWORD: "secret", DATA: bucket(), AI: {} };
@@ -103,19 +104,17 @@ test("마지막 구간만 실행해도 빠진 구간이 있으면 완성 결과�
   const job = await upload.json();
   const response = await handleEcr(request({ action: "step", id: job.id, index: job.total - 1 }), env);
   assert.equal(response.status, 409);
-  assert.equal(await env.DATA.get("_ecr/notices/test.json"), null);
+  assert.ok(await env.DATA.get(`_ecr/jobs/${job.id}.json`), "빠진 구간을 이어서 분석할 수 있도록 작업은 남긴다");
 });
 
-test("무료 예산 소진 응답은 429이며 기존 결과를 덮어쓰지 않는다", async () => {
+test("무료 예산 소진 응답은 429이며 모델을 부르지 않는다", async () => {
   let calls = 0;
   const env = { DATA: bucket(), AI: { run: async () => { calls++; return modelResult(); } } };
-  await env.DATA.put("_ecr/notices/test.json", JSON.stringify({ old: true }));
   const job = await (await handleEcr(request({ action: "upload", notice: "test", name: "rfp.txt" }, source), env)).json();
   await reserveNeurons(env.DATA, 8000);
   const response = await handleEcr(request({ action: "step", id: job.id, index: 0 }), env);
   assert.equal(response.status, 429);
   assert.equal(calls, 0);
-  assert.deepEqual(await (await env.DATA.get("_ecr/notices/test.json")).json(), { old: true });
 });
 
 test("출력이 잘리면 한도를 먼저 올리고, 끝까지 모자랄 때만 구간을 나눈다", async () => {
@@ -192,7 +191,7 @@ test("같은 구간을 동시에 밀어도 모델은 한 번만 부른다", asyn
   assert.equal(응답.filter((body) => !body.retry).length, 1, "한 요청은 구간을 끝낸다");
 });
 
-test("빈 모델 결과를 병합하면 원문 대상 번호를 누락으로 저장한다", async () => {
+test("빈 모델 결과를 병합하면 원문 대상 번호를 누락으로 알린다", async () => {
   const env = { DATA: bucket(), AI: { run: async () => ({ response: { items: [] } }) } };
   const job = await (await handleEcr(request({ action: "upload", notice: "missing", name: "rfp.md" }, source), env)).json();
   const response = await handleEcr(request({ action: "step", id: job.id, index: 0 }), env);
@@ -200,8 +199,6 @@ test("빈 모델 결과를 병합하면 원문 대상 번호를 누락으로 저
   assert.deepEqual(analysis.누락, ["ECR-001"]);
   assert.equal(analysis.coverage.status, "partial");
   assert.equal(analysis.verified, false);
-  const saved = await (await env.DATA.get("_ecr/notices/missing.json")).json();
-  assert.deepEqual(saved.누락, ["ECR-001"]);
 });
 
 test("잠금 취득 전에 다른 요청이 끝나면 캐시를 다시 읽어 추론하지 않는다", async () => {
@@ -253,7 +250,7 @@ test("완료 결과를 저장할 때까지 잠금을 유지한다", async () => 
   assert.ok(checked);
 });
 
-test("잠금 해제 장애가 나도 저장된 결과는 재추론 없이 조회한다", async () => {
+test("잠금 해제 장애가 나도 완료 구간은 재추론 없이 재사용한다", async () => {
   const data = bucket(); let calls = 0;
   const env = { DATA: data, AI: { run: async () => { calls++; return modelResult(); } } };
   const job = await (await handleEcr(request({ action: "upload", notice: "release-failure", name: "rfp.md" }, source), env)).json();
@@ -262,7 +259,7 @@ test("잠금 해제 장애가 나도 저장된 결과는 재추론 없이 조회
     if (key.includes("/lease/") && JSON.parse(body).at === 0) throw new Error("release unavailable");
     return put(key, body, options);
   };
-  const step = () => handleEcr(request({ action: "step", id: job.id, index: 0 }), env);
+  const step = () => handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "0" }), env);
   assert.equal((await step()).status, 200);
   assert.equal((await step()).status, 200);
   assert.equal(calls, 1);
@@ -330,33 +327,29 @@ test("사용량이 없거나 이상하면 예약을 그대로 둔다", async () 
   assert.ok(장부.reserved > 50, "덜 썼다는 증거가 없으면 되돌리지 않는다");
 });
 
-test("완주하면 원문 사본을 지우고 결과만 남긴다", async () => {
-  const env = { DATA: bucket(), AI: { run: async () => modelResult() } };
+test("완주하면 결과를 응답으로만 돌려주고 작업 자료를 모두 지운다", async () => {
+  let calls = 0;
+  const env = { DATA: bucket(), AI: { run: async () => { calls++; return modelResult(); } } };
   const job = await (await handleEcr(request({ action: "upload", notice: "R26-900", name: "rfp.md" }, source), env)).json();
   const done = await (await handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "1" }), env)).json();
-  assert.ok(done.analysis, "먼저 결과가 저장돼야 한다");
-  const 남은키 = [...env.DATA.store.keys()].filter((key) => key.startsWith("_ecr/")).sort();
-  assert.deepEqual(남은키, [`_ecr/jobs/${job.id}.json`, "_ecr/notices/R26-900.json"], "구간·세분화·표식은 남지 않는다");
-  const 묘비 = JSON.parse(env.DATA.store.get(`_ecr/jobs/${job.id}.json`).body);
-  assert.equal(묘비.done, true);
-  assert.equal(묘비.chunks, undefined, "작업 자리에 원문은 남지 않는다");
-  assert.ok(!JSON.stringify(묘비).includes("메모리"), "원문 조각이 표식에 섞이지 않는다");
-  const 결과 = await (await handleEcr(new Request(`${ORIGIN}/api/ecr?notice=R26-900`), env)).json();
-  assert.equal(결과.ecr.length, 1, "정리 뒤에도 결과는 읽힌다");
-  const 재요청 = await (await handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "1" }), env)).json();
-  assert.equal(재요청.analysis.ecr.length, 1, "마지막 요청을 다시 보내도 추론 없이 결과를 돌려준다");
+  assert.equal(done.analysis.ecr.length, 1);
+  assert.deepEqual([...env.DATA.store.keys()].filter((key) => key.startsWith("_ecr/")), [], "결과·원문·구간·표식 어느 것도 남지 않는다");
+  const 재요청 = await handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "1" }), env);
+  assert.equal(재요청.status, 404);
+  assert.equal(calls, 1);
 });
 
-test("보존 기간이 지난 작업 자료만 걷어 가고 결과는 남긴다", async () => {
+test("보존 기간이 지난 작업 자료와 예전에 저장한 결과를 걷어 간다", async () => {
   const store = bucket();
   const 지금 = Date.now();
   await store.put("_ecr/jobs/abc.json", "{}");
   await store.put("_ecr/parts/abc/0.json", "[]");
   await store.put("_ecr/notices/R26-901.json", "{}");
-  // 작업 자료만 이레 하루 전으로 돌린다
-  for (const key of ["_ecr/jobs/abc.json", "_ecr/parts/abc/0.json"]) store.store.get(key).uploaded = new Date(지금 - JOB_RETENTION_MS - 86400000);
+  // 셋 다 이레 하루 전으로 돌린다
+  for (const key of ["_ecr/jobs/abc.json", "_ecr/parts/abc/0.json", "_ecr/notices/R26-901.json"]) store.store.get(key).uploaded = new Date(지금 - JOB_RETENTION_MS - 86400000);
   const 지운수 = await purgeStaleJobs({ DATA: store }, 지금);
-  assert.equal(지운수, 2);
-  assert.deepEqual([...store.store.keys()], ["_ecr/notices/R26-901.json"], "결과는 기간과 무관하게 남는다");
+  await store.put("_ecr/jobs/fresh.json", "{}");
+  assert.equal(지운수, 3);
+  assert.deepEqual([...store.store.keys()], ["_ecr/jobs/fresh.json"]);
   assert.equal(await purgeStaleJobs({ DATA: store }, 지금), 0, "갓 만든 자료는 건드리지 않는다");
 });

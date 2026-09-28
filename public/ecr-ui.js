@@ -1,60 +1,17 @@
-// 저장 ECR 조회, 파일 분석 진행·중단과 목록 배지 갱신.
+// 파일 분석 진행·중단과 이번 분석 결과 표시.
 (function (scope) {
   "use strict";
   function createEcr({
-    model, state = { ecrBusy: false, aiUnlocked: false, ecrRun: 0, ecrLoadRevision: 0 },
-    $, analyses, numberOf, html, renderEcr, showAiAccess,
-    GongHttp = scope.GongHttp, EquipmentSummary = scope.EquipmentSummary,
-    document = scope.document, DATA_BASE = "/data"
+    model, state = { ecrBusy: false, aiUnlocked: false, ecrRun: 0 },
+    $, numberOf, renderEcr, showAiAccess,
+    GongHttp = scope.GongHttp, EquipmentSummary = scope.EquipmentSummary
   } = {}) {
-    function rememberEcr(row, data, path) {
-      const notice = numberOf(row), verified = EquipmentSummary.isVerified(data);
-      analyses.set(notice, { notice, path, ecrCount: data.ecr.length, verified });
-      // 목록 전체를 다시 그리면 모달을 연 버튼이 사라져 키보드 포커스 복원이 깨진다.
-      document.querySelectorAll("#results tr").forEach((tr) => {
-        if (tr.firstElementChild?.textContent !== notice) return;
-        const title = tr.querySelector("td.title");
-        if (!title) return;
-        let badge = title.querySelector(".ecr-badge");
-        if (!badge) { badge = document.createElement("span"); title.append(badge); }
-        badge.className = `ecr-badge ${verified ? "" : "warning"}`;
-        badge.textContent = `ECR ${data.ecr.length}${verified ? "" : " · 확인 필요"}`;
-      });
-    }
-    async function loadEcr() {
-      const row = model.currentRow;
-      if (!row) return;
-      const revision = ++state.ecrLoadRevision, run = state.ecrRun;
-      const isCurrent = () => model.currentRow === row && revision === state.ecrLoadRevision && run === state.ecrRun;
-      const entry = analyses.get(numberOf(row));
+    // 분석 결과는 서버에 저장하지 않는다. 이번 분석 응답만 화면에 보여 준다.
+    function loadEcr() {
+      if (!model.currentRow) return;
       if (!model.currentAnalysis) {
-        $("#ecr-content").innerHTML = '<p class="hint">ECR 규격을 불러오는 중입니다.</p>';
-        try {
-          const { response: remote, data: remoteData } = await GongHttp.requestJson(`/api/ecr?notice=${encodeURIComponent(numberOf(row))}`, { cache: "no-store" }, 30000, "read");
-          if (!isCurrent()) return;
-          let data;
-          if (remote.ok) data = remoteData;
-          else if (remote.status === 404 && entry) {
-            const saved = await GongHttp.requestJson(entry.path.startsWith("/api/") ? entry.path : `${DATA_BASE}/${entry.path}`, { cache: "no-store" }, 30000, "read");
-            if (!saved.response.ok) throw new Error("저장 결과 조회에 실패했습니다. 잠시 후 다시 조회하세요.");
-            data = saved.data;
-          }
-          else if (remote.status === 404) {
-            if (isCurrent()) $("#ecr-content").innerHTML = '<p class="hint">제안요청서 파일을 올려 서버·스토리지 요구사항을 분석하세요.</p>';
-            return;
-          } else throw new Error(remoteData.message || "분석 조회 실패");
-          if (!isCurrent()) return;
-          EquipmentSummary.validate(data);
-          model.currentAnalysis = data;
-          if (entry || data.provider === "workers-ai") rememberEcr(row, data, data.provider === "workers-ai" ? `/api/ecr?notice=${encodeURIComponent(numberOf(row))}` : entry.path);
-          if (data.provider === "workers-ai") {
-            $("#download-ecr-btn").disabled = false;
-            $("#ecr-tab").textContent = `ECR 규격 (${data.ecr.length})`;
-          }
-        } catch (error) {
-          if (isCurrent()) $("#ecr-content").innerHTML = `<p class="warning-text">ECR 규격을 불러오지 못했습니다: ${html(error.message)}</p>`;
-          return;
-        }
+        $("#ecr-content").innerHTML = '<p class="hint">제안요청서 파일을 올려 서버·스토리지 요구사항을 분석하세요.</p>';
+        return;
       }
       renderEcr(model.currentAnalysis);
       $("#ecr-content").insertAdjacentHTML("afterbegin", EquipmentSummary.render(model.currentAnalysis));
@@ -63,7 +20,7 @@
       state.ecrRun++;
       if (!state.ecrBusy) return;
       $("#ecr-stop-btn").disabled = true;
-      $("#ecr-progress").textContent = "추가 분석을 중지했습니다. 이미 전송한 요청은 완료될 수 있으며 사용량이 발생할 수 있습니다. 요청 종료 후 같은 파일로 다시 시작하면 저장된 구간을 재사용합니다.";
+      $("#ecr-progress").textContent = "추가 분석을 중지했습니다. 이미 전송한 요청은 완료될 수 있으며 사용량이 발생할 수 있습니다. 요청 종료 후 같은 파일로 다시 시작하면 완료된 구간을 재사용합니다.";
     }
     async function startEcrAnalysis(event) {
       event.preventDefault();
@@ -106,7 +63,6 @@
           if (result.analysis) {
             const data = result.analysis;
             EquipmentSummary.validate(data);
-            rememberEcr(row, data, `/api/ecr?notice=${encodeURIComponent(numberOf(row))}`);
             if (model.currentRow === row && run === state.ecrRun) {
               model.currentAnalysis = data;
               $("#download-ecr-btn").disabled = false;
@@ -120,7 +76,7 @@
       } catch (error) { progress(`${error.message}${completedParts > 0 ? ` 완료된 ${completedParts}개 구간은 저장되었습니다. 같은 파일로 다시 시작할 수 있습니다.` : ""}`); }
       finally { state.ecrBusy = false; $("#ecr-stop-btn").hidden = true; $("#ecr-analyze-btn").disabled = !state.aiUnlocked; $("#ecr-file").disabled = !state.aiUnlocked; }
     }
-    return { loadEcr, rememberEcr, stopEcrAnalysis, startEcrAnalysis };
+    return { loadEcr, stopEcrAnalysis, startEcrAnalysis };
   }
   const api = { createEcr };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

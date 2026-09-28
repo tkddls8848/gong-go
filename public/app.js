@@ -51,7 +51,7 @@ function renderPresets() {
 }
 let page = 1;
 const model = { filtered: [], fileIndex: [], dataSchemaVersion: "", searchVersion: 0, currentRow: null, currentAnalysis: null, viewMode: "pre" };
-const analyses = new Map(), modal = $("#file-modal");
+const modal = $("#file-modal");
 const MODE_SUBTITLES = {
   pre: "로컬 CSV에 저장한 사전공고를 조회합니다.",
   bid: "로컬 CSV에 저장한 본공고를 조회합니다.",
@@ -68,7 +68,7 @@ const { getJson } = GongHttp;
 const { modalSubtitle, detailLink, attachmentWarnings, planLinks, fileBadge,
   renderBidSchedule, normalizeFiles, wireEcrEntrypoints } =
   GongNoticeView.createNoticeView({ html, numberOf, format, document, openModal: (...args) => openModal(...args) });
-const { loadIndex } = GongIndex.createIndex({ model, analyses, $, getJson, renderDataStatus, defaultRange });
+const { loadIndex } = GongIndex.createIndex({ model, $, getJson, renderDataStatus, defaultRange });
 const scanner = GongScan.createScanner({ model });
 const { applyFilters } = GongSearch.createSearch({
   model, $, scanner, renderRows, collectInstitutions, todayFile, MODE_NAMES, format, numberOf
@@ -79,19 +79,19 @@ const { startRefresh, resumeRefresh } = GongRefresh.createRefresh({
 const { runNlQuery } = GongNlQuery.createNlQuery({
   model, $, collectInstitutions, setNl, applyNlFilter, applyFilters, resetPage
 });
-const ecrState = { ecrBusy: false, aiUnlocked: false, ecrRun: 0, ecrLoadRevision: 0 };
+const ecrState = { ecrBusy: false, aiUnlocked: false, ecrRun: 0 };
 const { showAiAccess, refreshAiAccess, unlockAiAccess, lockAiAccess } =
   GongAiAccess.createAiAccess({ $, state: ecrState });
 const { renderEcr } = GongEcrView.createEcrView({ $, html });
 const { loadEcr, stopEcrAnalysis, startEcrAnalysis } = GongEcr.createEcr({
-  model, state: ecrState, $, analyses, numberOf, html, renderEcr, showAiAccess
+  model, state: ecrState, $, numberOf, renderEcr, showAiAccess
 });
 const { openModal, closeModal, selectTab, modalKeydown } = GongModal.createModal({
-  model, $, modal, analyses, html, normalizeFiles, numberOf, modalSubtitle, detailLink,
+  model, $, modal, html, normalizeFiles, modalSubtitle, detailLink,
   attachmentWarnings, planLinks, renderBidSchedule, stopEcrAnalysis, refreshAiAccess, loadEcr
 });
 const { downloadCsv, downloadEcr, downloadAll } = GongExports.createExports({
-  model, analyses, $, downloadRows, MODE_NAMES, normalizeFiles, numberOf
+  model, $, downloadRows, MODE_NAMES, normalizeFiles, numberOf
 });
 $("#ai-unlock-form").onsubmit = unlockAiAccess;
 $("#ai-lock-btn").onclick = lockAiAccess;
@@ -315,10 +315,9 @@ function renderRows(rows) {
   $("#previous").disabled = page === 1;
   $("#next").disabled = page === pages;
   $("#download-btn").disabled = !rows.length;
-  $("#download-ecr-btn").disabled = !analyses.size;
   $("#results").innerHTML = visible.length ? visible.map((row, i) => {
-    const files = normalizeFiles(row.files), analysis = analyses.get(numberOf(row));
-    return `<tr><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(\uC0AC\uC5C5\uBA85 \uC5C6\uC74C)")}</button>${row.live ? '<span class="live-badge">\uCD5C\uC2E0 \uD655\uC778</span>' : ""}${fileBadge(row, files)}${analysis ? `<span class="ecr-badge ${analysis.verified ? "" : "warning"}">ECR ${analysis.ecrCount}${analysis.verified ? "" : " \xB7 \uD655\uC778 \uD544\uC694"}</span>` : ""}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">\uC624\uB298</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`;
+    const files = normalizeFiles(row.files);
+    return `<tr><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(\uC0AC\uC5C5\uBA85 \uC5C6\uC74C)")}</button>${row.live ? '<span class="live-badge">\uCD5C\uC2E0 \uD655\uC778</span>' : ""}${fileBadge(row, files)}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">\uC624\uB298</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`;
   }).join("") : $("#empty-row").innerHTML;
   document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)]));
   wireEcrEntrypoints(visible);

@@ -102,28 +102,22 @@ async function main() {
     const summary = EquipmentSummary.render(analysis);
     assert.match(summary, /메모리 256GB 이상/);
     assert.match(summary, /규격 전체의 완전성을 보증하지 않습니다/);
+    // 결과는 응답으로만 돌려준다. 저장 결과 조회 경로도, 끝난 작업의 자료도 남지 않는다.
     const saved = await send("/api/ecr?notice=runtime-canary", { headers: { Cookie: gate } });
-    assert.equal(saved.status, 200);
-    const savedAnalysis = await saved.json();
-    EquipmentSummary.validate(savedAnalysis);
-    assert.deepEqual(savedAnalysis, analysis, "persisted result must retain frontend-compatible fields");
-    assert.equal(EquipmentSummary.render(savedAnalysis), summary);
-    const cached = await step();
-    assert.equal(cached.status, 200);
-    const cachedAnalysis = (await cached.json()).analysis;
-    EquipmentSummary.validate(cachedAnalysis);
-    const { analyzedAt: firstTime, ...firstContent } = analysis;
-    const { analyzedAt: cachedTime, ...cachedContent } = cachedAnalysis;
-    assert.deepEqual(cachedContent, firstContent, "cached merge must retain content without additional inference");
-    assert.ok(Number.isFinite(Date.parse(firstTime)) && Number.isFinite(Date.parse(cachedTime)));
-    assert.equal(EquipmentSummary.render(cachedAnalysis), summary);
+    assert.equal(saved.status, 405);
+    await saved.json();
+    assert.deepEqual((await bucket.list({ prefix: "_ecr/" })).objects.map((object) => object.key), [], "completed job must not leave results or source copies");
+    const resent = await step();
+    assert.equal(resent.status, 404);
+    await resent.json();
     assert.equal(await callCount(), 1);
     const parallelUpload = await send("/api/ecr?action=upload&notice=runtime-parallel&name=rfp.md", { method: "POST", headers, body: "ECR-001 업무 서버\n메모리 256GB 이상\n" });
     const parallelJob = await parallelUpload.json();
     const simultaneous = await Promise.all([0, 1].map(() => send(`/api/ecr?action=step&id=${parallelJob.id}&index=0`, { method: "POST", headers })));
-    for (const result of simultaneous) assert.equal(result.status, 200);
+    // 끝난 작업은 곧바로 지워지므로 늦게 도착한 쪽은 결과 대신 다시 올리라는 404를 받을 수 있다.
+    for (const result of simultaneous) assert.ok([200, 404].includes(result.status), String(result.status));
     const bodies = await Promise.all(simultaneous.map((result) => result.json()));
-    assert.ok(bodies.some((body) => body.analysis));
+    assert.equal(bodies.filter((body) => body.analysis).length, 1);
     assert.equal(await callCount(), 2, "parallel requests must share one additional inference");
     const relock = await send("/api/ai-access", { method: "DELETE", headers });
     assert.equal(relock.status, 200); await relock.json();
@@ -161,7 +155,7 @@ async function main() {
       assert.equal(await callCount(), 2, "browser auth must not invoke AI");
     }
     assert.equal(outbound, 0);
-    console.log("PASS workerd + local R2: gate, AI lock/revocation, site logout/replay rejection, upload, extraction, persistence, cache reuse, concurrent step, CAS; external requests=0");
+    console.log("PASS workerd + local R2: gate, AI lock/revocation, site logout/replay rejection, upload, extraction, no result persistence, concurrent step, CAS; external requests=0");
   } finally { await runtime.dispose(); }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

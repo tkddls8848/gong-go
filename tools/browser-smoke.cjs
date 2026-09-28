@@ -29,16 +29,14 @@ async function main() {
       let csvRequests = 0, csvUnavailable = false, csvMalformed = false;
       page.on("worker", (worker) => searchWorkers.push(worker.url()));
       page.on("pageerror", (error) => errors.push(error.message));
-      let unlocked = false, stepCalls = 0, release, analysisStored = false, askCalls = 0;
-      let storedAnalysis = analysis;
-      let analysisEntries = [];
+      let unlocked = false, stepCalls = 0, release, askCalls = 0, ecrReads = 0;
       await context.route("**/*", async (route) => {
         const url = new URL(route.request().url());
         const json = (value, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
         if (url.hostname !== "gong-go.test") { unknown.push(url.href); return route.abort(); }
         if (url.pathname === "/data/index.json") return json({ files: [{ path: "bid/2026/09.csv.gz", mode: "bid", begin: "2026-09-01", end: "2026-09-30", count: 4 }], updatedAt: "2026-09-25T00:00:00Z" });
         if (url.pathname === "/data/bid/2026/09.csv.gz") { csvRequests++; return csvUnavailable ? route.fulfill({ status: 503, body: "fixture unavailable" }) : route.fulfill({ body: csvMalformed ? gzipSync("<html>invalid CSV source</html>") : csvFixture, contentType: "application/gzip" }); }
-        if (url.pathname === "/data/analysis-index.json") return json({ entries: analysisEntries });
+        if (url.pathname.startsWith("/data/analysis")) { ecrReads++; return route.fulfill({ status: 404, body: "Not found" }); }
         if (url.pathname === "/api/refresh") return json({ running: false });
         if (url.pathname === "/api/live") return json({ rows: [] });
         if (url.pathname === "/api/ask") {
@@ -51,12 +49,11 @@ async function main() {
           return json({ configured: true, unlocked });
         }
         if (url.pathname === "/api/ecr") {
-          if (route.request().method() === "GET") return analysisStored ? json(storedAnalysis) : json({}, 404);
+          if (route.request().method() === "GET") { ecrReads++; return json({ message: "POST만 지원합니다." }, 405); }
           assert.ok(unlocked, "locked screen must not send AI work");
           if (url.searchParams.get("action") === "upload") return json({ id: "fixture-job", total: 2, order: [0, 1], focused: true });
           stepCalls++;
           if (stepCalls === 1) await new Promise((resolve) => { release = resolve; });
-          if (url.searchParams.get("finalize") === "1") analysisStored = true;
           return json(url.searchParams.get("finalize") === "1" ? { analysis, completed: 2, total: 2 } : { completed: 1, total: 2 });
         }
         const file = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
@@ -213,8 +210,7 @@ async function main() {
         assert.ok(bounds && bounds.x >= -1 && bounds.x + bounds.width <= viewport.width + 1, "modal must fit viewport width");
         await fs.mkdir(path.resolve(__dirname, "../test-results"), { recursive: true });
         await page.screenshot({ path: path.resolve(__dirname, `../test-results/ecr-${viewport.width}.png`), fullPage: true });
-        await page.locator("#modal-close").click();
-        await page.locator("#menu-btn").click();
+        // 결과는 서버에 없다. 분석을 마친 모달의 버튼이 이번 결과만 내려받는다.
         const downloading = page.waitForEvent("download");
         await page.locator("#download-ecr-btn").click();
         const download = await downloading;
@@ -226,13 +222,13 @@ async function main() {
         assert.match(csv, /추출된 ECR 없음/);
         assert.match(csv, /원문 확인 필요/);
         // 값의 존재만 검색하면 열 밀림이나 장비별 근거의 뒤바뀜을 놓친다.
-        // 실제 저장 결과 조회 → 다운로드 클릭 → UTF-8 CSV 파싱까지 확인한다.
-        storedAnalysis = { schemaVersion: 2, verified: false, ecr: [{ id: "ECR-MULTI", 명칭: "복수 장비", 장비요약: [
+        // 다운로드 클릭 → UTF-8 CSV 파싱까지 확인한다.
+        const detailed = { schemaVersion: 2, verified: false, ecr: [{ id: "ECR-MULTI", 명칭: "복수 장비", 장비요약: [
           { 종류: "서버", 명칭: '웹 "이중화", 서버', 출처: "문서 1쪽", 규격: [{ 항목: "수량", 값: "2대", 근거: '웹 "이중화", 서버\r\n2대 이상', 검증: "원문 확인" }] },
           { 종류: "스토리지", 명칭: "공유 스토리지", 출처: "문서 2쪽", 규격: [{ 항목: "수량", 값: "1식", 근거: "공유 스토리지 1식", 검증: "원문 확인" }] },
           { 종류: "미분류", 명칭: "추가 장비", 규격: [] },
         ] }, { id: "ECR-LEGACY", 명칭: "=1+1", 기본규격: [{ 구분: "서버", 항목: "메모리", 요구사항: '256GB, "이상"\n조건 유지', 수량: 0 }] }] };
-        if (await page.locator("#menu-btn").getAttribute("aria-expanded") === "false") await page.locator("#menu-btn").click();
+        await page.evaluate((data) => { model.currentAnalysis = data; }, detailed);
         const [detailedDownload] = await Promise.all([page.waitForEvent("download"), page.locator("#download-ecr-btn").click()]);
         const detailedChunks = [];
         for await (const chunk of await detailedDownload.createReadStream()) detailedChunks.push(chunk);
@@ -248,14 +244,10 @@ async function main() {
         assert.equal(records[1]["장비 요구사항"], '서버 | 메모리: 256GB, "이상"\n조건 유지');
         assert.equal(records[1]["수량"], "0");
         console.log(`PASS ECR CSV ${viewport.width}: actual download, 19 columns, multi-equipment ownership, CR/LF/quotes, legacy specs, formula protection`);
-        analysisEntries = [{ notice: "CORRUPT", path: "analysis/corrupt.json", verified: "false", ecrCount: '<img src=x onerror="window.corruptIndexExecuted=true">' }];
-        const invalidIndex = await page.evaluate(async () => {
-          const before = JSON.stringify([...analyses]);
-          const result = await loadIndex(false);
-          return { rejected: result.analysisUnavailable, preserved: before === JSON.stringify([...analyses]), executed: window.corruptIndexExecuted === true };
-        });
-        assert.deepEqual(invalidIndex, { rejected: true, preserved: true, executed: false });
-        assert.match(await page.locator("#data-count").innerText(), /ECR 저장 목록 확인 실패/);
+        await page.locator("#modal-close").click();
+        await page.evaluate(() => loadIndex(false));
+        assert.doesNotMatch(await page.locator("#data-count").innerText(), /ECR/);
+        assert.equal(ecrReads, 0, "saved ECR results must never be requested");
         assert.deepEqual(errors, []);
         assert.deepEqual(unknown, []);
         console.log(`PASS ${viewport.width}x${viewport.height} ${timezoneId}: gzip CSV Worker + inline search, filters, KST date, entry, lock, upload, stop, resume, coverage; no page errors`);

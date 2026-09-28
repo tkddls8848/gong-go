@@ -2,7 +2,7 @@
 (function (scope) {
   "use strict";
   function createModal({
-    model, $, modal, analyses, html, normalizeFiles, numberOf, modalSubtitle, detailLink,
+    model, $, modal, html, normalizeFiles, modalSubtitle, detailLink,
     attachmentWarnings, planLinks, renderBidSchedule, stopEcrAnalysis,
     refreshAiAccess, loadEcr, document = scope.document
   } = {}) {
@@ -37,7 +37,7 @@
       stopEcrAnalysis();
       model.currentRow = row;
       model.currentAnalysis = null;
-      const files = normalizeFiles(row.files), entry = analyses.get(numberOf(row));
+      const files = normalizeFiles(row.files);
       $("#modal-title").textContent = row.title || "(\uC0AC\uC5C5\uBA85 \uC5C6\uC74C)";
       $("#modal-subtitle").textContent = modalSubtitle(row, files);
       $("#modal-file-list").innerHTML = detailLink(row) + attachmentWarnings(row.files) + (files.length ? files.map((file, i) => `<li><span class="file-no">${i + 1}.</span><a href="${html(file.url)}" target="_blank" rel="noopener noreferrer">${html(file.name)}</a></li>`).join("") : row.mode === "plan" ? planLinks(row) : '<li><span class="empty-msg">\uC774 \uACF5\uACE0\uC5D0\uB294 API\uB85C \uC81C\uACF5\uB418\uB294 \uCCA8\uBD80\uD30C\uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.</span></li>');
@@ -46,8 +46,9 @@
       $("#schedule-tab").disabled = row.mode !== "bid";
       $("#schedule-content").innerHTML = row.mode === "bid" ? renderBidSchedule(row) : "";
       $("#ecr-tab").disabled = row.mode !== "bid";
-      $("#ecr-tab").textContent = entry ? `ECR \uBD84\uC11D (${entry.ecrCount})` : "ECR \uBD84\uC11D";
-      $("#ecr-content").innerHTML = entry ? '<p class="hint">ECR \uADDC\uACA9\uC744 \uBD88\uB7EC\uC624\uB824\uBA74 \uD0ED\uC744 \uC120\uD0DD\uD558\uC138\uC694.</p>' : '<p class="hint">\uC774 \uACF5\uACE0\uC5D0\uB294 \uBD84\uC11D\uB41C ECR \uADDC\uACA9\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.</p>';
+      $("#ecr-tab").textContent = "ECR \uBD84\uC11D";
+      $("#ecr-content").innerHTML = "";
+      $("#download-ecr-btn").disabled = true;
       $("#ecr-file").value = "";
       $("#ecr-progress").textContent = "";
       selectTab(initialTab);

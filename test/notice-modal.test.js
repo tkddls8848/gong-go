@@ -16,7 +16,7 @@ test("모달 인스턴스는 주입한 상태·표시 함수를 사용하고 닫
   const view = createNoticeView({ html, numberOf, format, document });
   const modal = { style: { display: "none" }, contains: () => false };
   const controller = createModal({
-    model, $, modal, document, analyses: new Map(), html, numberOf, ...view,
+    model, $, modal, document, html, numberOf, ...view,
     stopEcrAnalysis() { stopped++; },
     refreshAiAccess() { refreshed++; },
     loadEcr() { loaded++; },

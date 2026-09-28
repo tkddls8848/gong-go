@@ -11,13 +11,13 @@ function screen() {
     return nodes.get(id);
   };
   const context = { currentRow: { mode: "bid", number: "test" }, currentAnalysis: null,
-    ecrBusy: false, aiUnlocked: false, ecrRun: 0, ecrLoadRevision: 0,
+    ecrBusy: false, aiUnlocked: false, ecrRun: 0,
     GongHttp: { requestJson: (url, options) => new Promise((resolve) => requests.push({
       url, resolve: async (response) => resolve({ response, data: await response.json() })
     })) } };
   const access = createAiAccess({ $, state: context, GongHttp: context.GongHttp });
   const controller = createEcr({ $, model: context, state: context, numberOf: (row) => row.number,
-    analyses: new Map(), GongHttp: context.GongHttp, showAiAccess: access.showAiAccess });
+    GongHttp: context.GongHttp, showAiAccess: access.showAiAccess });
   const modal = createModal({ $, model: context, modal: { style: {} }, stopEcrAnalysis: controller.stopEcrAnalysis });
   context.closeModal = modal.closeModal;
   access.showAiAccess(true);

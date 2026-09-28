@@ -1,4 +1,4 @@
-const KEY = /^(index\.json|analysis-index\.json|(pre|bid|plan)\/\d{4}\/\d{2}(\/\d{2})?\.csv\.gz|analysis\/bid\/[^/]{1,160}\.json)$/;
+const KEY = /^(index\.json|(pre|bid|plan)\/\d{4}\/\d{2}(\/\d{2})?\.csv\.gz)$/;
 const RECENT_DAYS = 40;
 export async function serveData(request, env, encodedKey) {
   let key;
@@ -25,7 +25,7 @@ export async function serveData(request, env, encodedKey) {
 }
 
 function cacheControl(key) {
-  if (key === "index.json" || key === "analysis-index.json") return "private, max-age=60";
+  if (key === "index.json") return "private, max-age=60";
   if (/^(pre|bid)\/\d{4}\/\d{2}\.csv\.gz$/.test(key)) {
     return "private, max-age=31536000, immutable";
   }

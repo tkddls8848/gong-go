@@ -7,7 +7,7 @@
 - 인덱스 항목: `{ mode, begin, end, path, count }`
 - 서비스 파일: gzip CSV만 사용
 - 파일 경로: 일별 `{pre,bid,plan}/YYYY/MM/DD.csv.gz`, 월별 `{pre,bid,plan}/YYYY/MM.csv.gz`
-- 배포 데이터: `index.json`, `analysis-index.json`, 서비스 CSV, 분석 JSON만 공개
+- 배포 데이터: `index.json`과 서비스 CSV만 공개. ECR 분석 결과는 사이트에 올리거나 저장하지 않는다
 - 보존: 서비스 CSV와 `raw/` 모두 2020년부터 전부 누적 보관
 
 과거 평문 CSV나 구 인덱스 형식은 런타임에서 변환하지 않습니다.

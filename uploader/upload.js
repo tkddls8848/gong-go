@@ -30,7 +30,6 @@ loadEnv(path.join(ROOT, ".env"));
 const BUCKET = "gong-go-data";
 const CONCURRENCY = 8;
 const INDEX_KEY = "index.json";
-const ANALYSIS_INDEX_KEY = "analysis-index.json";
 const DAILY_KEY = /^(pre|bid|plan)\/\d{4}\/\d{2}\/\d{2}\.csv\.gz$/;
 // 봉인된 월 키(mode/YYYY/MM.csv.gz). collector/compact.js가 만드는 파일과 같은 모양이지만
 // 판정은 버킷 키로 하므로 이 정규식은 uploader가 제 것으로 갖는다.
@@ -58,8 +57,6 @@ async function main() {
   const removing = putOnly || indexOnly ? [] : [...new Set([...supersededDaily(present), ...vanishedDaily(present, local)])];
   const plan = {
     csv: indexOnly ? [] : local.filter((entry) => entry.key.endsWith(".csv.gz")),
-    analysis: indexOnly ? [] : local.filter((entry) => entry.key.startsWith("analysis/")),
-    analysisIndex: indexOnly ? [] : local.filter((entry) => entry.key === ANALYSIS_INDEX_KEY),
     removing,
   };
 
@@ -69,13 +66,11 @@ async function main() {
   // 순서가 유일한 방어다. R2에는 트랜잭션이 없다.
   // ① 파일이 인덱스보다 먼저 있어야 프런트가 아직 없는 파일을 요청하지 않는다.
   // ② 인덱스가 바뀐 뒤에 지워야 구 인덱스를 캐시한 브라우저가 사라진 키에서 404를 만나지 않는다.
-  // ③ 목록(analysis-index.json)은 그 목록이 가리키는 파일보다 뒤에 올린다.
   const uploaded = await putAll(client, plan.csv, remote);
   if (index) await putJson(client, INDEX_KEY, index);
   const deleted = putOnly ? 0 : await deleteAll(client, plan.removing);
-  const analyses = await putAll(client, [...plan.analysis, ...plan.analysisIndex], remote);
 
-  console.log(`완료: ${uploaded.count + analyses.count}건 업로드(${mb(uploaded.bytes + analyses.bytes)}), ${deleted}건 삭제${index ? `, 인덱스 ${index.files.length}항목` : ", 인덱스 유지(PUT 전용)"}`);
+  console.log(`완료: ${uploaded.count}건 업로드(${mb(uploaded.bytes)}), ${deleted}건 삭제${index ? `, 인덱스 ${index.files.length}항목` : ", 인덱스 유지(PUT 전용)"}`);
 }
 
 // 봉인으로 대체된 일별 키를 지운다. 조건은 하나뿐이다 —
@@ -123,7 +118,7 @@ function indexFiles(present, removing, localFiles, remoteFiles) {
   return buildIndexEntries(counts);
 }
 
-// 올릴 대상: 서비스용 일별·월별 CSV, 원본 일별 CSV와 분석 산출물. raw는 화면에 직접
+// 올릴 대상: 서비스용 일별·월별 CSV와 원본 일별 CSV. ECR 분석 결과는 사이트에 올리지 않는다. raw는 화면에 직접
 // 노출하지 않지만 새 기능에 컬럼이 필요할 때 재수집 없이 복원하는 R2 원본 백업이다.
 // data/files, data/text, sync-state.json, sync-errors.json 등은 대상이 아니다.
 // index.json은 여기에 넣지 않는다 — 로컬 인덱스를 그대로 올리면 최근 며칠치만 가진 크론
@@ -132,9 +127,6 @@ async function localFiles() {
   const result = [];
   for (const mode of MODES) await collectGz(path.join(DATA_DIR, mode), mode, result);
   for (const mode of MODES) await collectGz(path.join(DATA_DIR, "raw", mode), `raw/${mode}`, result);
-  if (await exists(path.join(DATA_DIR, ANALYSIS_INDEX_KEY))) result.push({ key: ANALYSIS_INDEX_KEY, file: path.join(DATA_DIR, ANALYSIS_INDEX_KEY) });
-  const analysisDir = path.join(DATA_DIR, "analysis", "bid");
-  for (const entry of await readdir(analysisDir)) if (entry.isFile() && entry.name.endsWith(".json")) result.push({ key: `analysis/bid/${entry.name}`, file: path.join(analysisDir, entry.name) });
   return result;
 }
 
@@ -166,7 +158,7 @@ async function deleteAll(client, keys) {
 }
 
 async function report(plan, index, remote, putOnly = false) {
-  const sized = await mapPool([...plan.csv, ...plan.analysis, ...plan.analysisIndex], CONCURRENCY, async (entry) => {
+  const sized = await mapPool(plan.csv, CONCURRENCY, async (entry) => {
     const body = await fs.readFile(entry.file);
     return remote.get(entry.key) === md5(body) ? 0 : body.length;
   });
@@ -236,7 +228,6 @@ function parseUploadArgs(args) {
   if (args.includes("--put-only") && args.includes("--index-only")) throw new Error("--put-only와 --index-only를 함께 쓸 수 없습니다.");
   return { dryRun: !args.includes("--commit"), putOnly: args.includes("--put-only"), indexOnly: args.includes("--index-only") };
 }
-async function exists(file) { try { await fs.access(file); return true; } catch { return false; } }
 async function readdir(dir) { try { return await fs.readdir(dir, { withFileTypes: true }); } catch (error) { if (error.code === "ENOENT") return []; throw error; } }
 
 // 아래 넷은 uploader가 직접 갖는다. 다른 모듈에도 같은 모양의 함수가 있지만 공용 파일로

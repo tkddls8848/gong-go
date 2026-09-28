@@ -289,7 +289,7 @@ function dataEnv(overrides = {}) {
 
 test("데이터 키는 화이트리스트에 맞는 것만 연다", async () => {
   const cookie = await gateCookie();
-  const allowed = ["index.json", "analysis-index.json", "bid/2026/08/11.csv.gz", "pre/2026/08.csv.gz", "plan/2026/08/11.csv.gz", "analysis/bid/20260811001.json"];
+  const allowed = ["index.json", "bid/2026/08/11.csv.gz", "pre/2026/08.csv.gz", "plan/2026/08/11.csv.gz"];
   for (const key of allowed) {
     const response = await authed(`/data/${key}`, { cookie }, dataEnv());
     assert.equal(response.status, 200, key);
@@ -297,6 +297,8 @@ test("데이터 키는 화이트리스트에 맞는 것만 연다", async () => 
   const denied = [
     "%2e%2e%2f.env",            // 퍼센트 인코딩으로 넣은 상위 이동
     "analysis/bid/%2e%2e%2f%2e%2e%2findex.json",
+    "analysis-index.json",      // ECR 결과는 사이트에 저장·제공하지 않는다
+    "analysis/bid/20260811001.json",
     "bid/2026/08/11.csv",       // gzip이 아닌 확장자
     "state/sync-state.json",    // 배포하지 않는 상태 파일
     "raw/bid/2026/08/11.csv.gz",// 원본 컬럼 백업
@@ -314,7 +316,6 @@ test("캐시 수명은 인덱스·봉인·최근·지난 파일이 다르다", a
   const cookie = await gateCookie();
   const control = async (key) => (await authed(`/data/${key}`, { cookie }, dataEnv())).headers.get("Cache-Control");
   assert.equal(await control("index.json"), "private, max-age=60");
-  assert.equal(await control("analysis-index.json"), "private, max-age=60");
   // 봉인된 월은 다시 바뀌지 않는다.
   assert.equal(await control("bid/2020/01.csv.gz"), "private, max-age=31536000, immutable");
   assert.equal((await authed("/data/bid/2020/01.csv.gz", { cookie }, dataEnv())).status, 200);
