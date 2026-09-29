@@ -45,49 +45,42 @@ test("내려받은 CSV는 머리글과 칸 수가 같다", () => {
   assert.equal(rows[2][link], "");
 });
 
-test("ECR CSV는 여러 장비의 수량·규격·근거·개별 출처 소속을 유지한다", async () => {
-  const data = { ecr: [{ id: "ECR-001", 장비요약: [
-    { 종류: "서버", 명칭: "웹서버", 출처: "1쪽", 규격: [{ 항목: "수량", 값: "2대", 근거: "웹서버 2대", 검증: "원문 확인" }] },
-    { 종류: "서버", 명칭: "DB서버", 출처: "2쪽", 규격: [{ 항목: "수량", 값: "1대", 근거: "DB서버 1대", 검증: "확인 필요" }] },
-    { 종류: "미분류", 명칭: "추가 장비", 규격: [] },
+test("ECR CSV는 규격번호·요청내용·스펙·비고 네 열이다", async () => {
+  const { rows } = await runEcrExport({ verified: true, ecr: [{ id: "ECR-001", 명칭: "웹서버", 장비요약: [{ 규격: [{ 항목: "CPU", 값: "16코어 이상" }, { 항목: "수량", 값: "2대" }] }] }] });
+  assert.deepEqual(rows, [["규격번호", "요청내용", "스펙", "비고"], ["ECR-001", "웹서버", "CPU: 16코어 이상\n수량: 2대", ""]]);
+});
+
+test("ECR CSV는 여러 장비의 규격을 장비 명칭으로 묶는다", async () => {
+  const data = { ecr: [{ id: "ECR-001", 명칭: "서버", 장비요약: [
+    { 종류: "서버", 명칭: "웹서버", 규격: [{ 항목: "수량", 값: "2대" }] },
+    { 종류: "서버", 명칭: "DB서버", 규격: [{ 항목: "수량", 값: "1대" }] },
+    { 종류: "미분류", 규격: [] },
   ] }] };
   const before = JSON.stringify(data);
   const { rows } = await runEcrExport(data);
-  const value = (key) => rows[1][rows[0].indexOf(key)];
-  assert.equal(rows.length, 2);
-  assert.equal(rows[1].length, 19);
-  assert.equal(value("수량"), "[장비 1 | 서버 | 웹서버] 2대\n[장비 2 | 서버 | DB서버] 1대");
-  assert.match(value("장비 요구사항"), /\[장비 3 \| 미분류 \| 추가 장비\]\n추출 규격 없음/);
-  assert.match(value("근거"), /\[장비 1 \| 서버 \| 웹서버\]\n출처: 1쪽\n수량: 웹서버 2대/);
-  assert.match(value("근거"), /\[장비 2 \| 서버 \| DB서버\]\n출처: 2쪽\n수량: DB서버 1대/);
+  assert.equal(rows[1][2], "[웹서버]\n수량: 2대\n\n[DB서버]\n수량: 1대\n\n[미분류]\n추출 규격 없음");
   assert.equal(JSON.stringify(data), before);
 });
 
 test("구형 ECR CSV도 기본규격 요구사항과 수량 0을 잃지 않는다", async () => {
   const { rows } = await runEcrExport({ ecr: [{ 기본규격: [{ 구분: "서버", 항목: "메모리", 요구사항: "256GB 이상", 수량: 0 }] }] });
-  assert.equal(rows[1][rows[0].indexOf("수량")], "0");
-  assert.equal(rows[1][rows[0].indexOf("장비 요구사항")], "서버 | 메모리: 256GB 이상");
+  assert.equal(rows[1][2], "메모리: 256GB 이상 (수량 0)");
 });
 
-test("ECR CSV는 미추출·제외 사유·검증 경고·분석 출처를 보존한다", async () => {
-  const { rows } = await runEcrExport({ verified: false, analyzedAt: "2026-09-25T00:00:00Z", model: "test-model", 누락: ["ECR-002"], coverage: { status: "partial", missingIds: ["ECR-002"] }, verification: { errors: ["오류"], warnings: ["범위 확인"] }, ecr: [{ id: "ECR-001", 출처: "rfp.md 구간 1", 불확실: ["다른 요구사항 근거 제외함"], 장비요약: [{ 규격: [{ 항목: "메모리", 값: "256GB 이상", 근거: "메모리 256GB 이상", 검증: "원문 확인" }] }] }] });
-  const value = (name) => rows[1][rows[0].indexOf(name)];
-  assert.equal(rows[1].length, rows[0].length);
-  assert.equal(value("미추출 번호"), "ECR-002");
-  assert.match(value("제외/불확실"), /제외함/);
-  assert.equal(value("검증 경고"), "범위 확인");
-  assert.equal(value("분석 모델"), "test-model");
-  assert.equal(value("출처"), "rfp.md 구간 1");
-  assert.equal(value("검증"), "원문 확인 필요");
+test("ECR CSV는 미추출 번호를 행으로, 확인 필요·불확실을 비고로 남긴다", async () => {
+  const { rows } = await runEcrExport({ verified: false, 누락: ["ECR-002"], coverage: { status: "partial", missingIds: ["ECR-002"] }, ecr: [{ id: "ECR-001", 불확실: ["다른 요구사항 근거 제외함"], 장비요약: [{ 규격: [{ 항목: "메모리", 값: "256GB 이상" }] }] }] });
+  for (const row of rows) assert.equal(row.length, 4);
+  assert.equal(rows[1][3], "원문 확인 필요\n다른 요구사항 근거 제외함");
+  assert.deepEqual(rows[2], ["ECR-002", "", "", "미추출 — 원문 확인 필요"]);
+  assert.equal(rows.length, 3);
 });
 
 test("ECR 추출 0건도 경고를 포함한 행으로 내보낸다", async () => {
   const { rows } = await runEcrExport({ ecr: [], verified: true, 누락: ["ECR-001"] });
-  assert.equal(rows.length, 2);
-  assert.equal(rows[1].length, rows[0].length);
-  assert.equal(rows[1][rows[0].indexOf("명칭")], "추출된 ECR 없음");
-  assert.match(rows[1][rows[0].indexOf("검증")], /추출 결과 없음/);
-  assert.equal(rows[1][rows[0].indexOf("미추출 번호")], "ECR-001");
+  assert.equal(rows.length, 3);
+  assert.equal(rows[1][1], "추출된 ECR 없음");
+  assert.match(rows[1][3], /추출 결과 없음/);
+  assert.equal(rows[2][0], "ECR-001");
 });
 
 test("ECR 배열이 없는 응답을 추출 0건으로 내보내지 않는다", async () => {
@@ -104,11 +97,9 @@ test("분석 결과가 없으면 헤더만 있는 CSV를 만들지 않는다", a
   assert.match(output.errors[0], /내보낼 ECR 분석 결과가 없/);
 });
 
-test("이번 분석 결과는 열린 공고의 번호와 제목으로 네트워크 조회 없이 내보낸다", async () => {
+test("이번 분석 결과는 열린 공고의 번호를 파일명에 담아 네트워크 조회 없이 내보낸다", async () => {
   const output = await runEcrExport({ ecr: [{ id: "ECR-001", 명칭: "서버" }] }, { announcementNumber: "R26-1", title: "원래 제목" });
   assert.equal(output.rows.length, 2);
-  assert.equal(output.rows[1][0], "R26-1");
-  assert.equal(output.rows[1][1], "원래 제목");
   assert.equal(output.name, "gong-go-ecr-R26-1");
 });
 
@@ -129,7 +120,7 @@ test("누락·오류·불확실 정보는 저장된 통과 플래그보다 화�
     assert.doesNotMatch(captured, /자동 검증 통과/);
     if (extra.coverage?.missingIds) assert.match(captured, /누락: ECR-002/);
     const { rows } = await runEcrExport(data);
-    assert.equal(rows[1][rows[0].indexOf("검증")], "원문 확인 필요");
+    assert.match(rows[1][rows[0].indexOf("비고")], /원문 확인 필요/);
     assert.equal(JSON.stringify(data), before);
   }
   const legacy = { verified: true, ecr: [{ id: "ECR-001" }] };

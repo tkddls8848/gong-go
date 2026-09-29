@@ -9,31 +9,29 @@
     // 나라장터 링크는 모드마다 자리가 달라지지 않도록 전용 열로 뺐다.
     function downloadCsv() { downloadRows([["유형", "공고번호", "업무", "수요기관", "사업명(공고명)", "게시일", "마감일/발주예정", "첨부파일", "나라장터 링크"], ...model.filtered.map((row) => [MODE_NAMES[row.mode] || row.mode, numberOf(row), row.businessType, row.institution, row.title, row.publishedAt, row.mode === "plan" ? row.orderMonth : row.closeAt, row.mode === "plan" ? "" : normalizeFiles(row.files).map((file) => `${file.name} (${file.url})`).join(" | "), row.detailUrl || ""])], "gong-go"); }
     // 서버에 저장된 결과는 없다. 지금 모달에 보이는 이번 분석 결과만 CSV로 내려받는다.
+    // 공고번호는 파일명에 있으므로 열은 규격번호·요청내용·스펙·비고만 둔다. 근거·모델 등은 화면에서 본다.
     function downloadEcr() {
-      const rows = [["공고번호", "사업명", "ID", "분류", "명칭", "수량", "산출물", "세부내용 원문", "검증", "장비 요구사항", "근거", "미추출 번호", "제외/불확실", "검증 오류", "검증 경고", "번호 대조", "분석일", "분석 모델", "출처"]];
+      const rows = [["규격번호", "요청내용", "스펙", "비고"]];
       const row = model.currentRow, data = model.currentAnalysis;
       if (!row || !data) { window.alert("내보낼 ECR 분석 결과가 없습니다. 먼저 제안요청서를 분석하세요."); return; }
       try {
         EquipmentSummary.validate(data);
-        const items = data.ecr;
-        // 0건 분석도 공고 행과 경고를 남긴다. 빈 파일을 '요구사항 없음'으로 오인하지 않게 한다.
-        for (const item of items.length ? items : [{ 명칭: "추출된 ECR 없음" }]) {
-          // 동일 요구사항 안의 여러 장비를 평탄화하면 수량·근거의 소속이 사라진다.
-          // CSV 열과 요구사항당 한 행은 유지하되 장비 순번·종류·명칭으로 연결한다.
-          const equipment = (item.장비요약 || []).map((entry, index) => ({ entry, label: `[장비 ${index + 1} | ${entry.종류 || "분류 확인 필요"} | ${entry.명칭 || "명칭 확인 필요"}]` }));
-          const facts = equipment.flatMap(({ entry, label }) => entry.규격.map((fact) => ({ fact, label })));
-          const requirements = equipment.length
-            ? equipment.map(({ entry, label }) => `${label}\n${entry.규격.length ? entry.규격.map((fact) => `${fact.항목 || "항목 확인 필요"}: ${fact.값 || "미기재"}`).join("\n") : "추출 규격 없음 — 원문 확인 필요"}`).join("\n\n")
-            : (item.기본규격 || []).map((spec) => `${spec.구분 || "구분 미기재"} | ${spec.항목 || "항목 미기재"}: ${spec.요구사항 || "미기재"}`).join("\n");
-          rows.push([numberOf(row), row.title, item.id, item.분류, item.명칭,
-            facts.filter(({ fact }) => fact.항목 === "수량").map(({ fact, label }) => `${label} ${fact.값 || "미기재"}`).join("\n") || (item.기본규격 || []).map((spec) => spec.수량).filter((value) => value !== undefined && value !== "").join(", "),
-            (item.산출물 || []).join(", "), item.세부내용_원문, !items.length ? "추출 결과 없음 — 원문 확인 필요" : EquipmentSummary.isVerified(data) ? "통과" : "원문 확인 필요",
-            requirements, equipment.map(({ entry, label }) => `${label}\n출처: ${entry.출처 || item.출처 || (data.sourceFiles || []).join(", ") || "확인 필요"}\n${entry.규격.map((fact) => `${fact.항목 || "항목 확인 필요"}: ${fact.근거 || "근거 없음"} (${fact.검증 || "확인 필요"})`).join("\n")}`).join("\n\n"),
-            [...new Set([...(data.누락 || []), ...(data.coverage?.missingIds || [])])].join(", "),
-            (item.불확실 || []).join("\n"), (data.verification?.errors || []).join("\n"), (data.verification?.warnings || []).join("\n"),
-            data.coverage?.status === "matched" ? "번호 일치 — 규격 완전성 미검증" : data.coverage?.status === "partial" ? "미추출 번호 있음" : "번호 대조 불가",
-            data.analyzedAt || "", data.model || "", item.출처 || (data.sourceFiles || []).join(", ")]);
+        const items = data.ecr, check = EquipmentSummary.isVerified(data) ? "" : "원문 확인 필요";
+        // 0건 분석도 행을 남긴다. 빈 파일을 '요구사항 없음'으로 오인하지 않게 한다.
+        if (!items.length) rows.push(["", "추출된 ECR 없음", "", "추출 결과 없음 — 원문 확인 필요"]);
+        for (const item of items) {
+          const equipment = item.장비요약 || [];
+          // 한 요구사항에 장비가 여럿이면 규격이 어느 장비 것인지 머리줄로 묶는다.
+          const spec = equipment.length
+            ? equipment.map((entry) => {
+              const lines = entry.규격.length ? entry.규격.map((fact) => `${fact.항목 || "항목 확인 필요"}: ${fact.값 || "미기재"}`) : ["추출 규격 없음"];
+              return equipment.length > 1 ? [`[${entry.명칭 || entry.종류 || "명칭 확인 필요"}]`, ...lines].join("\n") : lines.join("\n");
+            }).join("\n\n")
+            : (item.기본규격 || []).map((entry) => `${entry.항목 || entry.구분 || "항목 미기재"}: ${entry.요구사항 || "미기재"}${entry.수량 !== undefined && entry.수량 !== "" ? ` (수량 ${entry.수량})` : ""}`).join("\n");
+          rows.push([item.id || "", item.명칭 || item.분류 || "", spec, [check, ...(item.불확실 || [])].filter(Boolean).join("\n")]);
         }
+        // 원문에는 있는데 뽑지 못한 번호도 행으로 남겨 빠진 줄을 표에서 바로 보이게 한다.
+        for (const id of new Set([...(data.누락 || []), ...(data.coverage?.missingIds || [])])) rows.push([id, "", "", "미추출 — 원문 확인 필요"]);
       } catch (error) { window.alert(`ECR 내보내기 실패: ${error.message}`); return; }
       downloadRows(rows, `gong-go-ecr-${numberOf(row)}`);
     }
