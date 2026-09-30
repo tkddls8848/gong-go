@@ -107,16 +107,16 @@ test("이름이 랙 하나인 표는 빼되 트랜시버를 함께 적은 표는
   assert.deepEqual(선별, ["ECR-NW-12"]);
 });
 
-test("보안장비·회선 표는 빼되 명칭에 서버·스토리지·스위치가 있으면 남긴다", () => {
+test("보안장비 묶음·회선 표는 빼되 방화벽 단품과 서버·스위치 이름은 남긴다", () => {
   const table = (id, name) => `요구사항 고유번호 ${id}\n요구사항 명칭\n${name}\n세부 내용 CPU 8Core 이상, Memory 16GB 이상\n`;
   const source = table("ECR-009", "보안장비 구성") + table("ECR-011", "기반시설·회선 및 시스템 연계")
     + table("ECR-020", "내부 방화벽") + table("ECR-021", "VPN관리서버") + table("ECR-022", "스위치 및 회선 구성")
-    + table("ECR-003", "서버 구성");
+    + table("ECR-003", "서버 구성") + table("ECR-024", "웹방화벽");
   const 선별 = requirementSections(source).sections.map((section) => section.id);
-  assert.deepEqual(선별, ["ECR-021", "ECR-022", "ECR-003"]);
+  assert.deepEqual(선별, ["ECR-020", "ECR-021", "ECR-022", "ECR-003", "ECR-024"]);
 });
 
-test("명칭을 읽지 못한 표는 본문에 방화벽·회선이 있어도 남긴다", () => {
+test("명칭을 읽지 못한 표는 본문에 회선·기반시설이 있어도 남긴다", () => {
   const source = "요구사항 고유번호 ECR-004\n세부 내용 CPU 32core, 메모리 256GB\n방화벽 구간 뒤에 두고 전용 회선으로 연결\n";
   assert.deepEqual(requirementSections(source).sections.map((section) => section.id), ["ECR-004"]);
 });
