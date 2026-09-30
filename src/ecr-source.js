@@ -21,6 +21,14 @@ const DEVICE_TAIL = /(?:서버|스토리지|스위치|장치|장비)\s*(?:\([^)]
 // ECR-010 녹음시스템 요건, ECR-012 PoE 스위치 요건이 모두 실제 장비 표다 — 이름 끝의 "요건"은
 // 장비인지 아닌지를 가르지 않는다. 같은 유혹이 다시 오면 이 세 건을 먼저 보라.
 const LICENSE_ONLY = /^(?:(?:장비|서버|시스템|SW|S\/W)\s*)?(?:라이선스|라이센스|licen[cs]es?)(?:\s*(?:요건|요구사항|도입|구매|제공))?$/i;
+// 보안장비·회선 표는 분석 대상이 아니다. 수협 재해복구센터 본공고의 ECR-009 보안장비 구성
+// (방화벽·VPN)과 ECR-011 기반시설·회선이 CPU·메모리·GB를 적어 상세 표로 걸렸다. 보안장비 표
+// 안의 VPN관리서버도 함께 빠지는 것은 의도한 것이다. 규격을 놓치는 것이 더 담는 것보다 나쁘므로
+// 명칭을 읽은 표에만 쓰고, 명칭 어디에든 서버·스토리지·스위치가 있으면 남긴다
+// ("방화벽 연동 스위치", "스위치 및 회선"). 명칭을 못 읽어 본문 앞부분으로 판정할 때는 쓰지 않는다 —
+// 서버 표 본문도 방화벽이나 회선을 언급한다.
+const SECURITY_OR_LINE = /회선|기반\s*시설|보안\s*장비|방화벽|\bVPN\b/i;
+const TARGET_WORD = /서버|스토리지|스위치/;
 function equipmentTable(text, naming = {}) {
   // 명칭 칸이 옆 칸과 엇갈려 분류 문구만 잡히는 표가 있다(양산선 ECR-034 UPS). 그때는
   // 이름을 못 읽은 것으로 보고 표 머리를 본다.
@@ -31,6 +39,7 @@ function equipmentTable(text, naming = {}) {
   // 별도 라이선스 조건 표와 '라이선스 포함 서버'는 다르다. 명칭 전체가 라이선스일 때만 제외한다.
   if (usable && LICENSE_ONLY.test(subject)) return false;
   if (usable && RACK_ONLY.test(subject)) return false;
+  if (usable && SECURITY_OR_LINE.test(subject) && !TARGET_WORD.test(subject)) return false;
   // 같은 문서에 "서버보안"과 "서버보안서버"가 함께 있으면 꼬리 없는 쪽이 소프트웨어다.
   // 짝을 볼 때는 꼬리가 없는 이름만 내려놓는다 — "백본 스위치(내부망)"과 "(인터넷망)"처럼
   // 둘 다 장비인 이름끼리 서로를 떨어뜨리면 안 된다.

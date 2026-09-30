@@ -40,6 +40,22 @@ export const DOCUMENTS = [
     equipment: [...ids("ECR-HW-", 1, 8, 2), ...ids("ECR-NW-", 1, 12, 2)],
     other: [...ids("ECR-SW-", 1, 11, 2), ...ids("ECR-COM-", 1, 11, 2)],
   },
+  {
+    file: "kic.txt",
+    name: "한국투자공사 가상화 인프라 증설",
+    // ECR-002 신규도입 장비 내역은 장비 목록이지만 "L2 스위치 48포트"처럼 규격을 적는다.
+    // 규격을 놓치는 것보다 더 담는 편이 낫다는 기준으로 대상에 넣는다.
+    equipment: ["ECR-002", "ECR-004", "ECR-005", "ECR-006"],
+    other: ["ECR-001", "ECR-003"],
+  },
+  {
+    file: "suhyup.txt",
+    name: "수협 재해복구센터 단계적 확대 구축",
+    // ECR-001 일반요건은 장비별 도입 수량표를 담아 대상에 넣는다. ECR-009 보안장비(방화벽·VPN,
+    // 안의 VPN관리서버 포함)와 ECR-011 기반시설·회선은 분석 대상이 아니다.
+    equipment: ["ECR-001", "ECR-003", "ECR-004", "ECR-005", "ECR-007", "ECR-008"],
+    other: ["ECR-002", "ECR-006", "ECR-009", "ECR-010", "ECR-011"],
+  },
 ];
 
 export function readDocument(dir, file) {

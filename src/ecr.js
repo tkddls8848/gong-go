@@ -8,7 +8,7 @@ export const ECR_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 // 작업 키에 들어가는 파이프라인 판. 표 선별이나 구간 나누기를 고치면 반드시 올린다.
 // 올리지 않으면 같은 파일을 다시 올려도 예전 방식으로 자른 구간을 그대로 다시 쓴다 —
 // 고친 것이 반영되지 않고 고쳐진 것처럼 보인다.
-const VERSION = "cloud-v4-근거소속검증";
+const VERSION = "cloud-v5-보안장비회선제외";
 const MAX_BYTES = 8 * 1024 * 1024;
 // 한 요청에서 다루는 텍스트와 병합 작업량을 제한한다.
 const MAX_CHARS = 120000;
