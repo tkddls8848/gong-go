@@ -1,5 +1,5 @@
 // 재수집 창 밖으로 완전히 나간 완료 월을 하나의 gzip으로 봉인한다.
-// (docs/배포계획-R2.md R2-6)
+// (운영 절차: docs/operations.md 「R2 업로드와 배포」)
 //
 // 목적은 압축률이 아니라 "파일 수 = 조회 1회당 Function 호출 수"를 줄이는 것이다.
 // 한 달치를 이어붙여 재압축해도 용량은 1% 남짓밖에 줄지 않는다 — DEFLATE의 사전 창이
@@ -8,10 +8,11 @@
 // 최근 SEAL_LAG일 안쪽은 크론이 업무 시간대 매시 덮어쓰므로 묶지 않는다. 묶으면 82KB를 받던
 // 사용자가 당월 4.5MB를 갱신될 때마다 새로 받게 되어 오히려 손해다. 창 밖으로 나간 월만 봉인한다.
 //
-// 사용: node collector/compact.js [--dry-run] [--prune] [--reseal] [--lag=40]
+// 사용: node collector/compact.js [--dry-run] [--prune] [--reseal] [--lag=일수]
 //   --dry-run  대상만 출력하고 아무것도 쓰지 않는다
 //   --prune    봉인이 끝난 월의 일별 파일을 지운다(봉인 결과를 확인한 뒤 따로 실행)
 //   --reseal   이미 봉인된 월도 일별 파일에서 다시 만든다(봉인 뒤 그 달을 재수집한 경우)
+//   --lag      봉인하지 않을 최근 일수. 기본값은 SEAL_LAG
 const zlib = require("node:zlib");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -20,7 +21,9 @@ const { serializeCsv, parseCsv } = require("./csv-record");
 
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
 const MODES = ["pre", "bid", "plan"];
-// 크론 재수집 창(35일)보다 넉넉히. functions/data/[[path]].js의 RECENT_DAYS와 같은 값이다.
+// 크론 재수집 창(35일)보다 넉넉히. collector 안에서는 restore-r2.js가 이 값을 가져다 쓴다.
+// 모듈 경계상 공유하지 않는 같은 값의 사본: src/data.js RECENT_DAYS(캐시 기간),
+// public/search.js isRecentDaily의 shiftDay(today(), -40). 바꿀 때 함께 맞춘다.
 const SEAL_LAG = 40;
 const READ_CONCURRENCY = 16;
 const BOM = "\uFEFF";
@@ -229,4 +232,4 @@ async function subdirectories(dir, pattern) {
 function numberFlag(name, fallback) { const arg = process.argv.find((value) => value.startsWith(`${name}=`)); const parsed = Number(arg?.split("=")[1]); return Number.isFinite(parsed) ? parsed : fallback; }
 
 // 행 수 대조가 봉인의 유일한 안전장치다. 세는 규칙은 compact.test.js가 검증한다.
-module.exports = { countRows, body, sealable, groupByMonth };
+module.exports = { countRows, body, sealable, groupByMonth, SEAL_LAG };

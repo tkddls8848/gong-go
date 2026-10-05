@@ -1,4 +1,5 @@
 // 사이트 조회 권한과 뉴런 사용 권한을 분리한다. 서명 쿠키는 30분 동안만 유효하다.
+import { jsonResponse } from "./http.js";
 const COOKIE = "gong_ai_access";
 const LIFETIME = 30 * 60 * 1000;
 const enc = new TextEncoder();
@@ -9,7 +10,6 @@ const SETUP_MESSAGE = "AI 분석이 잠겨 있습니다. 운영자가 AI_ANALYSI
 // 위쪽 한도는 아래 passwordBody가 받는 길이와 같아야 한다. 어긋나면 설정은 되었다고
 // 표시되는데 맞는 비밀번호로도 잠금이 풀리지 않는다.
 const configured = (env) => typeof env.AI_ANALYSIS_PASSWORD === "string" && env.AI_ANALYSIS_PASSWORD.length >= 16 && env.AI_ANALYSIS_PASSWORD.length <= MAX_PASSWORD;
-const reply = (data, status = 200, headers = {}) => Response.json(data, { status, headers: { "Cache-Control": "no-store", ...headers } });
 const hex = (bytes) => [...new Uint8Array(bytes)].map((n) => n.toString(16).padStart(2, "0")).join("");
 async function signingKey(secret) {
   // 원문을 HMAC 키로 바로 쓰면 짧은 키의 끝 NUL이 zero padding과 구분되지 않는다.
@@ -46,7 +46,7 @@ export async function hasAiAccess(request, env, now = Date.now()) {
 }
 export async function requireAiAccess(request, env) {
   if (await hasAiAccess(request, env)) return null;
-  return reply({ message: configured(env) ? "AI 분석이 잠겨 있습니다. ECR 분석에서 전용 비밀번호로 잠금을 해제하세요." : SETUP_MESSAGE, locked: true }, 403);
+  return jsonResponse({ message: configured(env) ? "AI 분석이 잠겨 있습니다. ECR 분석에서 전용 비밀번호로 잠금을 해제하세요." : SETUP_MESSAGE, locked: true }, 403);
 }
 async function attemptLimit(bucket, key, limit, now) {
   if (!bucket) return false;
@@ -76,16 +76,16 @@ async function passwordBody(request) {
   return body;
 }
 export async function handleAiAccess(request, env) {
-  if (request.method === "GET") return reply({ unlocked: await hasAiAccess(request, env), configured: configured(env), ...(!configured(env) ? { message: SETUP_MESSAGE } : {}) });
-  if (request.method !== "POST" && request.method !== "DELETE") return reply({ message: "지원하지 않는 요청입니다." }, 405);
-  if (request.headers.get("Origin") !== new URL(request.url).origin) return reply({ message: "같은 사이트에서만 잠금을 변경할 수 있습니다." }, 403);
+  if (request.method === "GET") return jsonResponse({ unlocked: await hasAiAccess(request, env), configured: configured(env), ...(!configured(env) ? { message: SETUP_MESSAGE } : {}) });
+  if (request.method !== "POST" && request.method !== "DELETE") return jsonResponse({ message: "지원하지 않는 요청입니다." }, 405);
+  if (request.headers.get("Origin") !== new URL(request.url).origin) return jsonResponse({ message: "같은 사이트에서만 잠금을 변경할 수 있습니다." }, 403);
   if (request.method === "DELETE") {
     try {
       await revokeAiAccess(request, env);
-      return reply({ unlocked: false }, 200, { "Set-Cookie": cookie("", request, 0) });
+      return jsonResponse({ unlocked: false }, 200, { "Set-Cookie": cookie("", request, 0) });
     } catch {
       // 실패를 성공 잠금으로 표시하지 않는다. 쿠키를 남겨 같은 토큰의 취소를 재시도한다.
-      return reply({ message: "서버에서 AI 권한을 취소하지 못했습니다. 다시 잠그기를 재시도하세요." }, 503);
+      return jsonResponse({ message: "서버에서 AI 권한을 취소하지 못했습니다. 다시 잠그기를 재시도하세요." }, 503);
     }
   }
   if (!configured(env)) return requireAiAccess(request, env);
@@ -97,21 +97,21 @@ export async function handleAiAccess(request, env) {
     // 막지 않도록 IP 한도보다 넉넉히 둔다. 남은 시간은 실제 창이 끝나는 시각으로 알린다.
     const remain = Math.ceil((600000 - now % 600000) / 1000);
     if (!await attemptLimit(env.DATA, `_meta/ai-access/ip-${ipHash}.json`, 5, now) || !await attemptLimit(env.DATA, "_meta/ai-access/global.json", 200, now)) {
-      return reply({ message: `잠금 해제 시도가 너무 많습니다. ${Math.ceil(remain / 60)}분 후 다시 시도하세요.` }, 429, { "Retry-After": String(remain) });
+      return jsonResponse({ message: `잠금 해제 시도가 너무 많습니다. ${Math.ceil(remain / 60)}분 후 다시 시도하세요.` }, 429, { "Retry-After": String(remain) });
     }
     const body = await passwordBody(request);
-    if (typeof body.password !== "string" || body.password.length > MAX_PASSWORD) return reply({ message: "비밀번호가 올바르지 않습니다." }, 403);
+    if (typeof body.password !== "string" || body.password.length > MAX_PASSWORD) return jsonResponse({ message: "비밀번호가 올바르지 않습니다." }, 403);
     // 고정 길이 서명으로 비교해 평문 비교의 길이/접두사 타이밍 차이를 피한다.
     const expected = await signingKey(env.AI_ANALYSIS_PASSWORD);
     const submitted = await signingKey(body.password);
     const probe = enc.encode("gong-ai-password-check");
     const signature = await crypto.subtle.sign("HMAC", submitted, probe);
-    if (!await crypto.subtle.verify("HMAC", expected, signature, probe)) return reply({ message: "비밀번호가 올바르지 않습니다." }, 403);
+    if (!await crypto.subtle.verify("HMAC", expected, signature, probe)) return jsonResponse({ message: "비밀번호가 올바르지 않습니다." }, 403);
     const payload = `${now + LIFETIME}.${hex(crypto.getRandomValues(new Uint8Array(16)))}`;
     const signed = hex(await crypto.subtle.sign("HMAC", expected, enc.encode(`ai-access:v2:${payload}`)));
-    return reply({ unlocked: true }, 200, { "Set-Cookie": cookie(`${payload}.${signed}`, request) });
+    return jsonResponse({ unlocked: true }, 200, { "Set-Cookie": cookie(`${payload}.${signed}`, request) });
   } catch (error) {
-    if (error?.inputError) return reply({ message: "잠금 해제 요청 형식이 올바르지 않습니다." }, 400);
-    return reply({ message: "잠금을 해제하지 못했습니다. 잠시 후 다시 시도하세요." }, 503);
+    if (error?.inputError) return jsonResponse({ message: "잠금 해제 요청 형식이 올바르지 않습니다." }, 400);
+    return jsonResponse({ message: "잠금을 해제하지 못했습니다. 잠시 후 다시 시도하세요." }, 503);
   }
 }

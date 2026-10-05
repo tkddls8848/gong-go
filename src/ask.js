@@ -11,6 +11,8 @@
 // 고르고 실제 날짜는 resolvePeriod가 만든다. 모델이 "2026-02-30" 같은 값을 지어내도 형식은
 // 맞아서 정규식 검증을 그대로 통과하는데, 그 오류를 애초에 만들 수 없게 하는 편이 낫다.
 
+import { pad, ymd, split, kstToday, lastDay, monthBounds, shift, weekOffset, validDate, recentMonth } from "./kst-date.js";
+
 // 서비스와 raw 모두 2020년부터 누적 보관한다.
 const MODES = ["pre", "bid", "plan"];
 const MODE_NAMES = { pre: "사전공고", bid: "본공고", plan: "발주계획" };
@@ -24,27 +26,10 @@ const INSTITUTION_OK = /^[가-힣ㄱ-ㅎㅏ-ㅣA-Za-z0-9()·\-\s]+$/;
 // 검색어로 쓰면 전부 0건이 되는 말들. 질의문에서 그대로 딸려 오기 쉽다.
 const STOPWORDS = new Set(["사업", "공고", "입찰", "알려줘", "보여줘", "찾아줘", "알려", "보여", "목록", "리스트", "전체", "조회", "내역", "현황", "관련", "정보"]);
 
-const pad = (value) => String(value).padStart(2, "0");
-const ymd = (year, month, day) => `${year}-${pad(month)}-${pad(day)}`;
-const split = (date) => ({ year: Number(date.slice(0, 4)), month: Number(date.slice(5, 7)), day: Number(date.slice(8, 10)) });
 // 제어문자를 공백으로 바꾼다. 줄바꿈을 그대로 두면 질의가 가짜 대화 턴처럼 보이게 만들 수 있다.
 // 정규식에 제어문자를 직접 쓰지 않는 이유는 소스에 그 바이트가 박히는 사고를 피하기 위해서다.
 const stripControl = (text) => Array.from(text, (char) => (char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 ? " " : char)).join("");
 
-// Worker는 UTC로 돈다. 데이터의 날짜는 KST 벽시계이므로 "오늘"은 여기서 만든다.
-// KST는 1988년 이후 서머타임이 없어 고정 오프셋이 안전하다.
-function kstToday(nowMs) { return new Date(nowMs + 9 * 3600 * 1000).toISOString().slice(0, 10); }
-// Date.UTC(y, m, 0)은 m월의 말일이다(월이 0-based라 m이 곧 다음 달). 윤년도 여기서 풀린다.
-function lastDay(year, month) { return new Date(Date.UTC(year, month, 0)).getUTCDate(); }
-function monthBounds(year, month) { return { begin: ymd(year, month, 1), end: ymd(year, month, lastDay(year, month)) }; }
-function shift(date, days) { const { year, month, day } = split(date); return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10); }
-// 월요일까지 며칠 뒤로 가야 하는지. getUTCDay()는 일요일이 0이라 월요일 기준으로 옮긴다.
-function weekOffset(date) { const { year, month, day } = split(date); return (new Date(Date.UTC(year, month - 1, day)).getUTCDay() + 6) % 7; }
-// 정규식만으로는 2026-02-30이 통과한다. 달력에 실재하는 날짜인지까지 본다.
-function validDate(value) { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return false; const { year, month, day } = split(value); return month >= 1 && month <= 12 && day >= 1 && day <= lastDay(year, month); }
-// "4월"에 연도를 붙이는 규칙: 아직 시작하지 않은 달을 말했을 리 없으므로, 1일이 오늘 이하인
-// 가장 최근의 그 달을 고른다. 게시일은 미래가 될 수 없다는 성질이 근거다.
-function recentMonth(today, month) { const { year } = split(today); return ymd(year, month, 1) <= today ? year : year - 1; }
 function dataFloor() { return "2020-01-01"; }
 
 // 이름 있는 기간을 실제 구간으로 편다. 모델은 enum만 골랐으므로 여기서 틀릴 일이 없다.

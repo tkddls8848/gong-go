@@ -7,7 +7,8 @@ import { handleRefresh, dispatchCollect } from "./refresh.js";
 import { handleRelay, RELAY_PREFIX } from "./relay.js";
 import { serveData } from "./data.js";
 import { COOKIE_NAME, LOGIN_PATH, isAuthenticated, handleLogin, clearCookie,
-  safePath, redirect, htmlResponse, loginPageHtml } from "./gate.js";
+  safePath, loginPageHtml } from "./gate.js";
+import { redirect, htmlResponse } from "./http.js";
 
 const LOGOUT_PATH = "/api/logout";
 const LEGACY_LOGOUT_PATH = "/__gate/logout";

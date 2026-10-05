@@ -1,5 +1,5 @@
-// collector 모듈 안에서만 공유하는 저장소 헬퍼. collector.js(수집)와 compact.js(봉인)가
-// 같은 data/ 트리와 같은 index.json을 쓰기 때문에 두 파일 사이에서만 공유한다.
+// collector 모듈 안에서만 공유하는 저장소 헬퍼. collector.js(수집), compact.js(봉인),
+// restore-r2.js(복원)가 같은 data/ 트리와 같은 index.json을 쓰고, api.js가 sleep을 쓴다.
 //
 // 다른 모듈은 이 파일을 require하지 않는다. uploader도 index.json을 만들지만 그쪽은
 // 제 모듈 안에 같은 규칙을 따로 갖고 있다 — 인덱스 항목 모양은 저장된 데이터의 계약이지

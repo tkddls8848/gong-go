@@ -1,5 +1,4 @@
-import { jsonResponse } from "./http.js";
-import { timingSafeEqual } from "./gate.js";
+import { jsonResponse, timingSafeEqual } from "./http.js";
 
 export const RELAY_PREFIX = "/api/relay/";
 // 중계가 열어 주는 경로. 이 목록에 없으면 통과시키지 않는다 — 임의 URL을 받아 주면

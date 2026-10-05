@@ -81,3 +81,35 @@ test("공통 데이터 조회는 30초 제한을 사용하고 HTTP 실패를 성
     else await assert.rejects(read("/data/index.json"), status === 401 ? /로그인이 만료/ : /HTTP 503/);
   }
 });
+
+test("호출자 signal 취소는 요청을 중단하고 원래 AbortError를 그대로 돌려준다", async () => {
+  let seen;
+  const { requestJson } = require("../public/http.js").createHttp({
+    fetch: (_, options) => new Promise((_, reject) => {
+      seen = options.signal;
+      // 실제 fetch처럼 이미 취소된 signal은 즉시 거부한다.
+      if (options.signal.aborted) return reject(new DOMException("aborted", "AbortError"));
+      options.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    }),
+    setTimeout: () => 0, clearTimeout() {}
+  });
+  const caller = new AbortController();
+  const pending = requestJson("/api/live", { signal: caller.signal }, 30000, "search");
+  caller.abort();
+  await assert.rejects(pending, (error) => error.name === "AbortError");
+  assert.equal(seen.aborted, true);
+  const already = new AbortController(); already.abort();
+  await assert.rejects(requestJson("/api/live", { signal: already.signal }, 30000, "search"), (error) => error.name === "AbortError");
+});
+
+test("호출자 signal을 넘겨도 시간 제한은 그대로 적용된다", async () => {
+  let seen;
+  const { requestJson } = require("../public/http.js").createHttp({
+    fetch: (_, options) => { seen = options.signal; return new Promise(() => {}); },
+    setTimeout: (fn) => setTimeout(fn, 0), clearTimeout
+  });
+  const caller = new AbortController();
+  await assert.rejects(requestJson("/api/live", { signal: caller.signal }, 30000, "search"), /대기 시간이 초과/);
+  assert.equal(seen.aborted, true);
+  assert.equal(caller.signal.aborted, false, "시간 초과가 호출자 signal을 건드리면 안 된다");
+});

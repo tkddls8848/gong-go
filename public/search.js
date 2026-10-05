@@ -4,9 +4,9 @@
   function createSearch({
     model, $, scanner, renderRows, collectInstitutions, todayFile, MODE_NAMES, format, numberOf,
     GongDates = scope.GongDates, Rows = scope.GongRows, today = () => GongDates.kstDate(),
-    MAX_ROWS = 200000, LIVE_API = "/api/live", fetch = scope.fetch.bind(scope)
+    MAX_ROWS = 200000, LIVE_API = "/api/live", requestJson = (...args) => scope.GongHttp.requestJson(...args)
   } = {}) {
-    const LIVE_TYPES = ["물품", "외자", "용역", "공사"], LIVE_CONCURRENCY = 4, LIVE_MAX_PAGE = 200;
+    const LIVE_TYPES = ["물품", "외자", "용역", "공사"], LIVE_CONCURRENCY = 4, LIVE_MAX_PAGE = 200, LIVE_TIMEOUT_MS = 30000;
     const PREVIEW_LIMIT = 30000, PREVIEW_MS = 700;
     let liveController = null;
     const todayKey = () => today().replaceAll("-", "");
@@ -89,8 +89,8 @@
 
     async function fetchLivePage(mode, businessType, span, pageNo, signal) {
       const params = new URLSearchParams({ mode, businessType, begin: span.begin, end: span.end, pageNo: String(pageNo) });
-      const response = await fetch(`${LIVE_API}?${params}`, { signal });
-      const data = await response.json().catch(() => ({}));
+      // 나라장터가 멈춰도 한 페이지가 무기한 묶이지 않도록 다른 API와 같은 30초 제한을 쓴다.
+      const { response, data } = await requestJson(`${LIVE_API}?${params}`, { signal }, LIVE_TIMEOUT_MS, "search");
       if (!response.ok) throw new Error(data.message || `최신 정보 응답 오류 (${response.status})`);
       return liveItems(data);
     }

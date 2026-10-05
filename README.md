@@ -59,7 +59,7 @@ Cloudflare Worker). 한 단계를 고치다 다른 단계를 멈추는 것이 �
 
 ## 실행과 검증
 
-Node.js 20 이상에서 의존성을 설치합니다(CI는 22에서 검증합니다). 환경변수와 운영 명령은 [설치와 운영](docs/operations.md)을 참고합니다.
+Node.js 22.7 이상에서 의존성을 설치합니다(CI는 22에서 검증합니다). 환경변수와 운영 명령은 [설치와 운영](docs/operations.md)을 참고합니다.
 
 ~~~powershell
 npm ci

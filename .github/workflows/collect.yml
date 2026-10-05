@@ -43,7 +43,7 @@ jobs:
     env:
       SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
       # 러너는 apis.data.go.kr에 TCP 연결이 되지 않는다. Worker 중계를 거친다.
-      # (docs/이슈-Actions-수집-차단.md) 비워 두면 직접 호출로 되돌아가 다시 타임아웃난다.
+      # (docs/history/2026-08-api-relay.md) 비워 두면 직접 호출로 되돌아가 다시 타임아웃난다.
       API_BASE: ${{ secrets.API_BASE }}
       RELAY_TOKEN: ${{ secrets.RELAY_TOKEN }}
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
@@ -54,9 +54,9 @@ jobs:
       # 박히지 않는다 — 크론·갱신 버튼은 Worker의 WORKFLOW_REF로, schedule은 기본 브랜치로
       # 걸리므로 어느 쪽이든 그 코드로 돈다. 예전에는 dev가 박혀 있어 main으로 옮길 때
       # 함께 고쳐야 했다.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           # ubuntu-latest tool cache에 있는 버전을 써 매 실행의 Node 20 다운로드를 피한다.
           node-version: "22"
@@ -109,7 +109,7 @@ jobs:
 
       - name: 오류 로그 보관
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: sync-errors
           path: data/sync-errors.json

@@ -1,4 +1,4 @@
-import { kstToday } from "./ask.js";
+import { kstToday } from "./kst-date.js";
 import { jsonResponse } from "./http.js";
 
 const GITHUB_API = "https://api.github.com/repos/tkddls8848/gong-go";

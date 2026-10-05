@@ -6,7 +6,7 @@
     const objects = (value) => value === undefined || (Array.isArray(value) && value.every(object));
     const textFields = (value, keys) => keys.every((key) => value[key] === undefined || typeof value[key] === "string");
     const presentText = (value) => typeof value === "string" && value.trim().length > 0;
-    const fail = () => { throw new Error("ECR 결과 형식이 올바르지 않습니다. 저장 결과를 다시 조회하거나 운영자에게 문의하세요."); };
+    const fail = () => { throw new Error("ECR 결과 형식이 올바르지 않습니다. 운영자에게 문의하세요."); };
     if (!object(data) || !Array.isArray(data.ecr) || !data.ecr.every(object)) fail();
     if (data.verified !== undefined && typeof data.verified !== "boolean") fail();
     if (!textFields(data, ["provider", "model", "analyzedAt"])) fail();
@@ -53,7 +53,9 @@
       && (!data.coverage || data.coverage.status === "matched")
       && data.ecr.every((item) => !(item.불확실 || []).length);
   }
-  const escape = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+  // HTML 이스케이프는 format.js 하나를 쓴다. index.html에서 format.js가 이 파일보다 늦게 로드되므로 그리는 시점에 찾는다.
+  const format = typeof module !== "undefined" && module.exports ? require("./format.js") : null;
+  const escape = (value) => (format || root.GongFormat).html(value);
   // 머리의 건수와 아래 카드가 어긋나면 둘 다 믿을 수 없다. 카드로 그릴 항목만 세도록 한 군데서 고른다.
   const entriesOf = (items, kind) => items.flatMap((item) => (item.장비요약 || []).filter((entry) => entry && entry.종류 === kind && Array.isArray(entry.규격)).map((entry) => ({ item, entry })));
   const specsOf = (entry) => entry.규격.filter((fact) => fact && typeof fact === "object");

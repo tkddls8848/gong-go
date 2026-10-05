@@ -25,8 +25,8 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "22"
       - name: 백필 작업 분할
@@ -59,8 +59,8 @@ jobs:
       SYNC_BEGIN: ${{ matrix.begin }}
       SYNC_END: ${{ matrix.end }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "22"
 
@@ -89,7 +89,7 @@ jobs:
 
       - name: 오류 로그 보관
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: backfill-errors-${{ matrix.label }}
           path: data/sync-errors.json
@@ -107,8 +107,8 @@ jobs:
       # CSV 캐시를 새 URL로 한 번 교체하는 버전이므로, 부분 성공 상태에서는 올리면 안 된다.
       DATA_SCHEMA_VERSION: "bid-schedule-2026-08"
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "22"
       - run: npm ci --omit=dev --no-audit --fund=false

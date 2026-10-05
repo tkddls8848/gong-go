@@ -144,3 +144,13 @@ test("규격 표는 모두 가로 스크롤 상자 안에 들어간다", () => {
   assert.ok(tables.length, "표가 하나도 없다");
   for (const index of tables) assert.equal(html.slice(index - wrapper.length, index), wrapper);
 });
+
+test("공용 HTML 이스케이프로 바꿔도 숫자 0 ID는 남기고 없는 값은 빈칸으로 둔다", () => {
+  const output = render({ schemaVersion: 2, ecr: [
+    { id: 0, 장비요약: [{ 종류: "서버", 명칭: "<웹서버>", 규격: [] }] },
+    { 장비요약: [{ 종류: "서버", 명칭: "DB", 규격: [] }] },
+  ] });
+  assert.match(output, /&lt;웹서버&gt; <small>0<\/small>/);
+  assert.match(output, /DB <small><\/small>/);
+  assert.ok(!output.includes("undefined") && !output.includes("null"));
+});

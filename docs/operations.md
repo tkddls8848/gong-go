@@ -4,18 +4,20 @@
 
 ## 준비
 
-Node.js 20 이상에서 설치하고 `.env.example`을 `.env`로 복사해 필요한 값을 채웁니다.
+Node.js 22.7 이상에서 설치하고 `.env.example`을 `.env`로 복사해 필요한 값을 채웁니다.
 
 ```powershell
 npm ci
 ```
 
-주요 환경변수는 다음과 같습니다.
+주요 환경변수는 다음과 같습니다. 전체 목록과 설명은 `.env.example`을 기준으로 합니다.
 
 - `SERVICE_KEY`: 공공데이터포털 일반 인증키(Decoding)
-- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: R2 업로드
+- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: R2 업로드(uploader/, collector/restore-r2.js)
+- `R2_ENDPOINT`: 선택. 설정하면 `R2_ACCOUNT_ID` 대신 이 전체 주소로 R2에 접속
 - `ANTHROPIC_API_KEY`: Anthropic 분석을 사용할 때만 필요
 - `GATE_PASSWORD`: Worker 조회 화면 비밀번호
+- `AI_ANALYSIS_PASSWORD`: AI 분석 전용 암호(16자 이상, 조회 암호와 다르게). 미설정 시 ECR 분석과 자연어 검색의 AI 호출이 잠김
 - `GITHUB_TOKEN`: 배포 화면의 갱신 버튼용 GitHub fine-grained PAT. 이 저장소의 Actions read/write 권한만 부여
 - `API_BASE`, `RELAY_TOKEN`: 공공데이터 API 중계 경유 설정. 로컬에서는 비워 둡니다([공공데이터 API 중계](#공공데이터-api-중계) 참고)
 
@@ -93,6 +95,7 @@ npm run compact -- --prune   # 봉인 확인 후 같은 월의 일별 파일 삭
 npm run upload               # 기본값: 변경·삭제 예정 내역만 확인(dry-run)
 node uploader/upload.js --commit  # 확인한 내용을 실제 R2에 반영
 npx wrangler secret put GATE_PASSWORD
+npx wrangler secret put AI_ANALYSIS_PASSWORD
 npx wrangler secret put GITHUB_TOKEN
 npx wrangler secret put RELAY_TOKEN     # 이름이 정확해야 한다 — 아래 주의 참고
 npx wrangler secret put SERVICE_KEY     # 저장 결과 위에 최신 공고를 합치는 /api/live용
@@ -127,6 +130,14 @@ raw에서 서비스 데이터를 복원할 때는 `node collector/restore-r2.js`
 `node collector/restore-r2.js --commit`으로 실행한다. raw는 읽기만 하며 서비스 컬럼을
 복원하고 행 수를 확인한 뒤 파일을 올린다. 모든 파일이 성공하면 인덱스를 갱신한다.
 `node uploader/storage-report.js`는 용량을 읽기만 하는 수동 점검 도구다.
+
+`node uploader/verify-history.js`는 **위 보존 방침이 실제로 지켜지는지 검사하는** 읽기 전용
+점검 도구다. raw 일자마다 대응하는 서비스 CSV(일별 또는 월별)가 있고 그 파일이 인덱스에도
+올라와 있는지 확인한 뒤, 원본 개수·바이트와 서비스 파일 수·행 수·기간을 JSON으로 출력한다.
+연결이 끊긴 키는 `missing`에 모인다. `missing`이 있거나 서비스 시작일이 2020-01-01이 아니면
+종료 코드 1을 반환한다 — 이 날짜는 위 보존 방침을 그대로 옮겨 적은 것이므로, 방침을 바꾸면
+이 상수도 함께 고쳐야 한다. `R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`와 `R2_ENDPOINT`
+(또는 `R2_ACCOUNT_ID`)가 필요하다. 쓰기와 삭제는 하지 않으므로 운영 중에 돌려도 안전하다.
 
 발주계획 API는 과거 소급 조회를 지원하지 않으므로 확보한 스냅샷부터 보존한다.
 원본의 정정·이동에 따른 중복 정리와 수동 월별 봉인은 데이터 동기화 기능으로 유지한다.
