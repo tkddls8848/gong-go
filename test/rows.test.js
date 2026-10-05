@@ -108,7 +108,7 @@ test("공공 API 객체도 CSV와 같은 필터와 화면 모델을 쓴다", () 
   assert.deepEqual(live.matched, csv.matched);
 });
 
-test("첨부는 URL이 있는 슬롯만 남고 이름이 없으면 URL에서 찾는다", () => {
+test("조회 화면은 URL이 있는 슬롯만 남기고 이름이 없으면 URL에서 찾는다", () => {
   const files = onlyRow([BID], "bid").files;
   assert.deepEqual(files.map((file) => file.name), ["규격서.hwp", "과업지시서.hwp"]);
   assert.equal(files.length, 2);

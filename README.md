@@ -81,6 +81,7 @@ npx wrangler deploy --dry-run   # 번들을 바꿨을 때
 | 환경변수, 수집, 중계, R2, 배포 | [설치와 운영](docs/operations.md) |
 | 공고 검색, 프리셋, 자연어 검색 | [조회 화면](docs/search.md) |
 | ECR 분석·잠금·비용·검증 | [ECR](docs/ecr.md) |
+| 브라우저 HWP·HWPX → PDF 변환 | [한글 문서 변환](docs/hwp-conversion.md) |
 | 로컬 첨부 다운로드·분석 | [로컬 분석](docs/local-analysis.md) |
 | CSV·인덱스·발주계획 제약 | [데이터 계약](docs/data-contracts.md) |
 | 품질 기준과 개선 기록 | [서비스 품질](docs/service-quality.md) |

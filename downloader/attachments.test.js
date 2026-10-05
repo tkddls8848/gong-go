@@ -35,7 +35,7 @@ test("첨부 슬롯 수는 본공고 10개, 사전공고 5개다", () => {
   assert.equal(normalizeFiles(pre).length, 5);
 });
 
-test("첨부는 URL이 있는 슬롯만 남고 이름이 없으면 URL에서 찾는다", () => {
+test("다운로더는 URL이 있는 슬롯만 남기고 이름이 없으면 URL에서 찾는다", () => {
   const row = {
     bidNtceNo: "1",
     ntceSpecDocUrl1: "https://example.go.kr/get?fileNm=%EA%B7%9C%EA%B2%A9%EC%84%9C.hwp", ntceSpecFileNm1: "",

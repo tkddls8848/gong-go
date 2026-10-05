@@ -14,10 +14,12 @@ npm run analyze -- --provider ollama --model qwen3.5-hermes-64k:latest
 
 유료 분석 전에는 `--dry-run`으로 입력 토큰과 예상 비용을 확인합니다.
 
-**가운데 변환 단계는 이 저장소에 없습니다.** HWP/HWPX를 Markdown으로 바꾸는 일은 별도 저장소
-`orca/quotation`의 `converters/`가 맡습니다(한글 COM·HWPX 파서가 그쪽 기능이라 여기 둘 이유가
-없습니다). 두 저장소가 맞추는 것은 코드가 아니라 **`data/` 산출물 규약**입니다 — 모듈 경계와 같은
-원칙입니다.
+**Markdown 변환 단계는 이 저장소에 없습니다.** HWP/HWPX를 Markdown으로 바꾸는 일은 별도 저장소
+`orca/convertors`가 맡습니다(한글 COM·HWPX 파서가 그쪽 기능이라 여기 둘 이유가 없습니다).
+두 저장소가 맞추는 것은 코드가 아니라 **`data/` 산출물 규약**입니다 — 모듈 경계와 같은 원칙입니다.
+
+운영 화면의 HWP/HWPX → **PDF** 변환은 이 경로와 다릅니다. 브라우저 안에서 끝내며 저장소 밖 변환기를
+쓰지 않습니다. [브라우저 한글 문서 변환](hwp-conversion.md)을 봅니다.
 
 | 이 저장소가 만드는 것 | 변환기가 읽고 쓰는 것 | 이 저장소가 읽는 것 |
 | --- | --- | --- |
