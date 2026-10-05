@@ -1,0 +1,25 @@
+:root { color-scheme: dark; font-family: system-ui, "맑은 고딕", sans-serif; background: #151a21; color: #e6edf5; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; }
+main { max-width: 780px; margin: 0 auto; padding: 32px 24px 48px; }
+nav { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 64px; font-size: 14px; color: #a8b5c6; }
+a { color: #9fc7ff; text-underline-offset: 4px; }
+.eyebrow { color: #88b9ff; font-size: 14px; }
+h1 { font-size: clamp(28px, 5vw, 42px); letter-spacing: -.04em; margin: 12px 0; }
+.lead { color: #b9c6d6; line-height: 1.8; }
+form { margin-top: 32px; padding: 28px; background: #1e2733; border: 1px solid #354357; border-radius: 16px; }
+label { display: block; font-weight: 600; margin-bottom: 16px; }
+input { width: 100%; font: inherit; color: inherit; }
+input::file-selector-button { background: #354357; color: #fff; border: 0; border-radius: 6px; padding: 10px 14px; margin-right: 12px; cursor: pointer; }
+.hint, #convert-status { font-size: 14px; color: #b9c6d6; line-height: 1.7; overflow-wrap: anywhere; }
+.actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
+button, .download { font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 12px 18px; background: #a5caff; color: #15253e; cursor: pointer; text-decoration: none; }
+button.secondary { background: #354357; color: #e6edf5; }
+button:disabled { opacity: .5; cursor: wait; }
+:focus-visible { outline: 3px solid #e0edff; outline-offset: 4px; }
+#convert-status { min-height: 48px; margin-bottom: 0; }
+aside { margin: 28px 0; line-height: 1.8; color: #a8b5c6; font-size: 14px; }
+h2 { color: #dce6f4; font-size: 16px; }
+footer { font-size: 12px; line-height: 2; color: #a8b5c6; }
+@media(max-width: 480px) { main { padding: 24px 18px; } nav { margin-bottom: 40px; } form { padding: 20px; } }

@@ -1,7 +1,7 @@
 // PDF→Markdown은 표를 평문으로 풀기도 한다. 표의 셀 경계 대신 요구사항 번호와 상세 표 머리글을 쓴다.
 // 장비 번호의 공백은 한 칸까지만 본다. \s*로 열어 두면 표 레이아웃의 빈 칸을 건너뛰어
 // "장비" 머리글과 옆 칸의 숫자가 한 ID로 붙는다("장비             1").
-const ID = /(?:\b[A-Z]{2,5}[-–][A-Z0-9]+(?:[-–][A-Z0-9]+)*|장비 ?[-–]?[A-Z]?\d+(?:[-–]\d+)*)/g;
+const ID = /(?:\b[A-Z]{2,5}[-–][A-Z0-9]+(?:[-–][A-Z0-9]+)*|장비 ?[-–]?[A-Z]?\d+(?:[-–]\d+)*|[가-힣]{2,10}[-–]\d+(?:[-–]\d+)*)/g;
 // 요구사항 번호의 가운데 마디는 갈래를 가리킨다(ECR-HW-01 하드웨어, ECR-NW-06 네트워크,
 // ECR-SW-04 소프트웨어, ECR-COM-08 공통). 소프트웨어와 공통은 장비 표가 아니다.
 const target = (id) => (/^ECR[-–]|^장비/i.test(id)) && !/^ECR[-–](?:SW|COM)[-–]/i.test(id);
@@ -35,8 +35,8 @@ const TARGET_WORD = /서버|스토리지|스위치/;
 function equipmentTable(text, naming = {}) {
   // 명칭 칸이 옆 칸과 엇갈려 분류 문구만 잡히는 표가 있다(양산선 ECR-034 UPS). 그때는
   // 이름을 못 읽은 것으로 보고 표 머리를 본다.
-  const name = (text.match(/요구사항\s*명칭\s*([^\n]{0,40})/) || [])[1];
-  const usable = name && !/^\s*(?:시스템\s*장비구성|요구사항|정의)/.test(name);
+  const name = tableName(text);
+  const usable = !!name;
   // 마크다운 표로 변환되면 이름 뒤에 칸 구분자가 붙는다. 꼬리 판정 전에 떼어 낸다.
   const subject = (usable ? name : text.slice(0, 300)).replace(/\s+/g, " ").replace(/^[\s|]+|[\s|]+$/g, "");
   // 별도 라이선스 조건 표와 '라이선스 포함 서버'는 다르다. 명칭 전체가 라이선스일 때만 제외한다.
@@ -56,7 +56,8 @@ function equipmentTable(text, naming = {}) {
 // 괄호로 덧붙인 용도를 떼어 낸 이름. 짝을 찾을 때는 이 형태로 견준다.
 const baseName = (name) => name.replace(/\s*\([^)]*\)\s*$/, "").trim();
 function tableName(text) {
-  const name = (text.match(/요구사항\s*명칭\s*([^\n]{0,40})/) || [])[1];
+  // HWP 셀은 줄바꿈으로, Markdown 셀은 |로 나뉜다. 다음 셀을 이름에 섞지 않는다.
+  const name = (text.match(/요구\s*사항\s*(?:명\s*칭|명)(?![가-힣])[\s|:]*([^\n|]{1,120})/) || [])[1];
   if (!name || /^\s*(?:시스템\s*장비구성|요구사항|정의)/.test(name)) return "";
   return name.replace(/\s+/g, " ").replace(/^[\s|]+|[\s|]+$/g, "");
 }
@@ -124,8 +125,12 @@ export function requirementRanges(text) {
     const line = lines[i][0], ids = [...line.matchAll(ID)].map((match) => match[0]);
     if (ids.length !== 1 || /참조|참고|연계|관련\s*요구/.test(line)) continue;
     const field = /(?:요구사항|요구|고유|식별)\s*(?:고유\s*)?(?:번호|ID|코드)/i.test(line + (i ? lines[i - 1][0] : ""));
-    const leading = /^[\s|#*]*(?:ECR[-–]|[A-Z]{2,5}[-–]|장비\s*[-–]?\s*[A-Z]?\d)/.test(line);
+    const leading = /^[\s|#*]*(?:ECR[-–]|[A-Z]{2,5}[-–]|장비\s*[-–]?\s*[A-Z]?\d|[가-힣]{2,10}[-–]\d)/.test(line);
     if (!field && !leading) continue;
+    // '장비-029' 뒤의 '기능-001'도 표 경계다. 놓치면 이후 기능 요구사항 전체가
+    // 마지막 장비 규격에 붙는다. 한글 번호는 번호 칸 또는 바로 뒤 표 머리글로 확인한다.
+    if (/^[가-힣]/.test(ids[0]) && !/^장비/.test(ids[0]) && !field
+      && !/요구사항\s*(?:분류|명\s*칭|정의)/.test(lines.slice(i + 1, i + 5).map(entry => entry[0]).join(""))) continue;
     boundaries.push({ id: ids[0], start: lines[i].index });
   }
   return boundaries.map((boundary, index) => ({ ...boundary, end: boundaries[index + 1]?.start ?? text.length }))
@@ -136,7 +141,7 @@ export function requirementRanges(text) {
 // 드러나기도 하고 아니기도 하지만, "정의 … 규격"은 문서가 쓰는 표기라 어느 쪽이든 통한다.
 const DEFINITION = (name) => new RegExp(`정의\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*규격`);
 function bodyByName(text, section) {
-  const name = (section.text.match(/요구사항\s*명칭\s*([^\n|]{1,30})/) || [])[1];
+  const name = tableName(section.text);
   if (!name || !name.trim()) return null;
   const found = DEFINITION(name.trim()).exec(text);
   if (!found || found.index < section.end) return null;

@@ -18,6 +18,7 @@
         <div>
           <h1>나라장터 조회</h1>
           <p class="rail-tag">수집한 CSV에서 공고를 찾습니다</p>
+          <a href="convert.html">HWP·HWPX → PDF 변환</a>
         </div>
         <button id="rail-toggle" class="icon-btn" type="button" title="조회 조건 숨기기" aria-label="조회 조건 숨기기" aria-expanded="true" aria-controls="rail"><span class="rail-toggle-icon" aria-hidden="true"></span></button>
       </div>
@@ -152,11 +153,11 @@
       </section>
       <form id="ecr-upload-form" hidden>
         <label for="ecr-file">제안요청서 파일</label>
-        <input id="ecr-file" type="file" accept=".pdf,.md,.txt" required disabled>
+        <input id="ecr-file" type="file" accept=".pdf,.md,.txt,.hwp,.hwpx" required disabled>
         <button id="ecr-analyze-btn" class="primary-btn" type="submit" disabled>서버·스토리지 분석</button>
         <button id="ecr-stop-btn" class="secondary-btn" type="button" hidden>추가 분석 중지</button>
         <button id="download-ecr-btn" class="secondary-btn" type="button" disabled>결과 CSV 내보내기</button>
-        <p class="hint">PDF·Markdown·TXT, 최대 8MB. HWP/HWPX는 PDF로 저장해 올려 주세요. 분석은 클라우드에서 수행하며 결과는 저장하지 않습니다. 중단한 분석은 같은 파일을 다시 올리면 완료된 구간부터 이어 갑니다.</p>
+        <p class="hint">HWP/HWPX는 브라우저에서 PDF로 자동 변환합니다(최대 32MB·400페이지). 분석할 PDF·Markdown·TXT는 최대 8MB입니다. 분석 실행 시 변환된 PDF를 클라우드로 전송하며 결과는 저장하지 않습니다. 변환 후 표·쪽 배치는 원본과 다를 수 있습니다. <a href="convert.html" target="_blank" rel="noopener">PDF 변환·다운로드만 하기</a>. 중단한 분석은 같은 파일을 다시 올리면 완료된 구간부터 이어 갑니다.</p>
         <p id="ecr-progress" role="status" aria-live="polite"></p>
       </form>
       <div id="ecr-content" hidden></div>
@@ -188,6 +189,7 @@
   <script src="ai-access.js"></script>
   <script src="ecr-view.js"></script>
   <script src="ecr-ui.js"></script>
+  <script src="hwp-converter.js"></script>
   <script src="exports.js"></script>
   <script src="app.js"></script>
 </body>

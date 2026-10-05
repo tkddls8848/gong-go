@@ -12,3 +12,6 @@
 # 윈도우 배치 파일만 예외다. cmd.exe 는 LF 줄바꿈에서 라벨과 goto 를 잘못 읽는다.
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# 검증된 제3자 배포 자산은 원본 바이트·해시를 유지한다.
+public/vendor/hwp-v0.2.2/* -text

@@ -2,6 +2,155 @@
 
 운영 구현은 [src/ecr.js](../src/ecr.js), 화면 흐름은 [public/ecr-ui.js](../public/ecr-ui.js)에 있습니다.
 
+## 로컬 Ollama PDF 이미지 검증
+
+### 장비 요구사항 페이지만 자동 분석
+
+```powershell
+# 선별 결과와 selected.pdf만 생성: LLM 호출 없음
+node analyzer/analyze-pdf.js "samples/example.pdf" test-results/example-focused --deps test-results/ecr-python
+# 선별한 페이지 이미지만 로컬 Ollama로 분석
+node analyzer/analyze-pdf.js "samples/example.pdf" test-results/example-focused --deps test-results/ecr-python --run
+```
+
+`pdf_selection.py`는 pypdf로 페이지별 텍스트를 한 번 읽고 PDF 해시별로 캐시한다.
+이 텍스트는 **위치 찾기와 결과 대조용**이며 LLM에 보내지 않는다. PDF 페이지 위치를 찾으려면
+로컬 텍스트 탐색은 필요하지만 전체 페이지 렌더링·전체 문서 추론은 하지 않는다.
+
+요구사항 번호 칸과 명칭으로 상세 구간을 찾고, ECR·HWR·장비 번호의 표 중 실제 수치 규격이
+있는 표를 고른다. 사업 개요·목차·공통 조건·보증·SW 라이선스 표는 제외한다. 번호 없는 문서는
+명시적인 장비 규격 제목과 수치 규격을 함께 요구한다. 표가 다음 쪽으로 이어지면 다음 요구사항
+머리글까지 포함한다. 다른 ID가 같은 페이지에 있으면 대상 ID를 모델에 지정하여 결과를 제한한다.
+번호 칸 없이 `장비-003-업무 포털 운영 서버`를 표 위에 적은 문서도 근처의 상세 머리글과 함께
+인식한다. 뒤의 설명은 ID에 포함하지 않으며 목차의 번호 나열만으로는 선택하지 않는다.
+페이지 추출은 원래 레이아웃을 보존하며 같은 쪽의 다른 표를 물리적으로 잘라내지는 않는다.
+
+선별 실패·스캔 문서는 전체 문서 분석으로 대체하지 않는다. `selection.json`에 수동 확인 안내를
+남긴다. 텍스트가 없는 일부 쪽은 별도로 `blankPages`에 기록한다. 기본 한도는 선별 12쪽,
+수량 재확인을 포함한 최대 8회 추론이다(`--max-pages`, `--max-calls`). 초과하면 실행 전에 멈춘다.
+한 이미지 요청은 200 DPI의 인접 2쪽 이하이며 긴 표는 1쪽 겹침으로 이어서 처리한다.
+
+산출물: 선별 이유·제외 이유와 원본 페이지 매핑을 담은 `selection.json`, 규격 페이지 PDF
+`selected.pdf`, 요청 계획 `jobs.json`, `--run` 실행 시 페이지별 모델 원응답과 `report.json`.
+같은 ID가 반환돼도 원문에서 찾은 장비명이 결과에 없으면 `needs-review`로 남긴다. 이 명칭 목록은
+보수적인 누락 점검용이며 모든 장비 종류·명칭 변형을 판정하는 정답 집합은 아니다.
+
+하위 장비 목록을 인식한 문서는 `pdf_inventory.py` → `device-vision.js` 경로를 자동 사용한다.
+수량이 붙은 하위 장비 표, UNIX 상세내역 행, HCI 논리 서버 행을 요구사항별로 열거한다.
+물리 장비는 최대 2종, 행 형태의 서버는 최대 4행씩 요청하고 각 장비에 필수 JSON 키를 부여한다.
+전체 장비를 하나의 최대 12개 배열에 넣지 않는다. 장비 식별자는 요구사항 번호와 행 키의 조합이며,
+다른 요구사항의 같은 이름, 운영/개발/검증/DR, 물리 HCI와 논리 서버를 합치지 않는다.
+위치 지정용 장비명과 키만 프롬프트에 넣으며 원문 수치 텍스트는 보내지 않는다.
+
+`pdf-pages.py --table-crops`는 고유한 상세내역/설치, 논리/산출정보 머리글 좌표로 UNIX·HCI 표를
+잘라 크게 입력한다. 고유한 경계가 없으면 원래 페이지를 쓴다. 범위와 원본 이미지는 manifest에 남긴다.
+UNIX 공통 규격은 행 규격과 구별한 대조용 원문 텍스트로 보존한다. 이 텍스트는 LLM 추출 결과가 아니다.
+
+반환 키와 필수 항목, UNIX/HCI 행의 CPU·메모리·성능·수량 수치를 대조하고 누락은 장비별로 한 번만
+재확인한다. 일부 호출이 실패해도 나머지 작업을 계속하며 미분석 항목도 결과 목록에 남긴다.
+한도는 기본 묶음 수 + 모든 장비의 개별 재확인 수를 예약한다. 큰 문서는 명시적으로 늘린다:
+
+```powershell
+node analyzer/analyze-pdf.js "test-results/jabaewon-hw-20250930/sample-1.pdf" test-results/jabaewon-hw-20250930/full --deps test-results/ecr-python --max-pages 40 --max-calls 250 --run
+```
+
+이 경로는 매 묶음 완료 시 `result.html`, `equipment.csv`, `report.json`을 갱신한다. 재실행하면
+동일 요청의 원시 응답 캐시를 재검증한다. `extracted-unverified`는 필수 항목 대조를 통과했다는 뜻이며,
+모든 숫자·문구·표 소속이 맞다는 정확도 판정이 아니다. 알려지지 않은 표 형식은 목록 경고/기존 페이지
+단위 분석으로 남으므로 목록의 완전성도 원문 확인이 필요하다. 스캔 문서에는 자동 목록을 적용하지 않는다.
+추가 회귀 검사: `python -X utf8 -B -m unittest discover -s analyzer -p "test_pdf*.py"`,
+`npm test`의 `device-vision.test.js`.
+
+2026-10-05 자배원 HW RFP 시험: 40쪽 중 37쪽의 장비-003~032 전체 30구간을 로컬
+`qwen3.5:4b`로 처리했다. UNIX 28행, x86 30종, HCI 물리 2종과 논리 35행, 스토리지/백업
+11종, SAN 스위치 7종으로 총 113개 항목에 규격이 반환됐다. 구매 대수의 합계가 아니다.
+최종 수치 대조에서는 장비-018 개인정보접속관리 논리 서버와 장비-027/028/032 SAN 스위치의
+수량 4건이 원문과 달라 `needs-review`로 남았다. 113/113은 장비 항목 추출 범위이며
+규격 정확도 100%를 의미하지 않는다. 결과와 원응답은 `test-results/jabaewon-hw-20250930/full/`에 있다.
+
+`명칭 / 구분 / 규격 / 수량` 표는 `pdf_table_inventory.py`에서 CPU 규격과 수량 셀로 하위 서버를
+구별하며 RACK 부속 행을 서버로 세지 않는다. 기존 DB서버 메모리 증설처럼 용량 규격 하나만
+있는 명시적 증설 요구사항도 선별한다. 다음 쪽에 반복된 ID 전용 머리글은 이어지는 구간으로
+처리하되, 같은 ID에 새로운 명칭이 있으면 별도 표로 남긴다. 장비별 분석의 이미지 2쪽 요청은
+출력 공간을 확보하도록 컨텍스트 16K를 사용하고, 1쪽은 8K를 사용한다.
+
+2024년 청년 일경험 통합플랫폼 HWP 시험에서는 206쪽 PDF를 10.7초에 변환하고 47~49쪽의
+ECR-003/004/005를 선별했다. 운영 HCI, 테스트 HCI(DMZ), 외부 WEB 서버, DB 메모리 증설의
+4개 항목은 모두 반환됐다. **전체 규격 정확성 검증은 통과하지 못했다.** WEB 서버 CPU의 원본
+`3.2GHz`가 PDF 이미지/모델에서 `32GHz`로 나타났고 16core와 전원 이중화도 결과에서 빠졌다.
+HCI 표 하단 일부 조건은 PDF 페이지 밖으로 넘어갔다. DB 메모리는 원본에도 `52GB 증설`로
+적혀 있으며 512GB로 보정하지 않는다. 결과·원응답·변환 대조는 `test-results/youth-work-2024/`에 있다.
+
+KOTRIS 시험에서는 307쪽 중 ECR-006이 있는 188쪽 1쪽만 선택됐다. 개요의 19쪽 표와 목차,
+ECR-001~005의 공통·보증·SW 조건, ECR-007은 제외됐다. 다만 해당 PDF의 중첩 표 잘림은
+페이지 선별로 복구되지 않는다. 원문 텍스트에서 찾은 장비명과 이미지 분석 결과를 대조해
+누락을 표시하며, 개요 표의 다른 수량으로 자동 대체하지 않는다.
+상수도 ARS 표본도 174쪽에서 23~25쪽 3쪽으로 줄었다. KOTRIS의 최종 대조는 동일 이미지·모델·
+프롬프트로 앞서 받은 실제 Ollama 응답 캐시를 재사용했고, 예상 명칭 7종 중 5종 누락을 표시했다.
+새 원격 추론을 수행하거나 누락된 값을 만들어 채우지 않는다.
+
+이 자동 선별 경로는 **로컬 Ollama CLI**에 적용된다. 웹 `/api/ecr`의 Cloudflare 분석은 기존
+텍스트 구간 선별 경로를 유지한다. 회귀 검사: `python -X utf8 -B analyzer/test_pdf_selection.py`,
+`npm test` (`analyzer/analyze-pdf.test.js`).
+
+### 페이지를 직접 지정하는 검사
+
+`analyzer/ollama-pdf.js`는 **PDF 페이지 이미지를 직접** 로컬 Ollama에 보내는 별도 CLI다.
+운영 Worker의 `AI.toMarkdown` 경로와 구별한다. HWP/HWPX는 사이트의
+[브라우저 PDF 변환 화면](../public/convert.html)에서 변환·다운로드한 뒤 이 도구에 넣을 수 있다.
+한글 설치나 COM 자동화가 필요하지 않다. 브라우저 변환은 아래 절을 참고한다.
+
+RTX 3060 Laptop 6GB / RAM 32GB에서 설치된 `qwen3.5:4b`, `qwen3.5:2b`, `gemma4:e4b`를 비교했다.
+우선 모델은 `qwen3.5:4b`다. 2B는 같은 스위치 표에서 더 많은 규격을 누락했고 Gemma는 그 표에서
+빈 결과를 반환했다. 이는 소수 표본의 관찰이며 모델 전체 성능 순위가 아니다.
+[Qwen3.5 모델 목록](https://ollama.com/library/qwen3.5)은 이미지 입력을 지원하며,
+[Ollama 이미지 API](https://docs.ollama.com/capabilities/vision)에는 렌더링한 페이지를 전달한다.
+모델 다운로드·클라우드 대체 호출은 없고 `127.0.0.1:11434`만 사용한다.
+
+준비와 실행 예시(페이지 번호는 PDF의 1부터 시작하는 실제 페이지 순서):
+
+```powershell
+python -m pip install --target test-results/ecr-python pypdfium2==5.14.0 pillow==12.3.0 pypdf==6.19.0
+python -X utf8 analyzer/pdf-pages.py "samples/example.pdf" test-results/pdf-example --pages 10,11 --deps test-results/ecr-python
+node analyzer/ollama-pdf.js test-results/pdf-example/pages.json qwen3.5:4b test-results/pdf-result ECR-001
+```
+
+좌우에 인쇄 페이지 두 쪽을 붙인 PDF는 레이아웃을 확인하고 `--columns 2`로 나눈다.
+한 요청은 이미지 최대 2개, 컨텍스트 8K다. 대상 ID를 쉼표로 여러 개 주면 ID마다 순차 호출한다.
+원문 텍스트는 독립적인 대조에만 쓰며 LLM에는 보내지 않는다. 대상 ID를 생략할 수도 있지만,
+앞뒤 소프트웨어 표가 함께 있는 페이지는 대상 ID를 지정하는 편이 안전하다.
+전체 페이지의 대조용 텍스트는 pypdf로 읽는다. 브라우저 변환 PDF에서 PDFium이 일부 영문·숫자를
+빠뜨리는 현상이 확인됐기 때문이다. 좌우 패널은 다른 패널의 근거가 섞이지 않도록 PDFium의
+영역 추출을 유지한다. `--text-extractor`로 명시할 수 있으며 백엔드를 manifest에 기록한다.
+
+결과는 `report.json`, 실제 모델 응답은 요청 해시별 JSON에 저장한다. 모델·이미지·프롬프트·옵션이
+같으면 캐시를 재검증한다. 규격 중복과 다른 ID 응답은 제거/격리하고, 명시적인 수량 단위나
+NIC/HBA 표기 때문에 항목을 교정하면 `모델항목`에 원래 분류를 남긴다. 값은 원문 발췌를 유지한다.
+수량이 빠진 장비만 한 차례 추가 이미지 분석하며 ID·명칭·적용구분이 같고 PDF 텍스트에도
+일치하는 수량만 합친다. 재확인 실패·잘린 출력·미추출 번호는 숨기지 않는다.
+
+`원문텍스트일치`는 문자열 대조일 뿐 표의 행·열 소속이나 완전성을 보증하지 않는다.
+따라서 `verified`는 항상 false, 규격은 `확인 필요`다. 스캔 PDF도 이미지 분석은 가능하지만
+텍스트 대조가 불가능하므로 별도 육안 검토가 필요하다.
+
+2026-10-05에 PDF 3개, 서로 다른 4페이지의 스위치·증설 서버·좌우 서버 표와 비장비 표를 검사했다.
+선택한 핵심 규격 23개에서 최초 보완 후 21개가 맞았고, 수량 재확인 추가 후 23개가 맞았다.
+비장비 데이터 이관 표는 최종 장비 결과에서 제외됐다. **이 수치는 직접 점검한 일부 필드의 결과이며
+308개 문서 전체의 정확도나 누락 없음으로 확대하지 않는다.** 자세한 원문·응답·점검 기준은
+Git 제외 경로 `test-results/ecr-vision/`에 있다.
+
+```powershell
+node tools/eval-pdf-vision.cjs test-results/ecr-vision/cases.json qwen3.5:4b test-results/ecr-vision/evaluation
+```
+
+평가 입력은 `name`, `manifest`(cases.json 기준 상대 경로), `targetIds`, `ids`(기대 결과 번호),
+`facts` 배열이다. 각 기준은 `{id, field, contains: ["256GB", "이상"]}`이며 필요하면 `scope`도 지정한다.
+음성 표본은 `ids: [], facts: []`로 명시한다. 점검 실패 시 종료 코드 1이다.
+
+별도의 전체 문서 진단 도구 `tools/extract-rfp-local.py` → `tools/eval-samples.mjs`는 LLM을 호출하지
+않고 로컬 텍스트로 운영 선별·분할 로직만 점검한다. PDF 이미지 분석을 대신하지 않는다.
+HWP는 olefile 0.47, PDF는 pypdf 6.19.0을 사용한다. 원문/변환 결과는 `samples/`·`test-results/`에 둔다.
+
 ## 첨부·ECR 파이프라인
 
 ECR 분석 형식 v2는 서버·스토리지·스위치별 `장비요약`을 담습니다. 랙(RACK), UPS, PC,
@@ -14,7 +163,8 @@ ECR 분석 형식 v2는 서버·스토리지·스위치별 `장비요약`을 담
 **운영 분석은 Cloudflare Worker에서 수행합니다.** 본공고의 ECR 규격 탭에서 PDF·Markdown·TXT를
 올리면 `/api/ecr`이 기존 `AI` 바인딩의 `@cf/qwen/qwen3-30b-a3b-fp8`을 호출합니다.
 별도 LLM API 키, 로컬 Ollama 서버, 분석용 PC가 필요하지 않습니다. PDF는 `AI.toMarkdown`으로
-원격 변환합니다. HWP/HWPX는 PDF로 저장한 후 올려야 하며 스캔 PDF의 OCR은 지원하지 않습니다.
+원격 변환합니다. HWP/HWPX는 업로드 전에 브라우저에서 PDF로 자동 변환합니다.
+스캔 PDF의 OCR은 지원하지 않습니다.
 파일은 8MB까지 받습니다. 길이는 모델에 보낼 분량, 즉 선별한 상세 표의 합계로 재며 12만 자까지
 허용합니다. 상세 표를 찾지 못한 문서는 전체 길이로 잽니다(원문 자체는 60만 자까지). 새 작업은 `ECR-001`, `장비-001`처럼 번호가
 붙은 상세 요구사항 표를 선별해 표별 최대 2,400자(600자 겹침)로 분석합니다. 목차·총괄표의

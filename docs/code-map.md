@@ -18,6 +18,7 @@
 | 자연어 응답 검증·적용 시점 | [nl-query.js](../public/nl-query.js) | [nl-query-ui.test.js](../test/nl-query-ui.test.js) |
 | AI 잠금·해제 | [ai-access.js](../public/ai-access.js) | [ai-access-ui.test.js](../test/ai-access-ui.test.js) |
 | ECR 업로드·중단·이번 결과 표시 | [ecr-ui.js](../public/ecr-ui.js) | ecr-load-ui, ecr-progress-ui |
+| 브라우저 HWP/HWPX → PDF·취소·다운로드 | [hwp-converter.js](../public/hwp-converter.js), hwp-worker.js, convert-ui.js, convert.html | hwp-converter, hwp-assets, ecr-hwp-ui, tools/browser-convert.cjs |
 | ECR 표·경고·원문 상세 | [ecr-view.js](../public/ecr-view.js) | ecr-view, exports |
 | 장비 요약·결과 검증 | [equipment.js](../public/equipment.js) | equipment, ecr-data |
 | 공고 링크·첨부·입찰 일정 | [notice-view.js](../public/notice-view.js) | notice-view |
@@ -61,6 +62,10 @@
 | 월별 봉인·복구·백필 계획 | collector/compact.js, restore-r2.js, backfill-plan.js |
 | 첨부 다운로드 | [downloader/attachments.js](../downloader/attachments.js) |
 | 기존 로컬 분석 | [analyzer/analyze.js](../analyzer/analyze.js) |
+| 로컬 Ollama PDF 이미지 분석·수량 재확인 | [analyzer/ollama-pdf.js](../analyzer/ollama-pdf.js), ollama-pdf.test.js |
+| PDF 장비 상세 구간·페이지 자동 선별 → 제한된 Ollama 분석 | [analyzer/pdf_selection.py](../analyzer/pdf_selection.py), [analyzer/analyze-pdf.js](../analyzer/analyze-pdf.js) |
+| 하위 장비·UNIX/HCI 행 목록 → 장비별 이미지 추출·누락 대조 | analyzer/pdf_inventory.py, pdf_table_inventory.py, device-vision.js, device-runner.js, ollama-local.js |
+| PDF 페이지 렌더링·실모델 표본 평가 | [analyzer/pdf-pages.py](../analyzer/pdf-pages.py), [tools/eval-pdf-vision.cjs](../tools/eval-pdf-vision.cjs) |
 | R2 업로드·삭제 계획 | [uploader/upload.js](../uploader/upload.js) |
 | 운영 스케줄·CI | [.github/workflows](../.github/workflows), [wrangler.jsonc](../wrangler.jsonc) |
 

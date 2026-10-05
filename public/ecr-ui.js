@@ -4,7 +4,8 @@
   function createEcr({
     model, state = { ecrBusy: false, aiUnlocked: false, ecrRun: 0 },
     $, numberOf, renderEcr, showAiAccess,
-    GongHttp = scope.GongHttp, EquipmentSummary = scope.EquipmentSummary
+    GongHttp = scope.GongHttp, EquipmentSummary = scope.EquipmentSummary,
+    converter = null
   } = {}) {
     // 분석 결과는 서버에 저장하지 않는다. 이번 분석 응답만 화면에 보여 준다.
     function loadEcr() {
@@ -18,6 +19,7 @@
     }
     function stopEcrAnalysis() {
       state.ecrRun++;
+      converter?.cancel();
       if (!state.ecrBusy) return;
       $("#ecr-stop-btn").disabled = true;
       $("#ecr-progress").textContent = "추가 분석을 중지했습니다. 이미 전송한 요청은 완료될 수 있으며 사용량이 발생할 수 있습니다. 요청 종료 후 같은 파일로 다시 시작하면 완료된 구간을 재사용합니다.";
@@ -29,7 +31,8 @@
       if (!file || row?.mode !== "bid") return;
       const run = ++state.ecrRun;
       const progress = (message) => { if (model.currentRow === row && run === state.ecrRun) $("#ecr-progress").textContent = message; };
-      if (file.size > 8 * 1024 * 1024) { progress("파일은 8MB까지 지원합니다."); return; }
+      const hwp = /\.hwpx?$/i.test(file.name);
+      if (!hwp && file.size > 8 * 1024 * 1024) { progress("파일은 8MB까지 지원합니다."); return; }
       state.ecrBusy = true;
       $("#ecr-stop-btn").hidden = false;
       $("#ecr-stop-btn").disabled = false;
@@ -38,13 +41,22 @@
       let completedParts = 0;
       try {
         progress("문서를 변환하고 있습니다.");
+        let upload = file, uploadName = file.name;
+        if (hwp) {
+          if (!converter) throw new Error("한글 변환기를 불러오지 못했습니다. 화면을 새로고침해 주세요.");
+          const result = await converter.convert(file, { onProgress: progress });
+          if (model.currentRow !== row || !state.aiUnlocked || run !== state.ecrRun) return;
+          upload = result.blob; uploadName = result.name;
+          if (upload.size > 8 * 1024 * 1024) throw new Error("변환된 PDF가 분석 제한(8MB)을 초과했습니다. PDF 변환 화면에서 내려받아 문서를 나누어 주세요.");
+          progress("PDF 변환 완료. 장비 규격 분석을 요청합니다.");
+        }
         const send = async (params, body) => {
           const { response, data } = await GongHttp.requestJson(`/api/ecr?${new URLSearchParams(params)}`, { method: "POST", body });
           if (data.locked) showAiAccess(false, data.message);
           if (!response.ok) throw new Error(data.message || "분석 요청 실패");
           return data;
         };
-        const job = await send({ action: "upload", notice: numberOf(row), name: file.name }, file);
+        const job = await send({ action: "upload", notice: numberOf(row), name: uploadName }, upload);
         const order = job.order || Array.from({ length: job.total }, (_, index) => index);
         for (let position = 0; position < order.length; position++) {
           const index = order[position];

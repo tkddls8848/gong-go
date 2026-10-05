@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#151a21">
+  <title>HWP·HWPX → PDF | 나라장터 조회</title>
+  <link rel="stylesheet" href="convert.css">
+</head>
+<body>
+  <main>
+    <nav><a href="/">← 공고 조회</a><span>로컬 문서 도구</span></nav>
+    <p class="eyebrow">설치 없이, 내 브라우저에서</p>
+    <h1>한글 문서를 PDF로</h1>
+    <p class="lead">HWP·HWPX 파일을 선택하면 이 기기에서 변환합니다.<br>문서가 서버로 전송되지 않고 AI 비용도 발생하지 않습니다.</p>
+    <form id="convert-form">
+      <label for="convert-file">변환할 한글 문서</label>
+      <input id="convert-file" type="file" accept=".hwp,.hwpx" required aria-describedby="convert-limit">
+      <p id="convert-limit" class="hint">한 번에 한 파일 · 최대 32MB / 400페이지</p>
+      <div class="actions">
+        <button id="convert-start" type="submit">PDF로 변환</button>
+        <button id="convert-cancel" type="button" class="secondary" hidden>변환 취소</button>
+        <a id="pdf-download" class="download" hidden>PDF 다운로드</a>
+      </div>
+      <p id="convert-status" role="status" aria-live="polite" aria-atomic="true">파일을 선택해 주세요. 변환 엔진과 글꼴은 첫 변환 때 불러옵니다.</p>
+    </form>
+    <aside>
+      <h2>변환 후 확인해 주세요</h2>
+      <p>대체 글꼴을 사용하므로 줄바꿈·표·쪽 배치가 한글 원본과 다를 수 있습니다. 복잡한 도형이나 수식이 있는 문서는 결과를 확인해 주세요. 암호 문서와 일부 한글 기능은 지원하지 않습니다.</p>
+      <p>다운로드한 PDF는 장비 규격 분석에 사용할 수 있습니다. 공고의 ECR 분석 화면에서도 한글 파일을 선택하면 자동 변환됩니다. ECR 분석 실행 시에는 변환된 PDF가 분석 서버로 전송됩니다.</p>
+    </aside>
+    <footer>Rust + WebAssembly · <a href="vendor/hwp-v0.2.2/LICENSE.txt">변환 엔진 라이선스</a> · <a href="vendor/hwp-v0.2.2/NOTICE.txt">제3자 고지</a> · <a href="vendor/hwp-v0.2.2/NanumGothic-OFL.txt">나눔고딕</a> · <a href="vendor/hwp-v0.2.2/NanumMyeongjo-OFL.txt">나눔명조</a></footer>
+  </main>
+  <script src="hwp-converter.js"></script>
+  <script src="convert-ui.js"></script>
+  <script src="convert-app.js"></script>
+</body>
+</html>

@@ -1,8 +1,34 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { requirementSections, priorityOrder, sourceLines } from "./ecr-source.js";
+import { requirementSections, requirementRanges, priorityOrder, sourceLines } from "./ecr-source.js";
 import { splitDocument, parseResult } from "./ecr.js";
 const document = `# 사업 소개\n일반 배경입니다.\n# 요구사항 총괄표\n| ECR-001 | 서버 |\n| 장비-002 | 스토리지 |\n# 상세 요구사항\n| 요구사항 고유번호 | ECR-001 |\n| 요구사항 명칭 | 업무 서버 |\n| 세부 내용 | 서버당 메모리 256GB 이상 |\n| 요구사항 고유번호 | SFR-001 |\n| 세부 내용 | 로그인 화면 |\n| 요구사항 고유번호 | 장비-002 |\n| 요구사항 명칭 | 스토리지 |\n| 세부 내용 | Usable 100TB 이상 |`;
+
+test("한글 기능 번호에서 장비 구간을 닫아 뒤쪽 기능 본문과 규격이 섞이지 않는다", () => {
+  const source = "장비-029-저장장치 교체\n요구사항 분류\n장비 요구사항\n요구사항 명칭\nNAS 스토리지\n요구사항 내용\nUsable 60TB 이상\n"
+    + "기능-001-공통\n요구사항 분류\n기능 요구사항\n요구사항 명칭\n응용 기능\n메모리 8GB\n" + "로그인 화면 개발\n".repeat(15000);
+  const [section] = requirementSections(source).sections;
+  assert.ok(!section.text.includes("로그인 화면"));
+  assert.ok(!section.text.includes("메모리 8GB"));
+  assert.equal(splitDocument(source).length, 1);
+  const [item] = parseResult({ response: { items: [{ id: "장비-029", name: "NAS 스토리지", kind: "스토리지", facts: [{ field: "메모리", from: 14, to: 14 }] }] } }, source, "rfp", 0);
+  assert.equal(item.장비요약[0].규격.length, 0, "다른 한글 요구사항의 규격도 가져오지 못한다");
+});
+
+test("요구사항명·명 칭·마크다운 셀 변형에서 소프트웨어 명칭을 정확히 읽는다", () => {
+  for (const label of ["요구사항명", "요구사항 명    칭", "요구 사항 명칭"]) {
+    const table = (id, name) => `요구사항 번호 ${id}\n${label}\n${name}\n세부 내용 CPU 8코어, 메모리 16GB\n`;
+    assert.deepEqual(requirementSections(table("ECR-001", "서버 RACK") + table("ECR-002", "NMS/SMS") + table("ECR-003", "NMS/SMS서버")).sections.map(s => s.id), ["ECR-003"], label);
+  }
+  const source = "| 요구사항 번호 | ECR-001 |\n| 요구사항 명칭 | NMS/SMS서버 | 분류 | 장비 |\n| 세부 내용 | CPU 8코어 |";
+  assert.deepEqual(requirementSections(source).sections.map(s => s.id), ["ECR-001"]);
+});
+
+test("본문의 한글 번호 참조는 새 요구사항 경계로 오인하지 않는다", () => {
+  const source = "요구사항 번호 장비-001\n요구사항 명칭 서버\n세부 내용 CPU 32코어\n기능-001 참조\n메모리 256GB\n";
+  assert.equal(requirementRanges(source).length, 1);
+  assert.ok(requirementSections(source).sections[0].text.includes("256GB"));
+});
 
 test("다른 요구사항의 원문 줄을 장비 규격으로 가져오면 제외한다", () => {
   const source = "요구사항 번호 ECR-001\n업무 서버\n메모리 256GB\n요구사항 번호 ECR-002\nDB 서버\n메모리 1024GB\n요구사항 번호 SFR-001\n화면 메모리 8GB";

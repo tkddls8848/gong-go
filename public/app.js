@@ -84,7 +84,8 @@ const { showAiAccess, refreshAiAccess, unlockAiAccess, lockAiAccess } =
   GongAiAccess.createAiAccess({ $, state: ecrState });
 const { renderEcr } = GongEcrView.createEcrView({ $, html });
 const { loadEcr, stopEcrAnalysis, startEcrAnalysis } = GongEcr.createEcr({
-  model, state: ecrState, $, numberOf, renderEcr, showAiAccess
+  model, state: ecrState, $, numberOf, renderEcr, showAiAccess,
+  converter: GongHwp.createConverter()
 });
 const { openModal, closeModal, selectTab, modalKeydown } = GongModal.createModal({
   model, $, modal, html, normalizeFiles, modalSubtitle, detailLink,
