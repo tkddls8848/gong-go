@@ -85,4 +85,5 @@ npx wrangler deploy --dry-run   # 번들을 바꿨을 때
 | CSV·인덱스·발주계획 제약 | [데이터 계약](docs/data-contracts.md) |
 | 품질 기준과 개선 기록 | [서비스 품질](docs/service-quality.md) |
 | 배포 검증과 되돌리기 | [출시 체크리스트](docs/release-checklist.md) |
+| 구조 감사와 정리 절차 | [리팩터링 1단계 감사](docs/refactoring-audit.md), [2단계 정리](docs/refactoring-cleanup.md) |
 | 과거 조사와 설계 결정 | [기술 기록 목록](docs/프로젝트-통합-문서.md) |
