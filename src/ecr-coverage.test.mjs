@@ -32,3 +32,13 @@ test("구형 작업 또는 상세 표 미식별은 누락 없음이 아니라 �
     assert.ok(result.warnings.length);
   }
 });
+
+test("재분석은 앞선 결과의 추출 번호를 이어받되 대상 목록 밖의 번호는 세지 않는다", () => {
+  const manifest = { expectedIds: ["ECR-001", "ECR-002", "ECR-003"], excludedIds: [] };
+  const items = [{ id: "ECR-002", 장비요약: [{ 규격: [{ 값: "100TB", 검증: "원문 확인" }] }], 불확실: [] }];
+  const result = compareCoverage(manifest, items, { matched: ["ECR-001", "ECR-009"], unexpected: ["ECR-X1"] });
+  assert.deepEqual(result.matchedIds, ["ECR-001", "ECR-002"]);
+  assert.deepEqual(result.missingIds, ["ECR-003"]);
+  assert.deepEqual(result.unexpectedIds, ["ECR-X1"]);
+  assert.equal(result.status, "partial");
+});

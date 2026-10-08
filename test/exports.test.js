@@ -45,9 +45,17 @@ test("내려받은 CSV는 머리글과 칸 수가 같다", () => {
   assert.equal(rows[2][link], "");
 });
 
-test("ECR CSV는 규격번호·요청내용·스펙·비고 네 열이다", async () => {
+test("ECR CSV는 규격번호·요청내용·스펙·비고·정규화 수치 다섯 열이다", async () => {
   const { rows } = await runEcrExport({ verified: true, ecr: [{ id: "ECR-001", 명칭: "웹서버", 장비요약: [{ 규격: [{ 항목: "CPU", 값: "16코어 이상" }, { 항목: "수량", 값: "2대" }] }] }] });
-  assert.deepEqual(rows, [["규격번호", "요청내용", "스펙", "비고"], ["ECR-001", "웹서버", "CPU: 16코어 이상\n수량: 2대", ""]]);
+  assert.deepEqual(rows, [["규격번호", "요청내용", "스펙", "비고", "정규화 수치"], ["ECR-001", "웹서버", "CPU: 16코어 이상\n수량: 2대", "", ""]]);
+});
+
+test("ECR CSV의 정규화 수치는 원문 수와 단위를 항목별로 적는다", async () => {
+  const { rows } = await runEcrExport({ verified: true, ecr: [{ id: "ECR-001", 명칭: "웹서버", 장비요약: [{ 규격: [
+    { 항목: "메모리", 값: "1,024GB 이상", 근거: "1,024GB 이상", 검증: "원문 확인", 정규화: [{ 수치: 1024, 단위: "GB", 조건: "이상" }] },
+    { 항목: "이중화", 값: "이중화", 근거: "이중화", 검증: "원문 확인" },
+  ] }] }] });
+  assert.equal(rows[1][4], "메모리: 1,024 GB 이상");
 });
 
 test("ECR CSV는 여러 장비의 규격을 장비 명칭으로 묶는다", async () => {
@@ -69,9 +77,9 @@ test("구형 ECR CSV도 기본규격 요구사항과 수량 0을 잃지 않는�
 
 test("ECR CSV는 미추출 번호를 행으로, 확인 필요·불확실을 비고로 남긴다", async () => {
   const { rows } = await runEcrExport({ verified: false, 누락: ["ECR-002"], coverage: { status: "partial", missingIds: ["ECR-002"] }, ecr: [{ id: "ECR-001", 불확실: ["다른 요구사항 근거 제외함"], 장비요약: [{ 규격: [{ 항목: "메모리", 값: "256GB 이상" }] }] }] });
-  for (const row of rows) assert.equal(row.length, 4);
+  for (const row of rows) assert.equal(row.length, 5);
   assert.equal(rows[1][3], "원문 확인 필요\n다른 요구사항 근거 제외함");
-  assert.deepEqual(rows[2], ["ECR-002", "", "", "미추출 — 원문 확인 필요"]);
+  assert.deepEqual(rows[2], ["ECR-002", "", "", "미추출 — 원문 확인 필요", ""]);
   assert.equal(rows.length, 3);
 });
 

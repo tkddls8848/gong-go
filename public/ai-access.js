@@ -17,6 +17,8 @@
       $("#ai-lock-btn").hidden = !unlocked;
       $("#ai-lock-btn").textContent = "AI 분석 다시 잠그기";
       $("#ecr-file").disabled = !unlocked || state.ecrBusy;
+      $("#ecr-attachment").disabled = !unlocked || state.ecrBusy;
+      $("#ecr-retry-btn").disabled = !unlocked || state.ecrBusy;
       $("#ecr-analyze-btn").disabled = !unlocked || state.ecrBusy;
       $("#ai-access-status").textContent = message || (unlocked ? "AI 분석 잠금이 해제되었습니다. 30분 후 자동으로 잠깁니다." : "AI 분석이 잠겨 있습니다. 전용 비밀번호를 입력하세요.");
     }

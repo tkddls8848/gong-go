@@ -29,10 +29,16 @@ async function main() {
       let csvRequests = 0, csvUnavailable = false, csvMalformed = false;
       page.on("worker", (worker) => searchWorkers.push(worker.url()));
       page.on("pageerror", (error) => errors.push(error.message));
-      let unlocked = false, stepCalls = 0, release, askCalls = 0, ecrReads = 0;
+      let unlocked = false, stepCalls = 0, release, askCalls = 0, ecrReads = 0, g2bRequests = 0;
+      const uploads = [];
       await context.route("**/*", async (route) => {
         const url = new URL(route.request().url());
         const json = (value, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
+        // 공고 첨부는 브라우저가 나라장터에서 직접 받는다. 실제 서버처럼 CORS를 열어 PDF 머리만 돌려준다.
+        if (url.hostname === "www.g2b.go.kr" && url.pathname === "/pn/pnp/pnpe/UntyAtchFile/downloadFile.do") {
+          g2bRequests++;
+          return route.fulfill({ status: 200, headers: { "access-control-allow-origin": "*", "content-type": "application/octet-stream" }, body: Buffer.from("%PDF-1.7\n%fixture\n") });
+        }
         if (url.hostname !== "gong-go.test") { unknown.push(url.href); return route.abort(); }
         if (url.pathname === "/data/index.json") return json({ files: [{ path: "bid/2026/09.csv.gz", mode: "bid", begin: "2026-09-01", end: "2026-09-30", count: 4 }], updatedAt: "2026-09-25T00:00:00Z" });
         if (url.pathname === "/data/bid/2026/09.csv.gz") { csvRequests++; return csvUnavailable ? route.fulfill({ status: 503, body: "fixture unavailable" }) : route.fulfill({ body: csvMalformed ? gzipSync("<html>invalid CSV source</html>") : csvFixture, contentType: "application/gzip" }); }
@@ -51,7 +57,7 @@ async function main() {
         if (url.pathname === "/api/ecr") {
           if (route.request().method() === "GET") { ecrReads++; return json({ message: "POST만 지원합니다." }, 405); }
           assert.ok(unlocked, "locked screen must not send AI work");
-          if (url.searchParams.get("action") === "upload") return json({ id: "fixture-job", total: 2, order: [0, 1], focused: true });
+          if (url.searchParams.get("action") === "upload") { uploads.push(Object.fromEntries(url.searchParams)); return json({ id: "fixture-job", total: 2, order: [0, 1], focused: true }); }
           stepCalls++;
           if (stepCalls === 1) await new Promise((resolve) => { release = resolve; });
           return json(url.searchParams.get("finalize") === "1" ? { analysis, completed: 2, total: 2 } : { completed: 1, total: 2 });
@@ -120,14 +126,16 @@ async function main() {
         // 검색 데이터 파이프라인이 아니라 실제 ECR 진입 동선 검증용 공고 fixture다.
         await page.evaluate(() => {
           setMode("bid");
-          model.filtered = [{ mode: "bid", announcementNumber: "R26-test", title: "테스트 서버 도입 제안요청", institution: "검증기관", detailUrl: "javascript:alert(1)", files: [null, { name: "실행 불가", url: "javascript:alert(1)" }, { name: "제안요청서.pdf", url: "https://example.go.kr/rfp.pdf" }] }];
+          model.filtered = [{ mode: "bid", announcementNumber: "R26-test", title: "테스트 서버 도입 제안요청", institution: "검증기관", detailUrl: "javascript:alert(1)", files: [null, { name: "실행 불가", url: "javascript:alert(1)" }, { name: "제안요청서.pdf", url: "https://example.go.kr/rfp.pdf" }, { name: "제안요청서_원본.pdf", url: "https://www.g2b.go.kr/pn/pnp/pnpe/UntyAtchFile/downloadFile.do?bidPbancNo=R26-test&bidPbancOrd=000&fileType=&fileSeq=3&prcmBsneSeCd=03" }] }];
           renderRows(model.filtered);
         });
         await page.locator(".ecr-entry-btn").click();
         assert.match(await page.locator("#modal-file-list").textContent(), /첨부 링크 2건을 제외/);
         assert.match(await page.locator("#modal-file-list").textContent(), /상세 링크 형식/);
-        assert.equal(await page.locator("#modal-file-list a").count(), 1);
-        assert.equal(await page.locator("#modal-file-list a").getAttribute("href"), "https://example.go.kr/rfp.pdf");
+        assert.equal(await page.locator("#modal-file-list a").count(), 2);
+        assert.equal(await page.locator("#modal-file-list a").first().getAttribute("href"), "https://example.go.kr/rfp.pdf");
+        // 나라장터 주소의 첨부만 바로 분석 후보에 오른다.
+        assert.deepEqual(await page.locator("#ecr-attachment option").allTextContents(), ["제안요청서_원본.pdf", "내 PC의 파일을 직접 선택"]);
         await page.waitForFunction(() => document.querySelector("#ai-access-status").textContent.includes("전용 비밀번호"));
         assert.equal(await page.locator(".modal").getAttribute("role"), "dialog");
         assert.equal(await page.evaluate(() => document.activeElement.id), "modal-close");
@@ -160,6 +168,20 @@ async function main() {
         await page.locator("#ecr-analyze-btn").click();
         await page.waitForFunction(() => document.querySelector("#ecr-progress").textContent.includes("분석이 완료"));
         assert.match(await page.locator("#ecr-content").textContent(), /미추출 1개/);
+        assert.equal(g2bRequests, 0, "직접 고른 파일이 있으면 첨부를 받지 않는다");
+        // 누락 번호 재분석: 같은 본문으로 대상 번호만 보내고, 찾지 못하면 다시 권하지 않는다.
+        assert.equal(await page.locator("#ecr-retry-btn").innerText(), "누락 번호 다시 분석 (1개)");
+        stepCalls = 2;
+        await page.locator("#ecr-retry-btn").click();
+        await page.waitForFunction(() => document.querySelector("#ecr-progress").textContent.includes("다시 분석해도 규격을 찾지 못했습니다"));
+        assert.equal(uploads.at(-1).focus, "ECR-001");
+        assert.equal(await page.locator("#ecr-retry-btn").isHidden(), true);
+        // 파일을 비우면 고른 공고 첨부를 나라장터에서 받아 같은 분석 경로에 넣는다.
+        await page.locator("#ecr-file").setInputFiles([]);
+        await page.locator("#ecr-analyze-btn").click();
+        await page.waitForFunction(() => document.querySelector("#ecr-progress").textContent.includes("분석이 완료"));
+        assert.equal(g2bRequests, 1);
+        assert.equal(uploads.at(-1).name, "제안요청서_원본.pdf");
         await page.locator("#ai-lock-btn").click();
         await page.waitForFunction(() => document.querySelector("#ai-access-status").textContent.includes("전용 비밀번호"));
         assert.equal(await page.locator("#ecr-analyze-btn").isDisabled(), true);
@@ -217,7 +239,7 @@ async function main() {
         const chunks = [];
         for await (const chunk of await download.createReadStream()) chunks.push(chunk);
         const csv = Buffer.concat(chunks).toString("utf8");
-        assert.match(csv, /ECR-001,,,미추출 — 원문 확인 필요/);
+        assert.match(csv, /ECR-001,,,미추출 — 원문 확인 필요,/);
         assert.match(csv, /ECR-001/);
         assert.match(csv, /추출된 ECR 없음/);
         assert.match(csv, /원문 확인 필요/);
@@ -236,12 +258,12 @@ async function main() {
         assert.equal(detailedCsv.charCodeAt(0), 0xfeff, "Excel UTF-8 BOM must be present");
         const records = parseCsv(detailedCsv);
         assert.equal(records.length, 2);
-        for (const record of records) assert.deepEqual(Object.keys(record), ["규격번호", "요청내용", "스펙", "비고"]);
+        for (const record of records) assert.deepEqual(Object.keys(record), ["규격번호", "요청내용", "스펙", "비고", "정규화 수치"]);
         assert.equal(records[0]["스펙"], '[웹 "이중화", 서버]\n수량: 2대\n\n[공유 스토리지]\n수량: 1식\n\n[추가 장비]\n추출 규격 없음');
         assert.equal(records[0]["비고"], "원문 확인 필요");
         assert.equal(records[1]["요청내용"], "'=1+1", "spreadsheet formula must remain text");
         assert.equal(records[1]["스펙"], '메모리: 256GB, "이상"\n조건 유지 (수량 0)');
-        console.log(`PASS ECR CSV ${viewport.width}: actual download, 4 columns, multi-equipment ownership, newlines/quotes, legacy specs, formula protection`);
+        console.log(`PASS ECR CSV ${viewport.width}: actual download, 5 columns, multi-equipment ownership, newlines/quotes, legacy specs, formula protection`);
         await page.locator("#modal-close").click();
         await page.evaluate(() => loadIndex(false));
         assert.doesNotMatch(await page.locator("#data-count").innerText(), /ECR/);

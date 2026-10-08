@@ -17,7 +17,9 @@
 | 수집 시작·폴링·완료 반영 | [refresh.js](../public/refresh.js) | refresh-start, refresh-race, refresh-finish |
 | 자연어 응답 검증·적용 시점 | [nl-query.js](../public/nl-query.js) | [nl-query.test.js](../test/nl-query.test.js) |
 | AI 잠금·해제 | [ai-access.js](../public/ai-access.js) | [ai-access.test.js](../test/ai-access.test.js) |
-| ECR 업로드·중단·이번 결과 표시 | [ecr-ui.js](../public/ecr-ui.js) | ecr-load, ecr-progress |
+| ECR 업로드·중단·이번 결과 표시·누락 재분석 실행 | [ecr-ui.js](../public/ecr-ui.js) | ecr-load, ecr-progress, ecr-rerun |
+| 공고 첨부 후보 정렬·나라장터 직접 다운로드 | [ecr-attachments.js](../public/ecr-attachments.js) | ecr-attachments, ecr-rerun |
+| 누락 번호 재분석 대상·직전 결과와 병합 | [ecr-retry.js](../public/ecr-retry.js) | ecr-retry, ecr-rerun |
 | 브라우저 HWP/HWPX → PDF·취소·다운로드 | [hwp-converter.js](../public/hwp-converter.js), hwp-worker.js, convert-ui.js, convert.html | hwp-converter, hwp-assets, ecr-hwp, tools/browser-convert.cjs |
 | ECR 표·경고·원문 상세 | [ecr-view.js](../public/ecr-view.js) | ecr-view, exports |
 | 장비 요약·결과 검증 | [equipment.js](../public/equipment.js) | equipment, ecr-data |
@@ -52,6 +54,7 @@ test/의 파일명 규칙은 셋입니다 — 모듈 단위는 `<모듈>.test.js
 | 자연어 스키마·규칙 파서·날짜 해석 | [ask.js](../src/ask.js) |
 | ECR 작업·추론·결과 응답(저장 없음) | [ecr.js](../src/ecr.js) |
 | ECR 원문 선별·번호 대조·오류 | ecr-source.js, ecr-coverage.js, ecr-errors.js |
+| ECR 규격 수치·단위 정규화(모델 호출 없음) | ecr-normalize.js |
 | AI 권한·예산 | ai-access.js, ai-budget.js |
 | KST 날짜 해석 공용 | [kst-date.js](../src/kst-date.js) |
 | 범용 응답 헬퍼(JSON·HTML·리다이렉트·상수 시간 비교) | [http.js](../src/http.js) |

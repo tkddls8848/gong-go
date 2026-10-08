@@ -353,3 +353,57 @@ test("보존 기간이 지난 작업 자료와 예전에 저장한 결과를 걷
   assert.deepEqual([...store.store.keys()], ["_ecr/jobs/fresh.json"]);
   assert.equal(await purgeStaleJobs({ DATA: store }, 지금), 0, "갓 만든 자료는 건드리지 않는다");
 });
+
+const twoTables = "ECR-001 서버 도입\n서버당 메모리 256GB 이상을 제공한다.\nECR-002 스토리지 도입\nUsable 용량 100TB 이상을 제공한다.";
+test("누락 번호 재분석은 그 번호의 표만 대상 번호를 못박아 다시 묻고 문서 전체 기준으로 대조한다", async () => {
+  const calls = [];
+  const env = { DATA: bucket(), AI: { run: async (model, options) => {
+    calls.push(options);
+    return { choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ items: [{ id: "ECR-002", kind: "스토리지", name: "스토리지 도입", facts: [{ field: "Usable 용량", from: 2, to: 2 }] }] }) } }] };
+  } } };
+  const upload = await handleEcr(request({ action: "upload", notice: "R26-777", name: "rfp.md", focus: "ECR-002", matched: "ECR-001" }, twoTables), env);
+  assert.equal(upload.status, 200);
+  const job = await upload.json();
+  assert.equal(job.total, 1, "대상 번호의 표만 자른다");
+  assert.deepEqual(job.retry, ["ECR-002"]);
+  const { analysis } = await (await handleEcr(request({ action: "step", id: job.id, index: 0, finalize: "1" }), env)).json();
+  assert.match(calls[0].messages[1].content, /^\[대상 요구사항 번호: ECR-002\]/);
+  assert.deepEqual(calls[0].response_format.json_schema.properties.items.items.properties.id.enum, ["ECR-002"], "다른 번호를 돌려줄 수 없게 한다");
+  assert.equal(analysis.ecr.length, 1);
+  assert.equal(analysis.coverage.status, "matched", "이어받은 번호와 합쳐 문서 전체를 대조한다");
+  assert.deepEqual(analysis.coverage.matchedIds, ["ECR-001", "ECR-002"]);
+  assert.deepEqual(analysis.retry, { focus: ["ECR-002"], recovered: ["ECR-002"] });
+  assert.deepEqual(analysis.ecr[0].장비요약[0].규격[0].정규화, [{ 수치: 100, 단위: "TB", 조건: "이상" }]);
+  assert.deepEqual([...env.DATA.store.keys()].filter((key) => key.startsWith("_ecr/")), [], "재분석도 끝나면 작업 자료를 지운다");
+});
+
+test("재분석 대상 번호가 형식에 맞지 않거나 문서에 표가 없으면 모델을 부르지 않는다", async () => {
+  let calls = 0;
+  const env = { DATA: bucket(), AI: { run: async () => { calls++; return modelResult(); } } };
+  const bad = await handleEcr(request({ action: "upload", notice: "R26-778", name: "rfp.md", focus: "ECR-001;DROP" }, twoTables), env);
+  assert.equal(bad.status, 400);
+  const absent = await handleEcr(request({ action: "upload", notice: "R26-778", name: "rfp.md", focus: "ECR-009" }, twoTables), env);
+  assert.equal(absent.status, 422);
+  assert.match((await absent.json()).message, /찾지 못했습니다/);
+  assert.equal(calls, 0);
+});
+
+test("전체 분석과 재분석은 같은 파일이어도 서로 다른 작업이다", async () => {
+  const env = { DATA: bucket(), AI: { run: async () => modelResult() } };
+  const whole = await (await handleEcr(request({ action: "upload", notice: "R26-779", name: "rfp.md" }, twoTables), env)).json();
+  const retry = await (await handleEcr(request({ action: "upload", notice: "R26-779", name: "rfp.md", focus: "ECR-002" }, twoTables), env)).json();
+  assert.notEqual(whole.id, retry.id);
+  assert.equal(whole.retry, undefined);
+});
+
+test("모델이 번호의 대시·공백을 바꿔 적어도 원문 번호로 되돌리고 새 번호는 만들지 않는다", () => {
+  const reply = (id) => ({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ items: [{ id, kind: "서버", name: "서버 도입", facts: [{ field: "메모리", from: 2, to: 2 }] }] }) } }] });
+  const [dashed] = parseResult(reply("ECR–001"), source, "rfp.md", 0);
+  assert.equal(dashed.id, "ECR-001");
+  assert.deepEqual(dashed.불확실, []);
+  const [spaced] = parseResult(reply("ECR- 001"), source, "rfp.md", 0);
+  assert.equal(spaced.id, "ECR-001");
+  const [other] = parseResult(reply("ECR-003"), source, "rfp.md", 0);
+  assert.equal(other.id, "ECR-003");
+  assert.ok(other.불확실.includes("요구사항 ID 원문 확인 필요"));
+});

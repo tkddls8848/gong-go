@@ -154,3 +154,15 @@ test("공용 HTML 이스케이프로 바꿔도 숫자 0 ID는 남기고 없는 �
   assert.match(output, /DB <small><\/small>/);
   assert.ok(!output.includes("undefined") && !output.includes("null"));
 });
+
+test("정규화 수치는 원문 값 옆에 보조로 그리고 형식이 어긋나면 거절한다", () => {
+  const { render, validate } = require("../public/equipment.js");
+  const data = { schemaVersion: 2, ecr: [{ id: "ECR-001", 장비요약: [{ 종류: "서버", 명칭: "웹서버", 규격: [{ 항목: "메모리", 값: "512GB 이상", 근거: "512GB 이상", 검증: "원문 확인", 정규화: [{ 수치: 512, 단위: "GB", 조건: "이상" }, { 수치: 2, 단위: "EA", 조건: "" }] }] }] }] };
+  assert.equal(validate(data), data);
+  assert.match(render(data), /<span class="spec-norm"[^>]*>512 GB 이상 · 2 EA<\/span>/);
+  for (const bad of [{ 수치: "512", 단위: "GB", 조건: "" }, { 수치: 512, 단위: "", 조건: "" }, { 수치: Infinity, 단위: "GB", 조건: "" }, "512GB"]) {
+    const broken = structuredClone(data);
+    broken.ecr[0].장비요약[0].규격[0].정규화 = [bad];
+    assert.throws(() => validate(broken), /형식이 올바르지 않습니다/);
+  }
+});

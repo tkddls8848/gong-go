@@ -34,6 +34,8 @@
         for (const fact of entry.규격) {
           for (const key of ["항목", "값", "근거", "검증"]) if (fact[key] !== undefined && typeof fact[key] !== "string") fail();
           if (fact.검증 === "원문 확인" && ![fact.항목, fact.값, fact.근거].every(presentText)) fail();
+          if (fact.정규화 !== undefined && !(Array.isArray(fact.정규화) && fact.정규화.every((mention) => object(mention)
+            && Number.isFinite(mention.수치) && presentText(mention.단위) && typeof mention.조건 === "string"))) fail();
         }
       }
     }
@@ -60,6 +62,9 @@
   const entriesOf = (items, kind) => items.flatMap((item) => (item.장비요약 || []).filter((entry) => entry && entry.종류 === kind && Array.isArray(entry.규격)).map((entry) => ({ item, entry })));
   const specsOf = (entry) => entry.규격.filter((fact) => fact && typeof fact === "object");
   const needsCheck = (fact) => fact.검증 !== "원문 확인";
+  // 원문에서 읽은 수치·단위. 환산·합산하지 않은 값이므로 원문 값 옆에 보조로만 둔다.
+  const mentionText = (mention) => `${mention.수치.toLocaleString("ko-KR")} ${mention.단위}${mention.조건 ? ` ${mention.조건}` : ""}`;
+  const normalized = (fact) => Array.isArray(fact.정규화) ? fact.정규화.map(mentionText).join(" · ") : "";
   // 불확실 메시지 중 "제외함"이 든 것만 모은다. 표에서 무엇을 뺐는지 모르면 표 자체를 믿을 수 없다.
   const droppedOf = (items) => items.flatMap((item) => (item.불확실 || []).filter((text) => typeof text === "string" && text.includes("제외함")).map((text) => ({ id: item.id, text })));
   function droppedBlock(items) {
@@ -104,13 +109,14 @@
           return facts.map((fact) => {
             // 검증 상태를 값 뒤 작은 글씨 하나로만 두면 훑을 때 놓친다. 줄 표식·배지·줄 바탕 셋으로 가른다.
             const warn = needsCheck(fact);
-            return `<tr class="spec-row ${warn ? "unverified" : "verified"}"><th scope="row">${escape(field)}</th><td><span class="spec-value">${escape(fact.값 || "미기재")}</span><span class="spec-mark ${warn ? "warn" : "ok"}">${warn ? "확인 필요" : "원문 확인"}</span></td><td><details><summary>${warn ? "추출 근거 확인" : "대조된 근거 보기"}</summary><div class="detail-text">${escape(fact.근거 || "근거 없음")}</div></details></td></tr>`;
+            const numbers = normalized(fact);
+            return `<tr class="spec-row ${warn ? "unverified" : "verified"}"><th scope="row">${escape(field)}</th><td><span class="spec-value">${escape(fact.값 || "미기재")}</span><span class="spec-mark ${warn ? "warn" : "ok"}">${warn ? "확인 필요" : "원문 확인"}</span>${numbers ? `<span class="spec-norm" title="원문에서 읽은 수치·단위입니다. 환산·합산하지 않았습니다.">${escape(numbers)}</span>` : ""}</td><td><details><summary>${warn ? "추출 근거 확인" : "대조된 근거 보기"}</summary><div class="detail-text">${escape(fact.근거 || "근거 없음")}</div></details></td></tr>`;
           }).join("");
         }).join("")}</tbody></table></div><details><summary>ECR 원문 보기 · ${escape(item.id)}</summary><div class="detail-text">${escape(item.세부내용_원문 || "원문 없음")}</div></details></article>`;
       }).join("")}</section>`;
     });
     return `<div class="equipment-summaries">${legacyWarning}${countsBlock(groups)}<p class="hint">${escape(coverageText)}</p><p class="hint">원문 표현과 조건을 그대로 표시합니다. 미기재는 추출값이 없다는 뜻이며, 근거 대조는 규격 해석의 정확성을 보증하지 않습니다.</p>${dropped}${(data.verification?.warnings || []).map((warning) => `<p class="warning-text">${escape(warning)}</p>`).join("")}${sections.join("")}</div>`;
   }
-  if (typeof module !== "undefined" && module.exports) module.exports = { render, validate, isVerified };
-  else root.EquipmentSummary = { render, validate, isVerified };
+  if (typeof module !== "undefined" && module.exports) module.exports = { render, validate, isVerified, normalized };
+  else root.EquipmentSummary = { render, validate, isVerified, normalized };
 })(typeof globalThis !== "undefined" ? globalThis : this);

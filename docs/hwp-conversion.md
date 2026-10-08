@@ -15,7 +15,7 @@ PDF만 기존 `/api/ecr`에 전송한다. 기존 웹 분석은 Cloudflare 경로
 - `public/hwp-converter.js`: 변환 API, 1건 실행, 입력·출력 제한, 90초 제한, 취소.
 - `public/hwp-worker.js`: HWP 5 OLE/HWPX ZIP 시그니처 검사, 페이지 검사, Rust/WASM 실행.
 - `public/convert-ui.js`·`convert-app.js`: 다운로드 URL 수명과 화면 조립.
-- `public/ecr-ui.js`: HWP일 때만 변환을 기다린다. 취소·공고 변경·AI 잠금 후에는 업로드하지 않는다.
+- `public/ecr-ui.js`: HWP일 때만 변환을 기다린다. 취소·공고 변경·AI 잠금 후에는 업로드하지 않는다. 공고 첨부에서 받은 HWP도 같은 경로를 탄다. 누락 번호 재분석은 변환한 PDF를 다시 보내므로 다시 변환하지 않는다.
 - `public/vendor/hwp-v0.2.2/`: 수정하지 않은 rhwptopdf 배포 자산과 나눔 글꼴, 라이선스.
 
 엔진은 [rhwptopdf v0.2.2](https://github.com/sanguneo/rhwptopdf/releases/tag/v0.2.2)를 사용한다.

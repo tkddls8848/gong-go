@@ -83,9 +83,9 @@ const ecrState = { ecrBusy: false, aiUnlocked: false, ecrRun: 0 };
 const { showAiAccess, refreshAiAccess, unlockAiAccess, lockAiAccess } =
   GongAiAccess.createAiAccess({ $, state: ecrState });
 const { renderEcr } = GongEcrView.createEcrView({ $, html });
-const { loadEcr, stopEcrAnalysis, startEcrAnalysis } = GongEcr.createEcr({
-  model, state: ecrState, $, numberOf, renderEcr, showAiAccess,
-  converter: GongHwp.createConverter()
+const { loadEcr, stopEcrAnalysis, startEcrAnalysis, retryMissing } = GongEcr.createEcr({
+  model, state: ecrState, $, numberOf, renderEcr, showAiAccess, html,
+  converter: GongHwp.createConverter(), attachments: GongEcrAttachments.createAttachmentSource()
 });
 const { openModal, closeModal, selectTab, modalKeydown } = GongModal.createModal({
   model, $, modal, html, normalizeFiles, modalSubtitle, detailLink,
@@ -98,6 +98,7 @@ $("#ai-unlock-form").onsubmit = unlockAiAccess;
 $("#ai-lock-btn").onclick = lockAiAccess;
 $("#ecr-stop-btn").onclick = stopEcrAnalysis;
 $("#ecr-upload-form").onsubmit = startEcrAnalysis;
+$("#ecr-retry-btn").onclick = retryMissing;
 function modeOf(file) { return file.mode || String(file.path || "").split("/")[0]; }
 
 if (location.protocol === "file:") { $("#status").textContent = "배포된 서비스 주소에서 접속해 주세요."; renderRows([]); }
