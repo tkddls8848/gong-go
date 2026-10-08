@@ -231,6 +231,8 @@ input:not([type="checkbox"]):focus, select:focus { outline: none; border-color: 
 .ghost-btn { border-color: transparent; background: none; color: var(--text-2); }
 .ghost-btn:hover { background: var(--bg-hover); color: var(--text); }
 .btn-sm { height: 30px; padding: 0 11px; font-size: 12px; }
+.rail-convert-btn { margin-top: 10px; }
+.rail-convert-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .link-btn { color: var(--link); font-size: 12px; font-weight: 500; }
 .link-btn:hover { color: var(--link-hover); }
 .icon-btn { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 26px; height: 26px; border-radius: 7px; color: var(--muted); }
