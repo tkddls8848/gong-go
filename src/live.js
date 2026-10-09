@@ -16,7 +16,9 @@ const LIVE_SERVICES = {
   },
   bid: {
     base: "/1230000/ad/BidPublicInfoService",
-    ops: { "물품": "getBidPblancListInfoThngPPSSrch", "외자": "getBidPblancListInfoFrgcptPPSSrch", "용역": "getBidPblancListInfoServcPPSSrch", "공사": "getBidPblancListInfoCnstwkPPSSrch" },
+    // "제안요청정보"는 업무구분이 아니라 e발주 첨부파일정보다. 최근 공고의 제안요청서 첨부를 화면이
+    // 공고 행에 붙인다(public/rows.js eorderFiles). 수집기는 같은 오퍼레이션을 collector/api.js에서 부른다.
+    ops: { "물품": "getBidPblancListInfoThngPPSSrch", "외자": "getBidPblancListInfoFrgcptPPSSrch", "용역": "getBidPblancListInfoServcPPSSrch", "공사": "getBidPblancListInfoCnstwkPPSSrch", "제안요청정보": "getBidPblancListInfoEorderAtchFileInfo" },
   },
   plan: {
     base: "/1230000/ao/OrderPlanSttusService",

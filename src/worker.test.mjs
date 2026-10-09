@@ -702,3 +702,16 @@ test("고급검색은 게이트 뒤에 있다", async () => {
   assert.match(response.headers.get("Content-Type"), /text\/html/);
   assert.equal(called, false);
 });
+
+test("최신 조회는 본공고에서만 제안요청정보(e발주 첨부파일정보)를 같은 경로로 묻는다", async (t) => {
+  const calls = stubFetch(t, () => jsonResponse({ response: { body: { items: [] } } }));
+  const env = envOf({ SERVICE_KEY: "key" });
+  const ok = await authed("/api/live?mode=bid&businessType=제안요청정보&begin=2026-08-16&end=2026-08-17&pageNo=1", {}, env);
+  assert.equal(ok.status, 200);
+  const target = new URL(calls[0].url);
+  assert.equal(target.pathname, "/1230000/ad/BidPublicInfoService/getBidPblancListInfoEorderAtchFileInfo");
+  assert.equal(target.searchParams.get("inqryDiv"), "1");
+  assert.equal(target.searchParams.get("inqryBgnDt"), "202608160000");
+  assert.equal((await authed("/api/live?mode=pre&businessType=제안요청정보&begin=2026-08-16&end=2026-08-17", {}, env)).status, 400);
+  assert.equal(calls.length, 1);
+});

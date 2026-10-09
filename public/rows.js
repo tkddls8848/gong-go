@@ -281,5 +281,29 @@
     finally { clearTimeout(timer); init?.signal?.removeEventListener("abort", cancel); }
   }
 
-  scope.GongRows = { parseTable, columnsFor, first, makeCriteria, accepts, buildRow, scanText, scanObjects, fetchCsvText, norm, dateKey, typeMatches };
+  // 실시간 조회로 받은 e발주 첨부파일정보 행을 공고번호별 첨부 목록으로 묶는다. 저장 CSV의
+  // eorderAtchFile* 계열과 같은 규칙이다(collector/eorder-files.js): 가장 높은 차수만, 같은 URL은 한 번,
+  // 제안요청서를 앞에 두고 첨부 순번 순, 최대 10개.
+  function eorderFiles(items) {
+    const groups = new Map();
+    for (const item of Array.isArray(items) ? items : []) {
+      const number = String(item?.bidNtceNo || "").trim(), url = String(item?.eorderAtchFileUrl || "").trim();
+      if (!number || !/^https?:/i.test(url)) continue;
+      const ord = Number(String(item.bidNtceOrd ?? "").replace(/\D/g, "") || 0), group = groups.get(number);
+      if (group && group.ord > ord) continue;
+      const file = { url, name: String(item.eorderAtchFileNm || "").trim() || guessName(url, 0), source: "제안요청정보", kind: String(item.eorderDocDivNm || "").trim(), sno: Number(item.atchSno) || 0 };
+      if (!group || group.ord < ord) groups.set(number, { ord, files: [file] });
+      else if (!group.files.some((known) => known.url === url)) group.files.push(file);
+    }
+    const result = new Map();
+    for (const [number, group] of groups) {
+      result.set(number, group.files
+        .sort((a, b) => (b.kind === "제안요청서") - (a.kind === "제안요청서") || a.sno - b.sno)
+        .slice(0, RFP_SERIES.count)
+        .map(({ sno, ...file }) => file));
+    }
+    return result;
+  }
+
+  scope.GongRows = { eorderFiles, parseTable, columnsFor, first, makeCriteria, accepts, buildRow, scanText, scanObjects, fetchCsvText, norm, dateKey, typeMatches };
 })(typeof self === "undefined" ? globalThis : self);

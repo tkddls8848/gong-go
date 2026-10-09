@@ -95,10 +95,29 @@
       return liveItems(data);
     }
 
-    function mergeRows(storedRows, liveRows) {
+    // 실시간 공고 목록 응답에는 제안요청정보 첨부가 없다. 저장 행을 실시간 행으로 바꿀 때 저장 행의
+    // 제안요청정보 첨부를 잇고, 실시간으로 받은 제안요청정보(eorder)가 있으면 그것을 쓴다.
+    const isRfp = (file) => file?.source === "제안요청정보";
+    function mergeRows(storedRows, liveRows, eorder = new Map()) {
       const rows = new Map(storedRows.map((row) => [`${row.mode}:${numberOf(row)}`, row]));
-      for (const row of liveRows) rows.set(`${row.mode}:${numberOf(row)}`, { ...row, live: true });
+      for (const row of liveRows) {
+        const key = `${row.mode}:${numberOf(row)}`, stored = rows.get(key);
+        const kept = (stored?.files || []).filter(isRfp);
+        rows.set(key, { ...row, live: true, files: [...(row.files || []).filter((file) => !isRfp(file)), ...kept] });
+      }
+      if (eorder.size) {
+        for (const [key, row] of rows) {
+          const files = row.mode === "bid" ? eorder.get(String(numberOf(row)).trim()) : null;
+          if (files) rows.set(key, { ...row, files: [...(row.files || []).filter((file) => !isRfp(file)), ...files] });
+        }
+      }
       return [...rows.values()].sort(byPublishedDesc);
+    }
+    // 최근 공고의 제안요청정보 첨부. 보조 정보라 실패해도 저장 결과와 실시간 공고는 그대로 보인다.
+    async function fetchLiveEorder(span, signal) {
+      const first = await fetchLivePage("bid", "제안요청정보", span, 1, signal);
+      const rest = await Promise.all(Array.from({ length: first.totalPages - 1 }, (_, index) => fetchLivePage("bid", "제안요청정보", span, index + 2, signal)));
+      return Rows.eorderFiles([...first.items, ...rest.flatMap((page) => page.items)]);
     }
 
     async function mergeLiveResults({ mode, begin, end, criteria, version, storedRows, storedStatus }) {
@@ -109,15 +128,19 @@
       const parsed = Rows.makeCriteria(criteria);
       const types = criteria.type ? [criteria.type] : LIVE_TYPES;
       const liveRows = [];
+      let eorder = new Map();
       let pagesDone = 0, pagesTotal = types.length, failures = 0, scanned = 0, firstError = "";
 
       const paint = () => {
         if (version !== model.searchVersion || controller.signal.aborted) return;
-        model.filtered = mergeRows(storedRows, liveRows);
+        model.filtered = mergeRows(storedRows, liveRows, eorder);
         $("#status").textContent = `${storedStatus} 저장 결과를 먼저 표시했습니다. 최신 정보 확인 중 ${format(pagesDone)}/${format(pagesTotal)}페이지…`;
         renderRows(model.filtered);
       };
       paint();
+      const eorderDone = mode === "bid"
+        ? fetchLiveEorder(span, controller.signal).then((found) => { eorder = found; paint(); }, () => {})
+        : Promise.resolve();
 
       const first = await Promise.all(types.map(async (businessType) => {
         try {
@@ -156,8 +179,9 @@
         }
       };
       await Promise.all(Array.from({ length: Math.min(LIVE_CONCURRENCY, pending.length || 1) }, scan));
+      await eorderDone;
       if (version !== model.searchVersion || controller.signal.aborted) return;
-      model.filtered = mergeRows(storedRows, liveRows);
+      model.filtered = mergeRows(storedRows, liveRows, eorder);
       const storedIds = new Set(storedRows.map((row) => `${row.mode}:${numberOf(row)}`));
       const liveIds = new Set(liveRows.map((row) => `${row.mode}:${numberOf(row)}`));
       const added = [...liveIds].filter((id) => !storedIds.has(id)).length;
