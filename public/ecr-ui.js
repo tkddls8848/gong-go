@@ -17,11 +17,12 @@
       if (!select || !row || sourcesFor === row) return;
       sourcesFor = row;
       sourceList = attachments ? attachments.candidates(row.files) : [];
-      const options = sourceList.map((file, index) => `<option value="${index}">${html(file.name)}</option>`);
+      // 제안요청정보 첨부는 공고 첨부와 이름이 같은 경우가 많아 출처를 앞에 밝힌다.
+      const options = sourceList.map((file, index) => `<option value="${index}">${html(file.source ? `[${file.kind ? `${file.source}·${file.kind}` : file.source}] ${file.name}` : file.name)}</option>`);
       select.innerHTML = `${options.join("")}<option value="">내 PC의 파일을 직접 선택</option>`;
       select.value = sourceList.length ? "0" : "";
       $("#ecr-source-hint").textContent = sourceList.length
-        ? "분석 가능한 첨부를 제안요청서 순으로 정렬했습니다. 파일을 직접 고르면 그 파일을 먼저 씁니다."
+        ? "공고 첨부와 제안요청정보 첨부 중 분석 가능한 파일을 제안요청서 순으로 정렬했습니다. 파일을 직접 고르면 그 파일을 먼저 씁니다."
         : "이 공고에는 바로 분석할 수 있는 첨부(PDF·HWP·HWPX)가 없습니다. 파일을 직접 선택하세요.";
     }
     function renderRetry() {

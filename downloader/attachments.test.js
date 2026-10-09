@@ -35,6 +35,13 @@ test("첨부 슬롯 수는 본공고 10개, 사전공고 5개다", () => {
   assert.equal(normalizeFiles(pre).length, 5);
 });
 
+test("본공고는 제안요청정보 첨부를 공고 첨부 뒤에 잇고, 사전공고는 읽지 않는다", () => {
+  const bid = { bidNtceNo: "1", ntceSpecDocUrl1: "https://www.g2b.go.kr/a", ntceSpecFileNm1: "공고문.hwp",
+    eorderAtchFileUrl1: "https://www.g2b.go.kr/rfp/6", eorderAtchFileNm1: "제안요청서.hwp", eorderAtchFileUrl2: "", eorderAtchFileNm2: "" };
+  assert.deepEqual(normalizeFiles(bid).map((file) => file.name), ["공고문.hwp", "제안요청서.hwp"]);
+  assert.deepEqual(normalizeFiles({ bfSpecRgstNo: "1", eorderAtchFileUrl1: "https://www.g2b.go.kr/rfp/6" }), []);
+});
+
 test("다운로더는 URL이 있는 슬롯만 남기고 이름이 없으면 URL에서 찾는다", () => {
   const row = {
     bidNtceNo: "1",

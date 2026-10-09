@@ -98,3 +98,60 @@ test("Server-Timing과 재시도 가능 상태를 분류한다", () => {
 test("본문을 받다 걸린 timeout은 헤더가 200이어도 재시도한다", () => {
   assert.equal(isRetryable(new DOMException("The operation was aborted due to timeout", "TimeoutError")), true);
 });
+
+test("제안요청정보는 공고보다 먼저 와도, 나중에 와도 같은 공고 행에 붙는다", () => {
+  const { applyEorder } = require("./collector");
+  const { EORDER_TYPE } = require("./api");
+  const job = { mode: "bid", type: "용역", range: { begin: "2026-08-11", end: "2026-08-11" } };
+  const notice = { bidNtceNo: "R26BK1", bidNtceOrd: "000", bidNtceDt: "2026-08-11 10:00:00" };
+  const eorder = [{ bidNtceNo: "R26BK1", bidNtceOrd: "000", atchSno: "6", eorderDocDivNm: "제안요청서", eorderAtchFileNm: "제안요청서.hwp", eorderAtchFileUrl: "https://www.g2b.go.kr/rfp?no=6" }];
+  const read = (store) => store.buckets.get("bid|2026-08-11").get("bid:R26BK1");
+  for (const order of ["eorder-first", "notice-first"]) {
+    const store = { buckets: new Map(), location: new Map(), counts: new Map(), eorder: new Map() }, changed = new Set();
+    if (order === "eorder-first") { assert.equal(applyEorder(store, eorder, changed), 0); applyItems(store, [notice], changed, job); }
+    else { applyItems(store, [notice], changed, job); assert.equal(applyEorder(store, eorder, changed), 1); }
+    assert.equal(read(store).eorderAtchFileNm1, "제안요청서.hwp", order);
+    assert.equal(read(store).eorderDocDivNm1, "제안요청서", order);
+    assert.ok(changed.has("bid|2026-08-11"));
+    // 공고 목록을 다시 받아도(정정·재개) 이미 붙은 첨부를 지우지 않는다.
+    applyItems(store, [{ ...notice, bidNtceNm: "갱신" }], changed, job);
+    assert.equal(read(store).eorderAtchFileNm1, "제안요청서.hwp", order);
+  }
+  assert.equal(EORDER_TYPE, "제안요청정보");
+});
+
+test("재개 실행은 이번에 제안요청정보를 받지 않은 공고의 이전 첨부를 이어 붙인다", () => {
+  const job = { mode: "bid", type: "용역", range: { begin: "2026-08-11", end: "2026-08-11" } };
+  const store = { buckets: new Map(), location: new Map(), counts: new Map(), eorder: new Map() }, changed = new Set();
+  applyItems(store, [{ bidNtceNo: "R26BK1", bidNtceDt: "2026-08-11", eorderAtchFileUrl1: "https://www.g2b.go.kr/rfp?no=1", eorderAtchFileNm1: "제안요청서.hwp", eorderDocDivNm1: "제안요청서" }], changed);
+  applyItems(store, [{ bidNtceNo: "R26BK1", bidNtceDt: "2026-08-11", bidNtceNm: "갱신" }], changed, job);
+  const record = store.buckets.get("bid|2026-08-11").get("bid:R26BK1");
+  assert.equal(record.bidNtceNm, "갱신");
+  assert.equal(record.eorderAtchFileNm1, "제안요청서.hwp");
+});
+
+test("제안요청정보 작업은 업무구분 묶음에 끼지 않아 무표식 레코드 이관을 막지 않는다", () => {
+  const { EORDER_TYPE } = require("./api");
+  const range = { begin: "2026-08-11", end: "2026-08-11" };
+  const store = storeOf([{ bidNtceNo: "legacy", bidNtceDt: "2026-08-11" }]), changed = new Set();
+  const entries = [...["물품", "외자", "용역", "공사"], EORDER_TYPE].map((type, index) => ({ job: { range, mode: "bid", type }, index, id: String(index) }));
+  const removed = clearLegacySources(store, entries, new Set(entries.map((entry) => entry.id)), ["물품", "외자", "용역", "공사"], changed);
+  assert.equal(removed, 1);
+});
+
+test("제안요청정보 작업의 endpoint는 e발주 첨부파일정보 오퍼레이션이다", () => {
+  const { EORDER_TYPE } = require("./api");
+  assert.equal(sourceEndpoint({ mode: "bid", type: EORDER_TYPE }), "/1230000/ad/BidPublicInfoService/getBidPblancListInfoEorderAtchFileInfo");
+});
+
+test("같은 사전규격에서 나온 본공고 둘은 서로 덮지 않고, 같은 공고의 정정 차수는 한 행이다", () => {
+  const store = storeOf([
+    { bidNtceNo: "R26BK1", bidNtceOrd: "000", bfSpecRgstNo: "R26BD9", bidNtceDt: "2026-08-11 09:00:00", bidNtceNm: "원공고" },
+    { bidNtceNo: "R26BK2", bidNtceOrd: "000", bfSpecRgstNo: "R26BD9", bidNtceDt: "2026-08-11 10:00:00", bidNtceNm: "재공고" },
+    { bidNtceNo: "R26BK2", bidNtceOrd: "001", bfSpecRgstNo: "R26BD9", bidNtceDt: "2026-08-11 11:00:00", bidNtceNm: "재공고 정정" },
+    { bfSpecRgstNo: "R26BD9", rgstDt: "2026-08-11 08:00:00", prdctClsfcNoNm: "사전규격" },
+  ]);
+  assert.deepEqual([...store.buckets.get("bid|2026-08-11").keys()].sort(), ["bid:R26BK1", "bid:R26BK2"]);
+  assert.equal(store.buckets.get("bid|2026-08-11").get("bid:R26BK2").bidNtceNm, "재공고 정정");
+  assert.deepEqual([...store.buckets.get("pre|2026-08-11").keys()], ["pre:R26BD9"]);
+});

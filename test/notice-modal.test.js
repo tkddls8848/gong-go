@@ -22,7 +22,7 @@ test("모달 인스턴스는 주입한 상태·표시 함수를 사용하고 닫
     loadEcr() { loaded++; },
   });
   const row = { mode: "bid", title: "테스트", announcementNumber: "one",
-    files: [{ name: "<img src=x>", url: "https://example.test/file?a=1&b=2" }] };
+    files: [{ name: "<img src=x>", url: "https://example.test/file?a=1&b=2" }, { name: "제안요청서.hwp", url: "https://www.g2b.go.kr/rfp", source: "제안요청정보", kind: "<b>제안요청서" }] };
   controller.openModal(row);
   assert.equal(model.currentRow, row);
   assert.equal(model.currentAnalysis, null);
@@ -31,6 +31,9 @@ test("모달 인스턴스는 주입한 상태·표시 함수를 사용하고 닫
   assert.equal(document.activeElement, $("#modal-close"));
   assert.match($("#modal-file-list").innerHTML, /&lt;img src=x&gt;/);
   assert.match($("#modal-file-list").innerHTML, /a=1&amp;b=2/);
+  // 제안요청정보 첨부는 출처·문서 구분 표식을 달고, 표식도 이스케이프한다. 공고 첨부에는 표식이 없다.
+  assert.match($("#modal-file-list").innerHTML, /<span class="file-tag">제안요청정보·&lt;b&gt;제안요청서<\/span>/);
+  assert.equal(($("#modal-file-list").innerHTML.match(/file-tag/g) || []).length, 1);
   controller.selectTab("ecr");
   assert.equal(loaded, 1);
   assert.equal(refreshed, 1);

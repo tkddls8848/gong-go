@@ -125,6 +125,22 @@ test("이름도 URL 힌트도 없으면 슬롯 번호로 이름을 만든다", (
   assert.deepEqual(row.files.map((file) => file.name), ["첨부파일 2"]);
 });
 
+test("본공고는 제안요청정보 첨부를 공고 첨부 뒤에 출처·문서 구분과 함께 싣는다", () => {
+  const row = onlyRow([{ ...BID,
+    eorderAtchFileUrl1: "https://www.g2b.go.kr/pn/pnp/pnpe/UntyAtchFile/downloadRfpFile.do?rfpNo=R26DH1&rfpOrd=000&rfpUntyAtchFileNo=6", eorderAtchFileNm1: "제안요청서(수정본).hwp", eorderDocDivNm1: "제안요청서",
+    eorderAtchFileUrl2: "", eorderAtchFileNm2: "", eorderDocDivNm2: "",
+  }], "bid");
+  assert.deepEqual(row.files.map((file) => file.name), ["규격서.hwp", "과업지시서.hwp", "제안요청서(수정본).hwp"]);
+  assert.deepEqual({ source: row.files[2].source, kind: row.files[2].kind }, { source: "제안요청정보", kind: "제안요청서" });
+  // 공고 첨부에는 출처를 달지 않는다.
+  assert.equal("source" in row.files[0], false);
+});
+
+test("사전공고에는 제안요청정보 컬럼이 있어도 읽지 않는다", () => {
+  const row = onlyRow([{ ...PRE, eorderAtchFileUrl1: "https://www.g2b.go.kr/x", eorderAtchFileNm1: "x.hwp" }], "pre");
+  assert.deepEqual(row.files, []);
+});
+
 test("사전공고 행을 화면 모델로 옮긴다", () => {
   const row = onlyRow([PRE], "pre");
   assert.equal(row.mode, "pre");

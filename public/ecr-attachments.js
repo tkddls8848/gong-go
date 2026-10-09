@@ -14,6 +14,9 @@
     [/붙임|별첨|첨부/, 5],
     [/공고문|공고서|서식|서약|확약|계약\s*(?:일반|특수)?\s*조건|입찰\s*유의서|평가\s*기준/, -30],
   ];
+  // 나라장터가 "제안요청정보"로 따로 받은 첨부는 문서 구분이 붙어 온다. 기관이 제안요청서라고
+  // 직접 지정한 것이라 파일명보다 확실하다 — 이름에 "제안요청서"가 없어도 맨 앞에 둔다.
+  const KIND = { 제안요청서: 45 };
   // 같은 문서의 PDF가 함께 올라오면 그쪽을 먼저 쓴다. 브라우저 HWP 변환은 표 배치가 달라질 수 있다.
   const FORMAT = { pdf: 3, hwpx: 2, hwp: 1, md: 0, txt: 0 };
   const SIGNATURE = {
@@ -40,7 +43,7 @@
       return (Array.isArray(files) ? files : [])
         .map((file, index) => ({ ...file, index, extension: extensionOf(file?.name) }))
         .filter((file) => file.extension && typeof file.url === "string" && allowed(file.url))
-        .map((file) => ({ ...file, score: RANK.reduce((sum, [pattern, value]) => sum + (pattern.test(file.name) ? value : 0), 0) + FORMAT[file.extension] }))
+        .map((file) => ({ ...file, score: RANK.reduce((sum, [pattern, value]) => sum + (pattern.test(file.name) ? value : 0), 0) + (file.source ? KIND[file.kind] || 0 : 0) + FORMAT[file.extension] }))
         .sort((a, b) => b.score - a.score || a.index - b.index);
     }
     async function download(file, { signal } = {}) {

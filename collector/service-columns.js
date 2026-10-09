@@ -6,6 +6,7 @@
 // 원본 전체는 collector가 data/raw 아래 같은 구조로 미러링해 둔다(collector.js의 writeCsv).
 // 서비스 파일과 경로가 1:1로 대응하므로, 나중에 다른 컬럼이 필요해지면 재수집 없이
 // 같은 날짜의 raw 파일에서 꺼내면 된다.
+const { EORDER_COLUMNS } = require("./eorder-files");
 const SERIES = (prefix, count) => Array.from({ length: count }, (_, index) => `${prefix}${index + 1}`);
 
 const SERVICE_COLUMNS = {
@@ -21,6 +22,8 @@ const SERVICE_COLUMNS = {
     // bidNtceUrl도 있지만 512자짜리를 두 벌 저장할 이유가 없어 상세화면 쪽만 남긴다.
     "bidNtceDtlUrl",
     ...SERIES("ntceSpecDocUrl", 10), ...SERIES("ntceSpecFileNm", 10),
+    // 제안요청정보 첨부. 공고 목록 API가 아니라 수집기가 별도 오퍼레이션에서 받아 붙인 컬럼이다.
+    ...EORDER_COLUMNS,
   ],
   pre: [
     "bfSpecRgstNo", "bsnsDivNm", "prdctClsfcNoNm", "rgstDt", "opninRgstClseDt",

@@ -13,6 +13,9 @@ const MODES = {
   bid: {
     base: "/1230000/ad/BidPublicInfoService",
     ops: { 물품: "getBidPblancListInfoThngPPSSrch", 외자: "getBidPblancListInfoFrgcptPPSSrch", 용역: "getBidPblancListInfoServcPPSSrch", 공사: "getBidPblancListInfoCnstwkPPSSrch" },
+    // 제안요청정보 첨부(e발주 첨부파일정보). 업무구분 없이 하나이고, 응답은 공고가 아니라 파일 한 건이
+    // 한 행이다. 조회 범위는 공고 게시일시라 같은 구간의 공고 목록과 짝이 맞는다(collector/eorder-files.js).
+    eorder: "getBidPblancListInfoEorderAtchFileInfo",
   },
   // 발주계획현황(15129462). 앞의 둘과 달리 조회 범위를 지정할 수 없다 — orderBgnYm/orderEndYm과
   // inqryBgnDt/inqryEndDt를 모두 받아 형식까지 검증하면서도(잘못된 포맷은 "DATE Format 에러")
@@ -27,7 +30,10 @@ const MODES = {
   },
 };
 
-function sourceEndpoint(job) { return `${MODES[job.mode].base}/${MODES[job.mode].ops[job.type]}`; }
+// 제안요청정보 작업의 type. 업무구분(물품·외자·용역·공사)과 겹치지 않는 이름이다.
+const EORDER_TYPE = "제안요청정보";
+function operationOf(job) { return job.type === EORDER_TYPE ? MODES[job.mode].eorder : MODES[job.mode].ops[job.type]; }
+function sourceEndpoint(job) { return `${MODES[job.mode].base}/${operationOf(job)}`; }
 
 function ymd(value) { return String(value).replaceAll("-", ""); }
 function ym(value) { return ymd(value).slice(0, 6); }
@@ -47,7 +53,7 @@ function createClient({
   async function fetchPage(job, pageNo) {
     const definition = MODES[job.mode];
     const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(PAGE_SIZE), inqryDiv: "1", ...rangeParams(job), ServiceKey: SERVICE_KEY });
-    const data = await requestJson(`${API_BASE}${definition.base}/${definition.ops[job.type]}?${params}`, {
+    const data = await requestJson(`${API_BASE}${definition.base}/${operationOf(job)}?${params}`, {
       mode: job.mode,
       type: job.type,
       range: `${job.range.begin}~${job.range.end}`,
@@ -166,4 +172,4 @@ function isRetryable(error) {
   const status = error?.httpStatus;
   return status ? status === 408 || status === 429 || status >= 500 : true;
 }
-module.exports = { MODES, sourceEndpoint, createClient, serverTimingDuration, isRetryable };
+module.exports = { MODES, EORDER_TYPE, sourceEndpoint, createClient, serverTimingDuration, isRetryable };

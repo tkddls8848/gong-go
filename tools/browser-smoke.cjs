@@ -35,7 +35,8 @@ async function main() {
         const url = new URL(route.request().url());
         const json = (value, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
         // 공고 첨부는 브라우저가 나라장터에서 직접 받는다. 실제 서버처럼 CORS를 열어 PDF 머리만 돌려준다.
-        if (url.hostname === "www.g2b.go.kr" && url.pathname === "/pn/pnp/pnpe/UntyAtchFile/downloadFile.do") {
+        // 제안요청정보 첨부(downloadRfpFile.do)도 같은 방식으로 내준다.
+        if (url.hostname === "www.g2b.go.kr" && /^\/pn\/pnp\/pnpe\/UntyAtchFile\/download(?:Rfp)?File\.do$/.test(url.pathname)) {
           g2bRequests++;
           return route.fulfill({ status: 200, headers: { "access-control-allow-origin": "*", "content-type": "application/octet-stream" }, body: Buffer.from("%PDF-1.7\n%fixture\n") });
         }
@@ -126,16 +127,17 @@ async function main() {
         // 검색 데이터 파이프라인이 아니라 실제 ECR 진입 동선 검증용 공고 fixture다.
         await page.evaluate(() => {
           setMode("bid");
-          model.filtered = [{ mode: "bid", announcementNumber: "R26-test", title: "테스트 서버 도입 제안요청", institution: "검증기관", detailUrl: "javascript:alert(1)", files: [null, { name: "실행 불가", url: "javascript:alert(1)" }, { name: "제안요청서.pdf", url: "https://example.go.kr/rfp.pdf" }, { name: "제안요청서_원본.pdf", url: "https://www.g2b.go.kr/pn/pnp/pnpe/UntyAtchFile/downloadFile.do?bidPbancNo=R26-test&bidPbancOrd=000&fileType=&fileSeq=3&prcmBsneSeCd=03" }] }];
+          model.filtered = [{ mode: "bid", announcementNumber: "R26-test", title: "테스트 서버 도입 제안요청", institution: "검증기관", detailUrl: "javascript:alert(1)", files: [null, { name: "실행 불가", url: "javascript:alert(1)" }, { name: "제안요청서.pdf", url: "https://example.go.kr/rfp.pdf" }, { name: "제안요청서_원본.pdf", url: "https://www.g2b.go.kr/pn/pnp/pnpe/UntyAtchFile/downloadFile.do?bidPbancNo=R26-test&bidPbancOrd=000&fileType=&fileSeq=3&prcmBsneSeCd=03" }, { name: "사업 수행 계획.pdf", url: "https://www.g2b.go.kr/pn/pnp/pnpe/UntyAtchFile/downloadRfpFile.do?rfpNo=R26DH-test&rfpOrd=000&rfpUntyAtchFileNo=6", source: "제안요청정보", kind: "제안요청서" }] }];
           renderRows(model.filtered);
         });
         await page.locator(".ecr-entry-btn").click();
         assert.match(await page.locator("#modal-file-list").textContent(), /첨부 링크 2건을 제외/);
         assert.match(await page.locator("#modal-file-list").textContent(), /상세 링크 형식/);
-        assert.equal(await page.locator("#modal-file-list a").count(), 2);
+        assert.equal(await page.locator("#modal-file-list a").count(), 3);
+        assert.deepEqual(await page.locator("#modal-file-list .file-tag").allTextContents(), ["제안요청정보·제안요청서"]);
         assert.equal(await page.locator("#modal-file-list a").first().getAttribute("href"), "https://example.go.kr/rfp.pdf");
-        // 나라장터 주소의 첨부만 바로 분석 후보에 오른다.
-        assert.deepEqual(await page.locator("#ecr-attachment option").allTextContents(), ["제안요청서_원본.pdf", "내 PC의 파일을 직접 선택"]);
+        // 나라장터 주소의 첨부만 바로 분석 후보에 오른다. 제안요청정보의 제안요청서가 맨 앞이다.
+        assert.deepEqual(await page.locator("#ecr-attachment option").allTextContents(), ["[제안요청정보·제안요청서] 사업 수행 계획.pdf", "제안요청서_원본.pdf", "내 PC의 파일을 직접 선택"]);
         await page.waitForFunction(() => document.querySelector("#ai-access-status").textContent.includes("전용 비밀번호"));
         assert.equal(await page.locator(".modal").getAttribute("role"), "dialog");
         assert.equal(await page.evaluate(() => document.activeElement.id), "modal-close");
@@ -181,7 +183,7 @@ async function main() {
         await page.locator("#ecr-analyze-btn").click();
         await page.waitForFunction(() => document.querySelector("#ecr-progress").textContent.includes("분석이 완료"));
         assert.equal(g2bRequests, 1);
-        assert.equal(uploads.at(-1).name, "제안요청서_원본.pdf");
+        assert.equal(uploads.at(-1).name, "사업 수행 계획.pdf");
         await page.locator("#ai-lock-btn").click();
         await page.waitForFunction(() => document.querySelector("#ai-access-status").textContent.includes("전용 비밀번호"));
         assert.equal(await page.locator("#ecr-analyze-btn").isDisabled(), true);

@@ -7,7 +7,8 @@ const gzip = promisify(zlib.gzip);
 const { serializeCsv, parseCsv } = require("./csv-record");
 const { ROOT, DATA_DIR, loadEnv, mapPool, buildIndexEntries } = require("./store");
 const { project } = require("./service-columns");
-const { MODES, sourceEndpoint, createClient } = require("./api");
+const { MODES, EORDER_TYPE, sourceEndpoint, createClient } = require("./api");
+const { groupEorderFiles, mergeGroups, withEorderFiles, eorderFilesOf } = require("./eorder-files");
 
 const CONFIG_FILE = path.join(__dirname, "sync.config.json");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
@@ -59,7 +60,11 @@ async function main() {
   // 스냅샷 모드(plan)는 범위를 나눠 봐야 매번 같은 응답이 온다. 업무구분당 한 번만 부른다.
   for (const mode of modes) {
     const ranges = MODES[mode].snapshot ? [{ begin: iso(begin), end: iso(end) }] : chunks(begin, end);
-    for (const range of ranges) for (const type of types) jobs.push({ range, mode, type });
+    for (const range of ranges) {
+      for (const type of types) jobs.push({ range, mode, type });
+      // 본공고 구간마다 제안요청정보 첨부를 한 번 받는다. 업무구분과 무관한 오퍼레이션 하나다.
+      if (mode === "bid") jobs.push({ range, mode, type: EORDER_TYPE });
+    }
   }
   const httpLimit = Math.max(1, Number(config.concurrency));
   const { fetchJob } = createClient({ SERVICE_KEY, API_BASE, RELAY_TOKEN, concurrency: httpLimit });
@@ -101,6 +106,14 @@ async function main() {
     try { items = await fetchJob(entry.job); }
     catch (error) { errors.push({ job: entry.job, error: error.message }); console.error(`${label} 실패: ${error.message}`); return; }
     succeeded.add(entry.id);
+    if (entry.job.type === EORDER_TYPE) {
+      const attached = applyEorder(store, items, changed);
+      if (resume !== false) state.completedJobs.push(entry.id);
+      console.log(`${label}~${entry.job.range.end}: 파일 ${items.length}건, 공고 ${attached}건에 붙임`);
+      finished += 1;
+      if (finished % FLUSH_EVERY === 0) flush(resume !== false);
+      return;
+    }
     // 아래 병합은 await 없이 한 번에 끝난다. 중간에 다른 작업이 끼어들지 않는다는 것이
     // clearJobRange와 applyItems가 같은 store를 안전하게 고칠 수 있는 근거다.
     //
@@ -123,6 +136,12 @@ async function main() {
     const migrated = clearLegacySources(store, entries, succeeded, types, changed);
     if (migrated) console.log(`원천 endpoint가 없던 기존 레코드 ${migrated}건 정리`);
   }
+  // 공고 목록보다 먼저 끝난 제안요청정보는 applyItems가 붙였다. 그래도 남는 것은 이번 수집 범위에
+  // 공고 행이 없는 파일이다(범위 경계의 정정공고 등). 붙일 곳이 없으므로 건수만 남긴다.
+  const orphaned = [...store.eorder.keys()].filter((number) => !store.location.has(`bid:${number}`)).length;
+  if (orphaned) console.log(`공고 행을 찾지 못한 제안요청정보 ${orphaned}건`);
+  const truncated = [...store.eorder.values()].filter((group) => group.truncated).length;
+  if (truncated) console.warn(`제안요청정보 첨부가 저장 슬롯을 넘친 공고 ${truncated}건(앞 슬롯만 저장)`);
   await flush(resume !== false);
   await fs.writeFile(path.join(DATA_DIR, "sync-errors.json"), JSON.stringify(errors, null, 2), "utf8");
   console.log(`완료: ${store.location.size}건 저장, 실패 ${errors.length}건`);
@@ -143,7 +162,7 @@ async function readStore(begin, end) {
   // 월 파일만 가리키므로 뷰어에 보이지 않는다. 되살리려면 그 달을 다시 봉인해야 한다.
   const overlap = sealed.filter((file) => file.month >= beginDate.slice(0, 7) && file.month <= endDate.slice(0, 7));
   if (overlap.length) console.warn(`경고: 수집 범위가 봉인된 월 ${overlap.length}개(${overlap[0].month}~${overlap.at(-1).month})와 겹칩니다. 수집 후 node collector/compact.js로 다시 봉인하세요.`);
-  const store = { buckets: new Map(), location: new Map(), counts: new Map() };
+  const store = { buckets: new Map(), location: new Map(), counts: new Map(), eorder: new Map() };
   let previous = new Map();
   try { previous = new Map(JSON.parse(await fs.readFile(INDEX_FILE, "utf8")).files.map((file) => [file.path, file.count])); } catch (error) { if (error.code !== "ENOENT") throw error; }
   const selected = (await dailyFiles(path.join(DATA_DIR, "raw"))).filter((file) => file.date >= beginDate && file.date <= endDate);
@@ -172,15 +191,40 @@ async function readStore(begin, end) {
   return store;
 }
 
+// 제안요청정보 응답을 공고번호별로 묶어 두고, 이미 받은 공고 행에는 바로 붙인다. 아직 받지 않은
+// 공고는 applyItems가 들어올 때 store.eorder에서 꺼내 붙인다. 붙인 공고 수를 돌려준다.
+function applyEorder(store, items, changed) {
+  const groups = groupEorderFiles(items);
+  mergeGroups(store.eorder, groups);
+  let attached = 0;
+  for (const number of groups.keys()) {
+    const key = `bid:${number}`, bucketKey = store.location.get(key);
+    const record = bucketKey ? store.buckets.get(bucketKey)?.get(key) : null;
+    if (!record) continue;
+    store.buckets.get(bucketKey).set(key, withEorderFiles(record, store.eorder.get(number).files));
+    changed.add(bucketKey);
+    attached += 1;
+  }
+  return attached;
+}
+
 function bucketFor(store, key) { let bucket = store.buckets.get(key); if (!bucket) { bucket = new Map(); store.buckets.set(key, bucket); } return bucket; }
 
 function applyItems(store, items, changed, job) {
   for (const item of items) {
-    const record = job ? { ...item, [SOURCE_ENDPOINT]: sourceEndpoint(job) } : item;
+    let record = job ? { ...item, [SOURCE_ENDPOINT]: sourceEndpoint(job) } : item;
     const key = recordKey(record);
     if (!key) continue;
     const target = bucketKeyOf(record);
     const source = store.location.get(key);
+    // 공고 목록 응답에는 제안요청정보가 없다. 이번 실행이 받은 목록이 있으면 그것을, 없으면 이전
+    // 레코드의 값을 이어 붙인다 — 재개 실행이 공고만 다시 받아 첨부를 지우지 않게 한다.
+    if (recordMode(record) === "bid") {
+      const group = store.eorder?.get(String(record.bidNtceNo).trim());
+      const previous = source ? store.buckets.get(source)?.get(key) : null;
+      const files = group ? group.files : previous ? eorderFilesOf(previous) : [];
+      if (files.length) record = withEorderFiles(record, files);
+    }
     // 등록일이 바뀐 공고는 이전 일자 파일에서 빼야 중복이 남지 않는다.
     if (source && source !== target) { store.buckets.get(source)?.delete(key); changed.add(source); }
     bucketFor(store, target).set(key, record);
@@ -276,7 +320,11 @@ async function sealedFiles() {
   }
   return result.sort((a, b) => a.month.localeCompare(b.month) || a.mode.localeCompare(b.mode));
 }
-function recordKey(row) { const number = String(row.bfSpecRgstNo || row.bidNtceNo || row.orderPlanUntyNo || "").trim(); return number ? `${recordMode(row)}:${number}` : ""; }
+// 본공고는 공고번호로만 묶는다. 본공고 응답에도 사전규격등록번호(bfSpecRgstNo)가 실려 오는데,
+// 예전에는 그것을 먼저 써서 같은 사전규격에서 나온 재공고·분리공고가 한 행으로 덮였다
+// (2026-05-13 하루 본공고 2,152건 중 29건이 사라졌다). 같은 공고의 정정 차수는 계속 한 행이다.
+const NUMBER_FIELD = { bid: "bidNtceNo", pre: "bfSpecRgstNo", plan: "orderPlanUntyNo" };
+function recordKey(row) { const mode = recordMode(row), number = mode ? String(row[NUMBER_FIELD[mode]] || "").trim() : ""; return number ? `${mode}:${number}` : ""; }
 function recordMode(row) { return row.bidNtceNo ? "bid" : row.bfSpecRgstNo ? "pre" : row.orderPlanUntyNo ? "plan" : ""; }
 // 발주계획에는 등록일자가 없다. 대신 게시일시(nticeDt)가 레코드마다 고정된 값으로 들어오므로
 // 그것을 일자로 쓴다. 발주년월(orderYear/orderMnth)은 "언제 발주할 예정인가"라서 일자가 없고,
@@ -314,7 +362,7 @@ function clearLegacySources(store, entries, succeeded, types, changed) {
   if (!TYPES.every((type) => types.includes(type))) return 0;
   const groups = new Map();
   for (const entry of entries) {
-    if (MODES[entry.job.mode].snapshot) continue;
+    if (MODES[entry.job.mode].snapshot || entry.job.type === EORDER_TYPE) continue;
     const key = `${entry.job.mode}|${entry.job.range.begin}|${entry.job.range.end}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(entry);
@@ -368,4 +416,4 @@ function addDays(value, days) { const result = new Date(value); result.setDate(r
 function iso(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
 function today() { return iso(new Date()); }
 
-module.exports = { applyItems, checkpointState, clearJobRange, clearLegacySources, recordsForWrite, sourceEndpoint, parseArgs };
+module.exports = { applyItems, applyEorder, checkpointState, clearJobRange, clearLegacySources, recordsForWrite, sourceEndpoint, parseArgs };

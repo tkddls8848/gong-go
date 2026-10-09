@@ -74,6 +74,9 @@
   const BID_SCHEDULE = ["bidNtceDt", "bidQlfctRgstDt", "cmmnSpldmdAgrmntClseDt", "bidBeginDt", "bidClseDt", "opengDt"];
   // 첨부 URL·이름 컬럼은 번호가 붙은 계열이다. 발주계획에는 아예 없다(상세 링크만 준다).
   const FILE_SERIES = { pre: { url: "specDocFileUrl", name: "specDocFileNm", count: 5 }, bid: { url: "ntceSpecDocUrl", name: "ntceSpecFileNm", count: 10 } };
+  // 본공고의 제안요청정보 첨부. 공고 목록 API에는 없고 수집기가 e발주 첨부파일정보에서 받아 붙인
+  // 계열이다(collector/eorder-files.js). 문서 구분("제안요청서"·"기타문서")이 함께 온다.
+  const RFP_SERIES = { url: "eorderAtchFileUrl", name: "eorderAtchFileNm", kind: "eorderDocDivNm", count: 10 };
   const PLAN_EXTRA = ["orderYear", "orderMnth", "sumOrderAmt", "cntrctMthdNm", "prcrmntMethd", "orderPlanDtlUrl", "atchFileExistnceYn", "bidNtceNoList"];
 
   // 파일 하나당 한 번만 부른다. 이후 행 검사는 문자열 비교 없이 배열 첨자만 쓴다.
@@ -88,6 +91,12 @@
       for (let i = 1; i <= series.count; i += 1) {
         const url = at.get(`${series.url}${i}`);
         if (url !== undefined) columns.files.push({ url, name: at.get(`${series.name}${i}`), slot: i - 1 });
+      }
+    }
+    if (mode === "bid") {
+      for (let i = 1; i <= RFP_SERIES.count; i += 1) {
+        const url = at.get(`${RFP_SERIES.url}${i}`);
+        if (url !== undefined) columns.files.push({ url, name: at.get(`${RFP_SERIES.name}${i}`), kind: at.get(`${RFP_SERIES.kind}${i}`), slot: i - 1, rfp: true });
       }
     }
     if (mode === "bid") for (const name of BID_SCHEDULE) columns.schedule[name] = at.get(name);
@@ -165,7 +174,10 @@
     for (const column of columns.files) {
       const url = cells[column.url] || "";
       if (!/^https?:/i.test(url)) continue;
-      files.push({ url, name: (column.name === undefined ? "" : cells[column.name]) || guessName(url, column.slot) });
+      const file = { url, name: (column.name === undefined ? "" : cells[column.name]) || guessName(url, column.slot) };
+      // 제안요청정보 첨부는 출처와 문서 구분을 달고 간다. 공고 첨부에는 붙이지 않아 행이 커지지 않는다.
+      if (column.rfp) { file.source = "제안요청정보"; file.kind = (column.kind === undefined ? "" : cells[column.kind]) || ""; }
+      files.push(file);
     }
     return files;
   }

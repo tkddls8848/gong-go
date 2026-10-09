@@ -40,7 +40,7 @@
       const files = normalizeFiles(row.files);
       $("#modal-title").textContent = row.title || "(\uC0AC\uC5C5\uBA85 \uC5C6\uC74C)";
       $("#modal-subtitle").textContent = modalSubtitle(row, files);
-      $("#modal-file-list").innerHTML = detailLink(row) + attachmentWarnings(row.files) + (files.length ? files.map((file, i) => `<li><span class="file-no">${i + 1}.</span><a href="${html(file.url)}" target="_blank" rel="noopener noreferrer">${html(file.name)}</a></li>`).join("") : row.mode === "plan" ? planLinks(row) : '<li><span class="empty-msg">\uC774 \uACF5\uACE0\uC5D0\uB294 API\uB85C \uC81C\uACF5\uB418\uB294 \uCCA8\uBD80\uD30C\uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.</span></li>');
+      $("#modal-file-list").innerHTML = detailLink(row) + attachmentWarnings(row.files) + (files.length ? files.map((file, i) => `<li><span class="file-no">${i + 1}.</span><a href="${html(file.url)}" target="_blank" rel="noopener noreferrer">${html(file.name)}</a>${file.source ? ` <span class="file-tag">${html(file.kind ? `${file.source}·${file.kind}` : file.source)}</span>` : ""}</li>`).join("") : row.mode === "plan" ? planLinks(row) : '<li><span class="empty-msg">\uC774 \uACF5\uACE0\uC5D0\uB294 API\uB85C \uC81C\uACF5\uB418\uB294 \uCCA8\uBD80\uD30C\uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.</span></li>');
       $("#download-all-btn").disabled = !files.length;
       $("#download-all-btn").textContent = files.length ? `\uC804\uCCB4 \uB2E4\uC6B4\uB85C\uB4DC (${files.length}\uAC74)` : "\uC804\uCCB4 \uB2E4\uC6B4\uB85C\uB4DC";
       $("#schedule-tab").disabled = row.mode !== "bid";

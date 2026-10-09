@@ -261,6 +261,7 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
 .file-no { flex: 0 0 auto; width: 20px; color: var(--faint); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .file-list a { flex: 1 1 auto; min-width: 0; color: var(--text); font-size: 14px; overflow-wrap: anywhere; }
 .file-list a:hover { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+.file-tag { flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .empty-msg { color: var(--muted); font-size: 13px; line-height: 1.7; }
 .schedule-list { margin: 8px 0 0; padding: 8px 2px 0; list-style: none; }
 .schedule-item { position: relative; display: grid; grid-template-columns: 18px minmax(150px, 1fr) auto; align-items: center; gap: 9px; min-height: 46px; }

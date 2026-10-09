@@ -68,6 +68,7 @@ test/의 파일명 규칙은 셋입니다 — 모듈 단위는 `<모듈>.test.js
 | 수집 계획·체크포인트·레코드 저장 | [collector/collector.js](../collector/collector.js) |
 | 공공 API·페이지·동시 실행·재시도 | [collector/api.js](../collector/api.js) |
 | CSV 작성 형식·서비스 컬럼·인덱스 | collector/csv-record.js, service-columns.js, store.js |
+| 본공고 제안요청정보 첨부 묶기·컬럼 펼치기 | [collector/eorder-files.js](../collector/eorder-files.js) |
 | 월별 봉인·복구·백필 계획 | collector/compact.js, restore-r2.js, backfill-plan.js |
 | 첨부 다운로드 | [downloader/attachments.js](../downloader/attachments.js) |
 | 기존 로컬 분석 | [analyzer/analyze.js](../analyzer/analyze.js) |

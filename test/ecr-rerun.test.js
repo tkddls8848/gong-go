@@ -116,3 +116,9 @@ test("다른 공고로 옮기면 직전 업로드로 재분석하지 않는다",
   await s.ui.retryMissing();
   assert.equal(s.requests.length, 2);
 });
+
+test("제안요청정보 첨부는 드롭다운에 출처와 문서 구분을 밝혀 보인다", () => {
+  const s = setup({ files: [{ name: "제안요청서.hwp", url: "https://www.g2b.go.kr/a" }, { name: "<제안>.hwp", url: "https://www.g2b.go.kr/rfp", source: "제안요청정보", kind: "제안요청서" }] });
+  s.ui.loadEcr();
+  assert.match(s.$("#ecr-attachment").innerHTML, /<option value="0">제안요청서.hwp<\/option><option value="1">\[제안요청정보·제안요청서\] &lt;제안&gt;.hwp<\/option>/);
+});

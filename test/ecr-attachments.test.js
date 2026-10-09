@@ -28,6 +28,20 @@ test("제안요청서를 앞에 두고 같은 문서는 PDF를 HWP보다 먼저 
   assert.deepEqual(names, ["제안요청서_20260922.pdf", "제안요청서_20260922.hwp", "과업지시서.hwpx", "입찰공고문.pdf", "입찰공고문.hwp"], "ZIP은 분석 대상이 아니다");
 });
 
+test("제안요청정보로 올린 제안요청서는 이름에 표시가 없어도 공고 첨부보다 앞에 둔다", () => {
+  const { api } = source();
+  const rfp = (seq) => `https://www.g2b.go.kr/pn/pnp/pnpe/UntyAtchFile/downloadRfpFile.do?rfpNo=R26DH1&rfpOrd=000&rfpUntyAtchFileNo=${seq}`;
+  const names = api.candidates([
+    { name: "제안요청서.pdf", url: g2b(1) },
+    { name: "과업지시서.hwp", url: rfp(5), source: "제안요청정보", kind: "기타문서" },
+    { name: "2026 통합유지관리 사업.hwp", url: rfp(6), source: "제안요청정보", kind: "제안요청서" },
+  ]).map((file) => file.name);
+  assert.deepEqual(names, ["2026 통합유지관리 사업.hwp", "제안요청서.pdf", "과업지시서.hwp"]);
+  // 문서 구분은 제안요청정보 출처에서만 믿는다.
+  const forged = api.candidates([{ name: "공고문.pdf", url: g2b(1), kind: "제안요청서" }, { name: "과업지시서.pdf", url: g2b(2) }]).map((file) => file.name);
+  assert.deepEqual(forged, ["과업지시서.pdf", "공고문.pdf"]);
+});
+
 test("나라장터가 아닌 주소와 http 주소는 직접 받지 않는다", async () => {
   const { api, calls } = source();
   assert.deepEqual(api.candidates([{ name: "제안요청서.pdf", url: "https://example.com/rfp.pdf" }, { name: "제안요청서.pdf", url: "http://www.g2b.go.kr/x" }, { name: "제안요청서.pdf", url: "https://g2b.go.kr.evil.example/x" }]), []);

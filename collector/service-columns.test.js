@@ -79,3 +79,8 @@ test("본공고는 나라장터 상세화면 링크 컬럼을 남긴다", () => 
   const bid = project({ bidNtceNo: "1", bidNtceDtlUrl: "https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R25BK00932003&bidPbancOrd=000" });
   assert.ok("bidNtceDtlUrl" in bid);
 });
+
+test("본공고는 수집기가 붙인 제안요청정보 첨부 컬럼을 남긴다", () => {
+  const bid = project({ bidNtceNo: "1", eorderAtchFileUrl1: "https://www.g2b.go.kr/rfp/1", eorderAtchFileNm1: "제안요청서.hwp", eorderDocDivNm1: "제안요청서", eorderAtchFileUrl10: "https://www.g2b.go.kr/rfp/10" });
+  for (const key of ["eorderAtchFileUrl1", "eorderAtchFileNm1", "eorderDocDivNm1", "eorderAtchFileUrl10"]) assert.ok(key in bid, key);
+});

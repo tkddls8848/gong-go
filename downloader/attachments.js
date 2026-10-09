@@ -66,12 +66,13 @@ function institution(row) { return String(row.rlDminsttNm || row.dminsttNm || ro
 function title(row) { return String(row.bizNm || row.prdctClsfcNoNm || row.bidNtceNm || ""); }
 
 // 첨부 슬롯은 본공고 10개, 사전공고 5개다. 원본에 11번째가 있어도 읽지 않는다.
+// 본공고는 수집기가 붙인 제안요청정보 첨부(eorderAtchFile*, 10개)를 공고 첨부 뒤에 잇는다
+// (collector/eorder-files.js가 쓰고 public/rows.js도 같은 순서로 읽는다).
 function normalizeFiles(row) {
   const pre = row.bfSpecRgstNo && !row.bidNtceNo;
-  const prefix = pre ? "specDocFileUrl" : "ntceSpecDocUrl";
-  const namePrefix = pre ? "specDocFileNm" : "ntceSpecFileNm";
-  const count = pre ? 5 : 10;
-  return Array.from({ length: count }, (_, index) => ({ url: row[`${prefix}${index + 1}`] || "", name: row[`${namePrefix}${index + 1}`] || guessName(row[`${prefix}${index + 1}`], index) })).filter((file) => /^https?:/i.test(file.url));
+  const series = (prefix, namePrefix, count) => Array.from({ length: count }, (_, index) => ({ url: row[`${prefix}${index + 1}`] || "", name: row[`${namePrefix}${index + 1}`] || guessName(row[`${prefix}${index + 1}`], index) }));
+  const files = pre ? series("specDocFileUrl", "specDocFileNm", 5) : [...series("ntceSpecDocUrl", "ntceSpecFileNm", 10), ...series("eorderAtchFileUrl", "eorderAtchFileNm", 10)];
+  return files.filter((file) => /^https?:/i.test(file.url));
 }
 function guessName(url, index) {
   try { const parsed = new URL(url); return decodeURIComponent(parsed.searchParams.get("fileNm") || parsed.searchParams.get("orgFileNm") || parsed.searchParams.get("fileName") || `첨부파일_${index + 1}`); } catch { return `첨부파일_${index + 1}`; }
