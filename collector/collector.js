@@ -27,23 +27,23 @@ loadEnv(path.join(ROOT, ".env"));
 const DATA_GO_KR_SERVICE_KEY = process.env.DATA_GO_KR_SERVICE_KEY || "";
 // 요청이 나가는 곳. 기본은 공공데이터포털 직접 호출이다.
 // GitHub Actions 러너에서는 apis.data.go.kr로 TCP 연결이 성립하지 않으므로(차단이 국가가 아니라
-// IP 대역 기준이다) API_BASE에 Worker의 중계 주소를 넣어 우회한다. 예:
-//   API_BASE=https://gong-go.<계정>.workers.dev/api/relay
-//   RELAY_TOKEN=<Worker에 등록한 것과 같은 값>
+// IP 대역 기준이다) DATA_GO_KR_RELAY_URL에 Worker의 중계 주소를 넣어 우회한다. 예:
+//   DATA_GO_KR_RELAY_URL=https://gong-go.<계정>.workers.dev/api/relay
+//   DATA_GO_KR_RELAY_TOKEN=<Worker에 등록한 것과 같은 값>
 // 경로와 쿼리는 그대로 유지되므로 아래 정의는 어느 쪽이든 바뀌지 않는다.
 // (docs/프로젝트-통합-문서.md 2부)
-const API_BASE = (process.env.API_BASE || "https://apis.data.go.kr").replace(/\/+$/, "");
-const RELAY_TOKEN = process.env.RELAY_TOKEN || "";
+const API_BASE = (process.env.DATA_GO_KR_RELAY_URL || "https://apis.data.go.kr").replace(/\/+$/, "");
+const DATA_GO_KR_RELAY_TOKEN = process.env.DATA_GO_KR_RELAY_TOKEN || "";
 if (require.main === module) main().catch((error) => { console.error(`수집 실패: ${error.message}`); process.exitCode = 1; });
 
 async function main() {
   await fs.mkdir(DATA_DIR, { recursive: true });
   const state = await readState();
   if (!DATA_GO_KR_SERVICE_KEY) throw new Error(".env에 DATA_GO_KR_SERVICE_KEY를 설정하세요.");
-  // 스킴이 빠진 API_BASE는 작업마다 ERR_INVALID_URL을 낼 뿐 원인을 드러내지 않는다.
+  // 스킴이 빠진 DATA_GO_KR_RELAY_URL은 작업마다 ERR_INVALID_URL을 낼 뿐 원인을 드러내지 않는다.
   // 값은 찍지 않는다 — Actions 로그에서 마스킹을 우회해 시크릿 일부가 노출된다.
-  if (process.env.API_BASE && !/^https?:\/\//i.test(API_BASE)) {
-    throw new Error("API_BASE는 스킴을 포함한 절대 URL이어야 합니다. 예: https://<worker>.workers.dev/api/relay");
+  if (process.env.DATA_GO_KR_RELAY_URL && !/^https?:\/\//i.test(API_BASE)) {
+    throw new Error("DATA_GO_KR_RELAY_URL은 스킴을 포함한 절대 URL이어야 합니다. 예: https://<worker>.workers.dev/api/relay");
   }
   const config = await readConfig();
   // --begin/--end/--no-resume은 sync.config.json을 건드리지 않고 이번 실행에만 적용된다.
@@ -67,7 +67,7 @@ async function main() {
     }
   }
   const httpLimit = Math.max(1, Number(config.concurrency));
-  const { fetchJob } = createClient({ DATA_GO_KR_SERVICE_KEY, API_BASE, RELAY_TOKEN, concurrency: httpLimit });
+  const { fetchJob } = createClient({ DATA_GO_KR_SERVICE_KEY, API_BASE, DATA_GO_KR_RELAY_TOKEN, concurrency: httpLimit });
   const store = await readStore(begin, end);
   const errors = [];
   const completed = new Set(state.completedJobs);

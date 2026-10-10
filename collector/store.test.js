@@ -74,18 +74,18 @@ test("mapPool은 입력 순서로 결과를 돌려주고 동시 실행 수를 �
 test("loadEnv는 이미 있는 환경변수를 덮지 않는다", async (t) => {
   const dir = await tempDir(t);
   const file = nodePath.join(dir, ".env");
-  await fs.writeFile(file, ['DATA_GO_KR_SERVICE_KEY="파일값"', "R2_ACCOUNT_ID='따옴표'", "# 주석", "잘못된 줄", "API_BASE=https://example.workers.dev/api/relay"].join("\n"), "utf8");
+  await fs.writeFile(file, ['DATA_GO_KR_SERVICE_KEY="파일값"', "R2_ACCOUNT_ID='따옴표'", "# 주석", "잘못된 줄", "DATA_GO_KR_RELAY_URL=https://example.workers.dev/api/relay"].join("\n"), "utf8");
   const saved = { ...process.env };
-  t.after(() => { for (const key of ["DATA_GO_KR_SERVICE_KEY", "R2_ACCOUNT_ID", "API_BASE"]) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; } });
+  t.after(() => { for (const key of ["DATA_GO_KR_SERVICE_KEY", "R2_ACCOUNT_ID", "DATA_GO_KR_RELAY_URL"]) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; } });
 
   // 워크플로가 넣어 준 값이 우선이다. .env가 덮으면 러너에서 로컬 설정으로 돌아버린다.
   process.env.DATA_GO_KR_SERVICE_KEY = "환경값";
   delete process.env.R2_ACCOUNT_ID;
-  delete process.env.API_BASE;
+  delete process.env.DATA_GO_KR_RELAY_URL;
   loadEnv(file);
   assert.equal(process.env.DATA_GO_KR_SERVICE_KEY, "환경값");
   assert.equal(process.env.R2_ACCOUNT_ID, "따옴표");
-  assert.equal(process.env.API_BASE, "https://example.workers.dev/api/relay");
+  assert.equal(process.env.DATA_GO_KR_RELAY_URL, "https://example.workers.dev/api/relay");
 });
 
 test("파일이 없으면 loadEnv와 readJson은 조용히 넘어간다", async (t) => {

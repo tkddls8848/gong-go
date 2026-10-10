@@ -51,8 +51,8 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
-      API_BASE: ${{ secrets.API_BASE }}
-      RELAY_TOKEN: ${{ secrets.RELAY_TOKEN }}
+      DATA_GO_KR_RELAY_URL: ${{ secrets.DATA_GO_KR_RELAY_URL }}
+      DATA_GO_KR_RELAY_TOKEN: ${{ secrets.DATA_GO_KR_RELAY_TOKEN }}
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
