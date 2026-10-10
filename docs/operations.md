@@ -32,8 +32,24 @@ npm ci
 
 ```powershell
 npm test
-npm run deploy
+git push origin main   # Workers Builds가 자동 배포한다
 ```
+
+### 자동 배포(Workers Builds)
+
+Cloudflare Workers Builds가 이 저장소에 연결되어 있어 **main 푸시가 곧 운영 배포**입니다.
+대시보드 Workers & Pages → `gong-go` → Settings → Builds에서 다음처럼 둡니다.
+
+- 배포 브랜치: `main`
+- 빌드 명령: `npm test` — 실패하면 배포 단계로 넘어가지 않습니다. GitHub의 quality 워크플로는 배포를 막지 못합니다.
+- 배포 명령: `npx wrangler deploy`
+- API token: Workers Builds 전용 토큰. 이 토큰을 지우거나 롤하면 빌드가
+  `The build token selected for this build has been deleted or rolled`로 실패합니다.
+  같은 화면에서 토큰을 새로 고른 뒤 실패한 빌드를 Retry합니다.
+
+시크릿 이름을 바꾸는 커밋은 **새 시크릿을 먼저 등록한 뒤** 푸시합니다. 순서가 바뀌면 푸시와 동시에
+배포된 코드가 없는 시크릿을 읽어 매시 수집이나 중계가 멈춥니다. `npm run deploy`는 Workers Builds가
+실패했을 때처럼 수동 배포가 필요할 때만 씁니다.
 
 ## 공공데이터 API 중계
 
@@ -174,7 +190,7 @@ Cloudflare 기본 기능 시크릿은 `GATE_PASSWORD`, `GITHUB_PAT_TOKEN`, `DATA
 
 **범위를 나눈 이유**는 비용입니다. 본공고 한 페이지가 5~6MB라 매시 36일치를 다시 훑으면 하루에 수 GB를 나라장터에서 되받습니다. 매시 범위를 오늘 하루가 아니라 **어제~오늘**로 잡은 것은, 전날 18시 실행 뒤에 등록된 공고가 어제 날짜로 남아 다음 날 05:00까지 들어오지 못하기 때문입니다. 이틀은 28일 청크 하나에 들어가므로 작업 수는 그대로이고 페이지 수만 늡니다.
 
-`wrangler.jsonc`의 크론 식은 **UTC로만** 해석됩니다(KST 표기가 없습니다). 크론 트리거는 `npm run deploy`로 배포해야 등록됩니다. 실행 결과는 Cloudflare 로그와 GitHub Actions에서 확인합니다.
+`wrangler.jsonc`의 크론 식은 **UTC로만** 해석됩니다(KST 표기가 없습니다). 크론 트리거는 배포(main 푸시의 자동 배포 또는 `npm run deploy`)될 때 등록됩니다. 실행 결과는 Cloudflare 로그와 GitHub Actions에서 확인합니다.
 
 ### 갱신에 걸리는 시간
 

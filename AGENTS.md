@@ -34,7 +34,7 @@ npm run test:browser            # 화면 연결 변경 시
 npm run test:runtime            # Worker 연결 변경 시
 npm run test:selection          # ECR 표 선별 변경 시(저장소 밖 실문서 필요, CI에 없음)
 npx wrangler deploy --dry-run   # 번들 변경 시
-npm run deploy                  # 배포. 자동 배포는 없다
+npm run deploy                  # 수동 배포. 평소에는 main 푸시가 자동 배포한다
 ```
 
 **typecheck와 lint 명령은 없다.** TypeScript도 린터 설정도 쓰지 않는다. 찾지 말고, 타입 안전은 런타임 검증과 계약 테스트로 확보한다.
@@ -56,4 +56,5 @@ npm run deploy                  # 배포. 자동 배포는 없다
 - ECR 분석 결과는 저장하지 않는다. 작업 키만 R2에 두고 정리한다.
 - AI 예약은 되돌릴 근거가 없으면 그대로 둔다. 초과 사용 쪽으로 기울지 않는다.
 - 사용자에게 내부 오류 메시지나 스택을 노출하지 않는다. 실패를 성공으로 표시하지 않는다.
+- main에 푸시하면 Cloudflare Workers Builds가 곧바로 운영에 배포한다. 푸시가 곧 배포이므로 검증을 마친 커밋만 푸시하고, 시크릿 이름을 바꾸는 커밋은 새 시크릿을 먼저 등록한 뒤 푸시한다.
 - DB도 migration도 없다. 스키마 변경은 CSV·인덱스 형식과 `SCHEMA_VERSION` 취급으로 나타난다.
