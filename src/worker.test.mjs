@@ -10,7 +10,7 @@ import worker from "./worker.js";
 
 const ORIGIN = "https://gong-go.example.workers.dev";
 const PASSWORD = "열려라-참깨";
-const DATA_GO_KR_RELAY_TOKEN = "0123456789abcdef0123456789abcdef";
+const DATA_GO_KR_PROXY_TOKEN = "0123456789abcdef0123456789abcdef";
 const RELAY_PATH = "/api/relay/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch";
 const LIVE_PATH = "/api/live?mode=bid&businessType=%EB%AC%BC%ED%92%88&begin=2026-08-16&end=2026-08-17&pageNo=2";
 // UTC로는 8월 16일이지만 KST로는 17일 아침이다. 수집 범위가 KST로 계산되는지 여기서 갈린다.
@@ -79,8 +79,8 @@ test("중계는 비밀번호 게이트보다 먼저 처리된다", async (t) => 
   const calls = stubFetch(t, () => new Response("upstream", { status: 200, headers: { "Content-Type": "application/json" } }));
   // GATE_PASSWORD를 아예 빼도 통과해야 한다. 러너에는 로그인 화면을 돌려줄 수 없다.
   const response = await worker.fetch(request(`${RELAY_PATH}?type=json&pageNo=1`, {
-    headers: { Authorization: `Bearer ${DATA_GO_KR_RELAY_TOKEN}` },
-  }), { DATA_GO_KR_RELAY_TOKEN });
+    headers: { Authorization: `Bearer ${DATA_GO_KR_PROXY_TOKEN}` },
+  }), { DATA_GO_KR_PROXY_TOKEN });
   assert.equal(response.status, 200);
   assert.equal(await response.text(), "upstream");
   // 경로와 쿼리는 그대로 유지되고 앞의 /api/relay만 떨어진다.
@@ -90,12 +90,12 @@ test("중계는 비밀번호 게이트보다 먼저 처리된다", async (t) => 
 test("중계는 토큰이 틀리면 401, 시크릿이 없으면 501이다", async (t) => {
   const calls = stubFetch(t);
   // 시크릿이 비어 있는 사고가 두 번 있었다. 401과 구분되는 코드로 답해야 원인이 드러난다.
-  const missing = await worker.fetch(request(RELAY_PATH, { headers: { Authorization: `Bearer ${DATA_GO_KR_RELAY_TOKEN}` } }), {});
+  const missing = await worker.fetch(request(RELAY_PATH, { headers: { Authorization: `Bearer ${DATA_GO_KR_PROXY_TOKEN}` } }), {});
   assert.equal(missing.status, 501);
-  assert.match((await json(missing)).message, /DATA_GO_KR_RELAY_TOKEN/);
+  assert.match((await json(missing)).message, /DATA_GO_KR_PROXY_TOKEN/);
 
-  for (const headers of [{}, { Authorization: "Bearer " }, { Authorization: `Bearer ${DATA_GO_KR_RELAY_TOKEN}x` }, { Authorization: DATA_GO_KR_RELAY_TOKEN }]) {
-    const response = await worker.fetch(request(RELAY_PATH, { headers }), { DATA_GO_KR_RELAY_TOKEN });
+  for (const headers of [{}, { Authorization: "Bearer " }, { Authorization: `Bearer ${DATA_GO_KR_PROXY_TOKEN}x` }, { Authorization: DATA_GO_KR_PROXY_TOKEN }]) {
+    const response = await worker.fetch(request(RELAY_PATH, { headers }), { DATA_GO_KR_PROXY_TOKEN });
     assert.equal(response.status, 401, JSON.stringify(headers));
     assert.match((await json(response)).message, /중계 토큰/);
   }
@@ -112,7 +112,7 @@ test("허용 목록 밖의 경로는 중계하지 않는다", async (t) => {
     "/api/relay/1230000/ad/BidPublicInfoService/op9",               // 연산에 숫자
   ];
   for (const path of paths) {
-    const response = await worker.fetch(request(path, { headers: { Authorization: `Bearer ${DATA_GO_KR_RELAY_TOKEN}` } }), { DATA_GO_KR_RELAY_TOKEN });
+    const response = await worker.fetch(request(path, { headers: { Authorization: `Bearer ${DATA_GO_KR_PROXY_TOKEN}` } }), { DATA_GO_KR_PROXY_TOKEN });
     assert.equal(response.status, 403, path);
   }
   // 임의 URL을 받아 주면 이 Worker가 그대로 공개 프록시가 된다.
@@ -121,7 +121,7 @@ test("허용 목록 밖의 경로는 중계하지 않는다", async (t) => {
 
 test("중계는 GET만 받는다", async (t) => {
   stubFetch(t);
-  const response = await worker.fetch(request(RELAY_PATH, { method: "POST", headers: { Authorization: `Bearer ${DATA_GO_KR_RELAY_TOKEN}` } }), { DATA_GO_KR_RELAY_TOKEN });
+  const response = await worker.fetch(request(RELAY_PATH, { method: "POST", headers: { Authorization: `Bearer ${DATA_GO_KR_PROXY_TOKEN}` } }), { DATA_GO_KR_PROXY_TOKEN });
   assert.equal(response.status, 405);
   assert.equal(response.headers.get("Allow"), "GET");
 });
@@ -131,7 +131,7 @@ test("중계는 상류의 쿠키·캐시 지시를 옮기지 않고 Retry-After�
     status: 429,
     headers: { "Set-Cookie": "session=abc", "Cache-Control": "public, max-age=600", "Retry-After": "30", "Content-Type": "application/json" },
   }));
-  const response = await worker.fetch(request(RELAY_PATH, { headers: { Authorization: `Bearer ${DATA_GO_KR_RELAY_TOKEN}` } }), { DATA_GO_KR_RELAY_TOKEN });
+  const response = await worker.fetch(request(RELAY_PATH, { headers: { Authorization: `Bearer ${DATA_GO_KR_PROXY_TOKEN}` } }), { DATA_GO_KR_PROXY_TOKEN });
   assert.equal(response.status, 429);
   // ServiceKey가 실린 URL이 어딘가에 캐시되면 안 된다.
   assert.equal(response.headers.get("Set-Cookie"), null);
@@ -143,7 +143,7 @@ test("중계는 상류의 쿠키·캐시 지시를 옮기지 않고 Retry-After�
 
 test("상류로 나가지 못하면 502에 사유를 실어 준다", async (t) => {
   stubFetch(t, () => { throw new Error("connect ETIMEDOUT"); });
-  const response = await worker.fetch(request(RELAY_PATH, { headers: { Authorization: `Bearer ${DATA_GO_KR_RELAY_TOKEN}` } }), { DATA_GO_KR_RELAY_TOKEN });
+  const response = await worker.fetch(request(RELAY_PATH, { headers: { Authorization: `Bearer ${DATA_GO_KR_PROXY_TOKEN}` } }), { DATA_GO_KR_PROXY_TOKEN });
   assert.equal(response.status, 502);
   assert.match((await json(response)).message, /connect ETIMEDOUT/);
 });

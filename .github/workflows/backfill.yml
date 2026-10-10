@@ -51,8 +51,8 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
-      DATA_GO_KR_RELAY_URL: ${{ secrets.DATA_GO_KR_RELAY_URL }}
-      DATA_GO_KR_RELAY_TOKEN: ${{ secrets.DATA_GO_KR_RELAY_TOKEN }}
+      DATA_GO_KR_PROXY_URL: ${{ secrets.DATA_GO_KR_PROXY_URL }}
+      DATA_GO_KR_PROXY_TOKEN: ${{ secrets.DATA_GO_KR_PROXY_TOKEN }}
       R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

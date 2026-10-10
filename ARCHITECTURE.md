@@ -89,7 +89,7 @@ ECR이 가장 넓게 퍼진 도메인입니다. 운영 형식을 바꿀 때는 �
 
 - **조회 게이트** — `src/gate.js`. 비밀번호 → 쿠키. 게이트는 라우팅보다 앞에 있고, 예외는 robots와 relay뿐입니다(`worker.js`).
 - **AI 2차 권한** — `src/ai-access.js`. 조회 로그인과 별개의 쿠키와 서버 권한입니다. 잠금 해제·재잠금이 서버 권한까지 바꿉니다.
-- **relay** — `Bearer DATA_GO_KR_RELAY_TOKEN`. 수집기만 호출합니다.
+- **relay** — `Bearer DATA_GO_KR_PROXY_TOKEN`. 수집기만 호출합니다.
 - **예산** — `src/ai-budget.js`가 일일 뉴런 한도를 예약·정산합니다. 예약을 되돌릴 근거가 없으면 그대로 둬 초과 사용 쪽으로 기울지 않습니다.
 
 ## Error Handling
