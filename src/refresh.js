@@ -35,7 +35,7 @@ function collectRange(nowMs) { return { begin: kstToday(nowMs - DAY_MS), end: ks
 // 주지만 Contents 쓰기를 요구하고, 이 토큰에는 Actions 쓰기만 있어 403이 난다. 권한을 넓히는
 // 대신 같은 문을 쓴다 — 버튼과 섞이는 문제는 handleRefresh 쪽에서 본다.
 export async function dispatchCollect(env, scheduledTime) {
-  if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN 시크릿이 없어 collect를 걸 수 없습니다.");
+  if (!env.GITHUB_PAT_TOKEN) throw new Error("GITHUB_PAT_TOKEN 시크릿이 없어 collect를 걸 수 없습니다.");
   const range = collectRange(scheduledTime);
   const response = await dispatchWorkflow(env, range);
   // 반드시 던진다. 삼켜 버리면 Cron Trigger는 성공으로 남고 갱신만 조용히 멈춘다.
@@ -69,7 +69,7 @@ async function runningCollect(env) {
   return data.workflow_runs?.find((run) => run.status !== "completed") || null;
 }
 export async function handleRefresh(request, env, url) {
-  if (!env.GITHUB_TOKEN) return jsonResponse({ message: "GITHUB_TOKEN 시크릿이 설정되지 않았습니다." }, 501);
+  if (!env.GITHUB_PAT_TOKEN) return jsonResponse({ message: "GITHUB_PAT_TOKEN 시크릿이 설정되지 않았습니다." }, 501);
   if (request.method === "POST") {
     const prior = await readRefreshState(env);
     const limited = refreshLimitError(prior);
@@ -188,7 +188,7 @@ function github(env, path, init = {}) {
     ...init,
     headers: {
       Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+      Authorization: `Bearer ${env.GITHUB_PAT_TOKEN}`,
       "Content-Type": "application/json",
       "User-Agent": "gong-go-worker",
       "X-GitHub-Api-Version": "2026-03-10",

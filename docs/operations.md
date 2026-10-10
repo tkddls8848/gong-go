@@ -18,7 +18,7 @@ npm ci
 - `ANTHROPIC_API_KEY`: Anthropic 분석을 사용할 때만 필요
 - `GATE_PASSWORD`: Worker 조회 화면 비밀번호
 - `AI_ANALYSIS_PASSWORD`: AI 분석 전용 암호(16자 이상, 조회 암호와 다르게). 미설정 시 ECR 분석과 자연어 검색의 AI 호출이 잠김
-- `GITHUB_TOKEN`: 배포 화면의 갱신 버튼용 GitHub fine-grained PAT. 이 저장소의 Actions read/write 권한만 부여
+- `GITHUB_PAT_TOKEN`: 배포 화면의 갱신 버튼용 GitHub fine-grained PAT. 이 저장소의 Actions read/write 권한만 부여
 - `API_BASE`, `RELAY_TOKEN`: 공공데이터 API 중계 경유 설정. 로컬에서는 비워 둡니다([공공데이터 API 중계](#공공데이터-api-중계) 참고)
 
 ## 운영 실행
@@ -96,7 +96,7 @@ npm run upload               # 기본값: 변경·삭제 예정 내역만 확인
 node uploader/upload.js --commit  # 확인한 내용을 실제 R2에 반영
 npx wrangler secret put GATE_PASSWORD
 npx wrangler secret put AI_ANALYSIS_PASSWORD
-npx wrangler secret put GITHUB_TOKEN
+npx wrangler secret put GITHUB_PAT_TOKEN
 npx wrangler secret put RELAY_TOKEN     # 이름이 정확해야 한다 — 아래 주의 참고
 npx wrangler secret put DATA_GO_KR_SERVICE_KEY  # 저장 결과 위에 최신 공고를 합치는 /api/live용
 npm run deploy
@@ -147,7 +147,7 @@ raw에서 서비스 데이터를 복원할 때는 `node collector/restore-r2.js`
 > 읽으므로 `RELAY` 같은 다른 이름으로 등록하면 값이 들어 있어도 중계가 501을 반환합니다.
 > 시크릿은 비대화형 셸에서 등록하지 마세요(아래 [토큰 등록](#토큰-등록) 경고 참고).
 
-Cloudflare 기본 기능 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TOKEN`, `DATA_GO_KR_SERVICE_KEY`이며, AI 분석에는 별도로 `AI_ANALYSIS_PASSWORD`가 필요합니다. `GITHUB_TOKEN`이 없으면 배포 화면의 갱신 API가, `RELAY_TOKEN`이 없으면 수집 중계가, `DATA_GO_KR_SERVICE_KEY`가 없으면 최신 공고 합치기가 501을 반환합니다. GitHub 저장소에도 Actions용 `DATA_GO_KR_SERVICE_KEY`, `API_BASE`, `RELAY_TOKEN`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다.
+Cloudflare 기본 기능 시크릿은 `GATE_PASSWORD`, `GITHUB_PAT_TOKEN`, `RELAY_TOKEN`, `DATA_GO_KR_SERVICE_KEY`이며, AI 분석에는 별도로 `AI_ANALYSIS_PASSWORD`가 필요합니다. `GITHUB_PAT_TOKEN`이 없으면 배포 화면의 갱신 API가, `RELAY_TOKEN`이 없으면 수집 중계가, `DATA_GO_KR_SERVICE_KEY`가 없으면 최신 공고 합치기가 501을 반환합니다. GitHub 저장소에도 Actions용 `DATA_GO_KR_SERVICE_KEY`, `API_BASE`, `RELAY_TOKEN`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다.
 
 배포 승인, 검증 근거, 장애 대응 및 되돌리기 순서는 [출시 체크리스트](release-checklist.md)를 따릅니다. 로컬 테스트 통과만으로 운영 검증 완료라고 판단하지 않습니다.
 
@@ -162,7 +162,7 @@ Cloudflare 기본 기능 시크릿은 `GATE_PASSWORD`, `GITHUB_TOKEN`, `RELAY_TO
 
 **매시 갱신을 Worker가 거는 이유**는 GitHub의 `schedule`이 최선 노력이라 혼잡 시간대에 수십 분씩 밀리기 때문입니다. 그 지연 위에서는 "당일 공고를 한 시간 안에"가 성립하지 않습니다. Cloudflare Cron Trigger는 예정 시각에 거의 그대로 뜨므로 트리거만 그쪽으로 옮겼고, 수집 자체는 그대로 GitHub 러너에서 돕니다. 다만 정시성은 **트리거 시각**의 정시성입니다 — 러너 준비와 수집에 다시 1~2분이 걸리므로 R2 반영은 그만큼 뒤입니다.
 
-**크론과 갱신 버튼이 같은 `workflow_dispatch`를 씁니다.** 둘을 갈라 주는 `repository_dispatch`를 먼저 썼다가 되돌렸습니다 — 그쪽은 `workflow_dispatch`(Actions 쓰기)와 달리 저장소 **Contents 쓰기**를 요구하는데, `GITHUB_TOKEN`은 Actions read/write만 가지고 있어 403이 납니다. 토큰을 넓히는 것보다 같은 문을 쓰는 편이 낫다고 봤습니다.
+**크론과 갱신 버튼이 같은 `workflow_dispatch`를 씁니다.** 둘을 갈라 주는 `repository_dispatch`를 먼저 썼다가 되돌렸습니다 — 그쪽은 `workflow_dispatch`(Actions 쓰기)와 달리 저장소 **Contents 쓰기**를 요구하는데, `GITHUB_PAT_TOKEN`은 Actions read/write만 가지고 있어 403이 납니다. 토큰을 넓히는 것보다 같은 문을 쓰는 편이 낫다고 봤습니다.
 
 같은 문을 써도 버튼이 크론 실행의 결과를 제 것으로 보고하지는 않습니다. 다만 그 근거는 실행 id가 **아닙니다** — `workflow_dispatch`는 204 No Content라 id를 주지 않습니다. 대신 버튼은 dispatch 시각을 받아 `?since=`로 묻고, Worker는 `created>=`를 붙여 그 뒤에 만들어진 실행만 봅니다. GitHub이 실행을 아직 만들지 않았으면 "없음"이 아니라 대기로 답합니다 — 여기서 완료로 답하면 방금 건 갱신이 시작도 전에 끝난 것으로 보입니다. 실행 id가 조회에 처음 잡히는 순간 화면이 거기에 고정하므로(`?runId=`), 폴링 도중 매시 크론이 새 실행을 걸어도 추적 대상이 갈아타지 않습니다. 2분이 넘도록 실행이 등록되지 않으면 폴링을 끊고 Actions 탭을 확인하라고 알립니다.
 

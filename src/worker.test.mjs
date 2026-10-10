@@ -17,7 +17,7 @@ const LIVE_PATH = "/api/live?mode=bid&businessType=%EB%AC%BC%ED%92%88&begin=2026
 const NOW = Date.parse("2026-08-16T23:00:00Z");
 
 function envOf(overrides = {}) {
-  return { GATE_PASSWORD: PASSWORD, GITHUB_TOKEN: "gh-token", ...(overrides.AI ? { DATA: memoryData(), AI_ANALYSIS_PASSWORD: "test-analysis-password" } : {}), ...overrides };
+  return { GATE_PASSWORD: PASSWORD, GITHUB_PAT_TOKEN: "gh-token", ...(overrides.AI ? { DATA: memoryData(), AI_ANALYSIS_PASSWORD: "test-analysis-password" } : {}), ...overrides };
 }
 function request(path, { method = "GET", headers = {}, body, origin = ORIGIN } = {}) {
   return new Request(`${origin}${path}`, { method, headers, body });
@@ -503,12 +503,12 @@ test("실패로 끝난 실행은 error를 싣는다", async (t) => {
   assert.match(state.error, /failure/);
 });
 
-test("GITHUB_TOKEN이 없으면 갱신 API는 501이다", async (t) => {
+test("GITHUB_PAT_TOKEN이 없으면 갱신 API는 501이다", async (t) => {
   const calls = stubFetch(t);
   for (const method of ["GET", "POST"]) {
-    const response = await authed("/api/refresh", { method }, envOf({ GITHUB_TOKEN: "" }));
+    const response = await authed("/api/refresh", { method }, envOf({ GITHUB_PAT_TOKEN: "" }));
     assert.equal(response.status, 501);
-    assert.match((await json(response)).message, /GITHUB_TOKEN/);
+    assert.match((await json(response)).message, /GITHUB_PAT_TOKEN/);
   }
   assert.equal(calls.length, 0);
 });
@@ -619,7 +619,7 @@ test("크론 dispatch가 실패하면 던진다", async (t) => {
   // 삼키면 Cron Trigger는 성공으로 남고 매시 갱신만 조용히 멈춘다.
   stubFetch(t, () => jsonResponse({ message: "Bad credentials" }, 401));
   await assert.rejects(() => worker.scheduled({ scheduledTime: NOW }, envOf()), /401.*Bad credentials/);
-  await assert.rejects(() => worker.scheduled({ scheduledTime: NOW }, envOf({ GITHUB_TOKEN: "" })), /GITHUB_TOKEN/);
+  await assert.rejects(() => worker.scheduled({ scheduledTime: NOW }, envOf({ GITHUB_PAT_TOKEN: "" })), /GITHUB_PAT_TOKEN/);
 });
 
 // ── 고급검색(자연어 해석) ───────────────────────────────────────────────────
