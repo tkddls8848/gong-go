@@ -46,7 +46,7 @@ jobs:
       # (docs/history/2026-08-api-relay.md) 비워 두면 직접 호출로 되돌아가 다시 타임아웃난다.
       DATA_GO_KR_RELAY_URL: ${{ secrets.DATA_GO_KR_RELAY_URL }}
       DATA_GO_KR_RELAY_TOKEN: ${{ secrets.DATA_GO_KR_RELAY_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:

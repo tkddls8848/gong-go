@@ -13,8 +13,7 @@ npm ci
 주요 환경변수는 다음과 같습니다. 전체 목록과 설명은 `.env.example`을 기준으로 합니다.
 
 - `DATA_GO_KR_SERVICE_KEY`: 공공데이터포털 일반 인증키(포털이 발급한 키 그대로. 인코딩·디코딩 구분 없음)
-- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: R2 업로드(uploader/, collector/restore-r2.js)
-- `R2_ENDPOINT`: 선택. 설정하면 `R2_ACCOUNT_ID` 대신 이 전체 주소로 R2에 접속
+- `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: R2 업로드(uploader/, collector/restore-r2.js). `R2_ENDPOINT_URL`은 대시보드의 S3 API 주소 그대로(`https://<계정ID>.r2.cloudflarestorage.com`)
 - `ANTHROPIC_API_KEY`: Anthropic 분석을 사용할 때만 필요
 - `DATA_GO_KR_RELAY_URL`, `DATA_GO_KR_RELAY_TOKEN`: 공공데이터 API 중계 경유 설정. 로컬에서는 비워 둡니다([공공데이터 API 중계](#공공데이터-api-중계) 참고)
 
@@ -156,8 +155,8 @@ raw에서 서비스 데이터를 복원할 때는 `node collector/restore-r2.js`
 올라와 있는지 확인한 뒤, 원본 개수·바이트와 서비스 파일 수·행 수·기간을 JSON으로 출력한다.
 연결이 끊긴 키는 `missing`에 모인다. `missing`이 있거나 서비스 시작일이 2020-01-01이 아니면
 종료 코드 1을 반환한다 — 이 날짜는 위 보존 방침을 그대로 옮겨 적은 것이므로, 방침을 바꾸면
-이 상수도 함께 고쳐야 한다. `R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`와 `R2_ENDPOINT`
-(또는 `R2_ACCOUNT_ID`)가 필요하다. 쓰기와 삭제는 하지 않으므로 운영 중에 돌려도 안전하다.
+이 상수도 함께 고쳐야 한다. `R2_ACCESS_KEY_ID`·`R2_SECRET_ACCESS_KEY`와 `R2_ENDPOINT_URL`이
+필요하다. 쓰기와 삭제는 하지 않으므로 운영 중에 돌려도 안전하다.
 
 발주계획 API는 과거 소급 조회를 지원하지 않으므로 확보한 스냅샷부터 보존한다.
 원본의 정정·이동에 따른 중복 정리와 수동 월별 봉인은 데이터 동기화 기능으로 유지한다.
@@ -167,7 +166,7 @@ raw에서 서비스 데이터를 복원할 때는 `node collector/restore-r2.js`
 > 읽으므로 `RELAY` 같은 다른 이름으로 등록하면 값이 들어 있어도 중계가 501을 반환합니다.
 > 시크릿은 비대화형 셸에서 등록하지 마세요(아래 [토큰 등록](#토큰-등록) 경고 참고).
 
-Cloudflare 기본 기능 시크릿은 `GATE_PASSWORD`, `GITHUB_PAT_TOKEN`, `DATA_GO_KR_RELAY_TOKEN`, `DATA_GO_KR_SERVICE_KEY`이며, AI 분석에는 별도로 `AI_ANALYSIS_PASSWORD`가 필요합니다. `GITHUB_PAT_TOKEN`이 없으면 배포 화면의 갱신 API가, `DATA_GO_KR_RELAY_TOKEN`이 없으면 수집 중계가, `DATA_GO_KR_SERVICE_KEY`가 없으면 최신 공고 합치기가 501을 반환합니다. GitHub 저장소에도 Actions용 `DATA_GO_KR_SERVICE_KEY`, `DATA_GO_KR_RELAY_URL`, `DATA_GO_KR_RELAY_TOKEN`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다.
+Cloudflare 기본 기능 시크릿은 `GATE_PASSWORD`, `GITHUB_PAT_TOKEN`, `DATA_GO_KR_RELAY_TOKEN`, `DATA_GO_KR_SERVICE_KEY`이며, AI 분석에는 별도로 `AI_ANALYSIS_PASSWORD`가 필요합니다. `GITHUB_PAT_TOKEN`이 없으면 배포 화면의 갱신 API가, `DATA_GO_KR_RELAY_TOKEN`이 없으면 수집 중계가, `DATA_GO_KR_SERVICE_KEY`가 없으면 최신 공고 합치기가 501을 반환합니다. GitHub 저장소에도 Actions용 `DATA_GO_KR_SERVICE_KEY`, `DATA_GO_KR_RELAY_URL`, `DATA_GO_KR_RELAY_TOKEN`, `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다.
 
 배포 승인, 검증 근거, 장애 대응 및 되돌리기 순서는 [출시 체크리스트](release-checklist.md)를 따릅니다. 로컬 테스트 통과만으로 운영 검증 완료라고 판단하지 않습니다.
 

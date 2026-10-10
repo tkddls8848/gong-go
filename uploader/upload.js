@@ -15,7 +15,7 @@
 //   --put-only 로컬 파일만 PUT한다. 과거 백필처럼 운영 인덱스·삭제 판정과 격리할 때 쓴다.
 //   --index-only 파일·삭제는 건드리지 않고 R2 목록과 기존 인덱스를 합쳐 index.json만 갱신한다.
 //
-// 자격증명(.env 또는 환경변수): R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+// 자격증명(.env 또는 환경변수): R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const fsSync = require("node:fs");
@@ -177,20 +177,19 @@ function makeClient() {
   });
 }
 
-// R2_ACCOUNT_ID에 대시보드가 보여 주는 엔드포인트 URL을 통째로 붙여 넣는 실수가 잦다.
-// 그대로 두면 endpoint가 https://https://... 가 되어 호스트가 "https"로 파싱되고, SDK가
-// 버킷명을 앞에 붙인 "<버킷>.https"를 찾다가 ENOTFOUND로 죽는다. 원인이 전혀 안 보이는
-// 오류라 여기서 형식을 맞춰 주고, 못 맞추면 무엇을 넣어야 하는지 말해 준다.
+// R2_ENDPOINT_URL에는 대시보드 R2 > 개요의 S3 API 주소를 그대로 넣는다. 버킷 경로(/gong-go-data)까지
+// 붙여 넣어도 주소의 origin만 쓴다 — 경로가 남으면 SDK가 버킷명을 한 번 더 붙인다. "https://"를 두 번
+// 붙이면 호스트가 "https"로 파싱되어 "ENOTFOUND gong-go-data.https"처럼 원인이 안 보이는 오류가 나므로
+// 점 없는 호스트도 여기서 거절하고 무엇을 넣어야 하는지 말해 준다.
 function endpoint() {
-  if (process.env.R2_ENDPOINT) return process.env.R2_ENDPOINT.trim().replace(/\/+$/, "");
-  const raw = required("R2_ACCOUNT_ID").trim();
-  const account = raw.replace(/^https?:\/\//, "").replace(/\.r2\.cloudflarestorage\.com.*$/i, "").replace(/\/.*$/, "");
-  if (!/^[0-9a-f]{32}$/i.test(account)) {
-    throw new Error("R2_ACCOUNT_ID가 계정 ID 형식이 아닙니다.\n"
-      + "대시보드 R2 > 개요의 S3 API 주소에서 https:// 와 .r2.cloudflarestorage.com 사이의 32자리 16진수만 넣으세요.\n"
-      + "주소를 그대로 쓰고 싶으면 R2_ENDPOINT에 전체 URL을 넣으면 됩니다.");
+  const raw = required("R2_ENDPOINT_URL").trim();
+  let url = null;
+  try { url = new URL(raw); } catch { /* 아래에서 안내한다 */ }
+  if (!url || url.protocol !== "https:" || !url.hostname.includes(".")) {
+    throw new Error("R2_ENDPOINT_URL은 https://로 시작하는 전체 주소여야 합니다.\n"
+      + "대시보드 R2 > 개요의 S3 API 주소(https://<계정ID>.r2.cloudflarestorage.com)를 넣으세요.");
   }
-  return `https://${account}.r2.cloudflarestorage.com`;
+  return url.origin;
 }
 
 async function listAll(client) {

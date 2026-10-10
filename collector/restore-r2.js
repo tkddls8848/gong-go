@@ -16,13 +16,12 @@ function restoreCsv(buffers, mode) {
   if (parseCsv(zlib.gunzipSync(body).toString("utf8")).length !== rows.length) throw new Error("복원 행 수 불일치");
   return { body, count: rows.length };
 }
-// uploader/upload.js endpoint()의 사본이다(모듈 경계상 import하지 않는다). R2_ENDPOINT를 우선 쓰고,
-// R2_ACCOUNT_ID에 주소를 통째로 넣었으면 계정 ID만 뽑는다.
+// uploader/upload.js endpoint()의 사본이다(모듈 경계상 import하지 않는다). S3 API 주소의 origin만 쓴다.
 function endpoint() {
-  if (process.env.R2_ENDPOINT) return process.env.R2_ENDPOINT.trim().replace(/\/+$/, "");
-  const account = (process.env.R2_ACCOUNT_ID || "").trim().replace(/^https?:\/\//, "").replace(/\.r2\.cloudflarestorage\.com.*$/i, "").replace(/\/.*$/, "");
-  if (!/^[0-9a-f]{32}$/i.test(account)) throw new Error("R2_ACCOUNT_ID를 확인하세요. 계정 ID 32자리만 넣거나, 전체 주소는 R2_ENDPOINT에 넣으세요.");
-  return `https://${account}.r2.cloudflarestorage.com`;
+  let url = null;
+  try { url = new URL((process.env.R2_ENDPOINT_URL || "").trim()); } catch { /* 아래에서 안내한다 */ }
+  if (!url || url.protocol !== "https:" || !url.hostname.includes(".")) throw new Error("R2_ENDPOINT_URL을 확인하세요. 대시보드 R2 > 개요의 S3 API 주소(https://<계정ID>.r2.cloudflarestorage.com)를 넣으세요.");
+  return url.origin;
 }
 async function main() {
   if (process.argv.slice(2).some((arg) => !["--commit", "--dry-run"].includes(arg))) throw new Error("--commit 또는 --dry-run만 지원합니다.");
