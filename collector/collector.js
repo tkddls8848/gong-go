@@ -41,9 +41,9 @@ async function main() {
   const state = await readState();
   if (!DATA_GO_KR_SERVICE_KEY) throw new Error(".env에 DATA_GO_KR_SERVICE_KEY를 설정하세요.");
   // 스킴이 빠진 COLLECTOR_PROXY_URL은 작업마다 ERR_INVALID_URL을 낼 뿐 원인을 드러내지 않는다.
-  // 값은 찍지 않는다 — Actions 로그에서 마스킹을 우회해 시크릿 일부가 노출된다.
+  // 공개된 Worker 주소(Actions 변수)라 받은 값을 그대로 보여 준다.
   if (process.env.COLLECTOR_PROXY_URL && !/^https?:\/\//i.test(API_BASE)) {
-    throw new Error("COLLECTOR_PROXY_URL은 스킴을 포함한 절대 URL이어야 합니다. 예: https://<worker>.workers.dev/api/relay");
+    throw new Error(`COLLECTOR_PROXY_URL은 스킴을 포함한 절대 URL이어야 합니다(받은 값: ${JSON.stringify(process.env.COLLECTOR_PROXY_URL)}). 예: https://<worker>.workers.dev/api/relay`);
   }
   const config = await readConfig();
   // --begin/--end/--no-resume은 sync.config.json을 건드리지 않고 이번 실행에만 적용된다.

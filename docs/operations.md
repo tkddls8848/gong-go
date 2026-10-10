@@ -80,10 +80,10 @@ npx wrangler secret put COLLECTOR_PROXY_TOKEN  # 직접 연 터미널에서
 npm run deploy
 
 gh secret set COLLECTOR_PROXY_TOKEN --repo tkddls8848/gong-go
-gh secret set COLLECTOR_PROXY_URL --repo tkddls8848/gong-go --body "https://gong-go.<계정>.workers.dev/api/relay"
+gh variable set COLLECTOR_PROXY_URL --repo tkddls8848/gong-go --body "https://gong-go.<계정>.workers.dev/api/relay"
 ```
 
-`COLLECTOR_PROXY_URL`을 비워 두면 러너가 직접 호출로 되돌아가 다시 타임아웃납니다.
+`COLLECTOR_PROXY_URL`은 공개된 Worker 주소라 시크릿이 아니라 Actions **변수**(variables)로 둡니다. 값을 `gh variable list`로 확인할 수 있습니다. 변수를 지우면 러너가 직접 호출로 돌아가므로, 직접 접속이 막힌 대역에서는 다시 타임아웃납니다.
 
 ### 확인
 
@@ -166,7 +166,7 @@ raw에서 서비스 데이터를 복원할 때는 `node collector/restore-r2.js`
 > 읽으므로 `RELAY` 같은 다른 이름으로 등록하면 값이 들어 있어도 중계가 501을 반환합니다.
 > 시크릿은 비대화형 셸에서 등록하지 마세요(아래 [토큰 등록](#토큰-등록) 경고 참고).
 
-Cloudflare 기본 기능 시크릿은 `GATE_PASSWORD`, `GITHUB_PAT_TOKEN`, `COLLECTOR_PROXY_TOKEN`, `DATA_GO_KR_SERVICE_KEY`이며, AI 분석에는 별도로 `AI_ANALYSIS_PASSWORD`가 필요합니다. `GITHUB_PAT_TOKEN`이 없으면 배포 화면의 갱신 API가, `COLLECTOR_PROXY_TOKEN`이 없으면 수집 중계가, `DATA_GO_KR_SERVICE_KEY`가 없으면 최신 공고 합치기가 501을 반환합니다. GitHub 저장소에도 Actions용 `DATA_GO_KR_SERVICE_KEY`, `COLLECTOR_PROXY_URL`, `COLLECTOR_PROXY_TOKEN`, `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다.
+Cloudflare 기본 기능 시크릿은 `GATE_PASSWORD`, `GITHUB_PAT_TOKEN`, `COLLECTOR_PROXY_TOKEN`, `DATA_GO_KR_SERVICE_KEY`이며, AI 분석에는 별도로 `AI_ANALYSIS_PASSWORD`가 필요합니다. `GITHUB_PAT_TOKEN`이 없으면 배포 화면의 갱신 API가, `COLLECTOR_PROXY_TOKEN`이 없으면 수집 중계가, `DATA_GO_KR_SERVICE_KEY`가 없으면 최신 공고 합치기가 501을 반환합니다. GitHub 저장소에도 Actions 시크릿 `DATA_GO_KR_SERVICE_KEY`, `COLLECTOR_PROXY_TOKEN`, `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다. 중계를 쓸 때만 Actions 변수 `COLLECTOR_PROXY_URL`을 둡니다.
 
 배포 승인, 검증 근거, 장애 대응 및 되돌리기 순서는 [출시 체크리스트](release-checklist.md)를 따릅니다. 로컬 테스트 통과만으로 운영 검증 완료라고 판단하지 않습니다.
 

@@ -44,7 +44,7 @@ jobs:
       DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
       # 러너는 apis.data.go.kr에 TCP 연결이 되지 않는다. Worker 중계를 거친다.
       # (docs/history/2026-08-api-relay.md) 비워 두면 직접 호출로 되돌아가 다시 타임아웃난다.
-      COLLECTOR_PROXY_URL: ${{ secrets.COLLECTOR_PROXY_URL }}
+      COLLECTOR_PROXY_URL: ${{ vars.COLLECTOR_PROXY_URL }}
       COLLECTOR_PROXY_TOKEN: ${{ secrets.COLLECTOR_PROXY_TOKEN }}
       R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

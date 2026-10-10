@@ -51,7 +51,7 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
-      COLLECTOR_PROXY_URL: ${{ secrets.COLLECTOR_PROXY_URL }}
+      COLLECTOR_PROXY_URL: ${{ vars.COLLECTOR_PROXY_URL }}
       COLLECTOR_PROXY_TOKEN: ${{ secrets.COLLECTOR_PROXY_TOKEN }}
       R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
