@@ -15,7 +15,7 @@ npm ci
 - `DATA_GO_KR_SERVICE_KEY`: 공공데이터포털 일반 인증키(포털이 발급한 키 그대로. 인코딩·디코딩 구분 없음)
 - `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: R2 업로드(uploader/, collector/restore-r2.js). `R2_ENDPOINT_URL`은 대시보드의 S3 API 주소 그대로(`https://<계정ID>.r2.cloudflarestorage.com`)
 - `ANTHROPIC_API_KEY`: Anthropic 분석을 사용할 때만 필요
-- `DATA_GO_KR_RELAY_URL`, `DATA_GO_KR_RELAY_TOKEN`: 공공데이터 API 중계 경유 설정. 로컬에서는 비워 둡니다([공공데이터 API 중계](#공공데이터-api-중계) 참고)
+- `DATA_GO_KR_RELAY_URL`, `DATA_GO_KR_RELAY_TOKEN`: GitHub Actions 전용 중계 설정. 로컬은 직접 접속하므로 `.env.example`에 두지 않습니다([공공데이터 API 중계](#공공데이터-api-중계) 참고)
 
 다음 값은 Worker만 읽으므로 `.env`에 두지 않습니다. `npx wrangler secret put <이름>`으로 Cloudflare에만
 등록하고 원본 값은 비밀번호 관리자에 보관합니다. `.env`에 사본을 두면 운영 값과 어긋나도 알아채지 못합니다.
