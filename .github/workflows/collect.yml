@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+      DATA_GO_KR_SERVICE_KEY: ${{ secrets.DATA_GO_KR_SERVICE_KEY }}
       # 러너는 apis.data.go.kr에 TCP 연결이 되지 않는다. Worker 중계를 거친다.
       # (docs/history/2026-08-api-relay.md) 비워 두면 직접 호출로 되돌아가 다시 타임아웃난다.
       API_BASE: ${{ secrets.API_BASE }}

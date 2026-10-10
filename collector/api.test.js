@@ -8,7 +8,7 @@ test("수집 실행마다 인증·기간·동시 요청 한도를 유지하며 �
     let active = 0, peak = 0;
     const calls = [];
     const api = createClient({
-      SERVICE_KEY: name, API_BASE: "https://" + name + ".test", RELAY_TOKEN: "relay-" + name, concurrency,
+      DATA_GO_KR_SERVICE_KEY: name, API_BASE: "https://" + name + ".test", RELAY_TOKEN: "relay-" + name, concurrency,
       async fetch(value, options) {
         const url = new URL(value);
         assert.equal(url.hostname, name + ".test");

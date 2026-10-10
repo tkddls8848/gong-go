@@ -154,12 +154,12 @@ test("최신 조회는 게이트 뒤에서 키를 붙이고 원문 응답을 전
   const calls = stubFetch(t, () => new Response('{"response":{"body":{"items":[]}}}', {
     headers: { "Content-Type": "application/json", "Retry-After": "7" },
   }));
-  const response = await authed(LIVE_PATH, {}, envOf({ SERVICE_KEY: "decoded+/key" }));
+  const response = await authed(LIVE_PATH, {}, envOf({ DATA_GO_KR_SERVICE_KEY: "service+/key" }));
   assert.equal(response.status, 200);
   assert.equal(await response.text(), '{"response":{"body":{"items":[]}}}');
   const target = new URL(calls[0].url);
   assert.equal(target.pathname, "/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch");
-  assert.equal(target.searchParams.get("ServiceKey"), "decoded+/key");
+  assert.equal(target.searchParams.get("ServiceKey"), "service+/key");
   assert.equal(target.searchParams.get("numOfRows"), "100");
   assert.equal(target.searchParams.get("pageNo"), "2");
   assert.equal(target.searchParams.get("inqryBgnDt"), "202608160000");
@@ -179,7 +179,7 @@ test("같은 최신 조회 조건은 Worker에서 5분 캐시해 상류를 한 �
   } };
   t.after(() => { if (originalCaches === undefined) delete globalThis.caches; else globalThis.caches = originalCaches; });
   const calls = stubFetch(t, () => jsonResponse({ response: { body: { items: [] } } }));
-  const env = envOf({ SERVICE_KEY: "key" });
+  const env = envOf({ DATA_GO_KR_SERVICE_KEY: "key" });
   const cookie = await gateCookie(env);
 
   const first = await authed(LIVE_PATH, { cookie }, env);
@@ -197,11 +197,11 @@ test("같은 최신 조회 조건은 Worker에서 5분 캐시해 상류를 한 �
 
 test("최신 조회는 인증·시크릿·입력 범위를 검사한 뒤에만 상류를 부른다", async (t) => {
   const calls = stubFetch(t);
-  assert.equal((await worker.fetch(request(LIVE_PATH), envOf({ SERVICE_KEY: "key" }))).status, 401);
+  assert.equal((await worker.fetch(request(LIVE_PATH), envOf({ DATA_GO_KR_SERVICE_KEY: "key" }))).status, 401);
   assert.equal((await authed(LIVE_PATH)).status, 501);
-  assert.equal((await authed("/api/live?mode=bid&businessType=물품&begin=2026-08-14&end=2026-08-17", {}, envOf({ SERVICE_KEY: "key" }))).status, 400);
-  assert.equal((await authed("/api/live?mode=wrong&businessType=물품&begin=2026-08-17&end=2026-08-17", {}, envOf({ SERVICE_KEY: "key" }))).status, 400);
-  assert.equal((await authed(LIVE_PATH, { method: "POST" }, envOf({ SERVICE_KEY: "key" }))).status, 405);
+  assert.equal((await authed("/api/live?mode=bid&businessType=물품&begin=2026-08-14&end=2026-08-17", {}, envOf({ DATA_GO_KR_SERVICE_KEY: "key" }))).status, 400);
+  assert.equal((await authed("/api/live?mode=wrong&businessType=물품&begin=2026-08-17&end=2026-08-17", {}, envOf({ DATA_GO_KR_SERVICE_KEY: "key" }))).status, 400);
+  assert.equal((await authed(LIVE_PATH, { method: "POST" }, envOf({ DATA_GO_KR_SERVICE_KEY: "key" }))).status, 405);
   assert.equal(calls.length, 0);
 });
 
@@ -705,7 +705,7 @@ test("고급검색은 게이트 뒤에 있다", async () => {
 
 test("최신 조회는 본공고에서만 제안요청정보(e발주 첨부파일정보)를 같은 경로로 묻는다", async (t) => {
   const calls = stubFetch(t, () => jsonResponse({ response: { body: { items: [] } } }));
-  const env = envOf({ SERVICE_KEY: "key" });
+  const env = envOf({ DATA_GO_KR_SERVICE_KEY: "key" });
   const ok = await authed("/api/live?mode=bid&businessType=제안요청정보&begin=2026-08-16&end=2026-08-17&pageNo=1", {}, env);
   assert.equal(ok.status, 200);
   const target = new URL(calls[0].url);

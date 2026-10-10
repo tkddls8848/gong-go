@@ -28,7 +28,7 @@ const LIVE_SERVICES = {
 };
 export async function handleLive(request, env, url, context) {
   if (request.method !== "GET") return jsonResponse({ message: "GET만 지원합니다." }, 405, { Allow: "GET" });
-  if (!env.SERVICE_KEY) return jsonResponse({ message: "SERVICE_KEY 시크릿이 설정되지 않았습니다." }, 501);
+  if (!env.DATA_GO_KR_SERVICE_KEY) return jsonResponse({ message: "DATA_GO_KR_SERVICE_KEY 시크릿이 설정되지 않았습니다." }, 501);
 
   const mode = url.searchParams.get("mode") || "";
   const businessType = url.searchParams.get("businessType") || "";
@@ -49,7 +49,7 @@ export async function handleLive(request, env, url, context) {
     if (cached) return liveClientResponse(cached, "HIT");
   }
 
-  const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(LIVE_PAGE_SIZE), inqryDiv: "1", ServiceKey: env.SERVICE_KEY });
+  const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(LIVE_PAGE_SIZE), inqryDiv: "1", ServiceKey: env.DATA_GO_KR_SERVICE_KEY });
   if (service.snapshot) {
     params.set("orderBgnYm", begin.slice(0, 7).replace("-", ""));
     params.set("orderEndYm", end.slice(0, 7).replace("-", ""));

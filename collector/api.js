@@ -39,7 +39,7 @@ function ymd(value) { return String(value).replaceAll("-", ""); }
 function ym(value) { return ymd(value).slice(0, 6); }
 
 function createClient({
-  SERVICE_KEY, API_BASE = "https://apis.data.go.kr", RELAY_TOKEN = "", concurrency = 1,
+  DATA_GO_KR_SERVICE_KEY, API_BASE = "https://apis.data.go.kr", RELAY_TOKEN = "", concurrency = 1,
   fetch = (...args) => globalThis.fetch(...args),
 }) {
   async function fetchJob(job) {
@@ -52,7 +52,7 @@ function createClient({
 
   async function fetchPage(job, pageNo) {
     const definition = MODES[job.mode];
-    const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(PAGE_SIZE), inqryDiv: "1", ...rangeParams(job), ServiceKey: SERVICE_KEY });
+    const params = new URLSearchParams({ type: "json", pageNo: String(pageNo), numOfRows: String(PAGE_SIZE), inqryDiv: "1", ...rangeParams(job), ServiceKey: DATA_GO_KR_SERVICE_KEY });
     const data = await requestJson(`${API_BASE}${definition.base}/${operationOf(job)}?${params}`, {
       mode: job.mode,
       type: job.type,

@@ -24,7 +24,7 @@ const MODE_ALIASES = { 사전공고: "pre", 본공고: "bid", 발주계획: "pla
 const MODE_LABELS = { pre: "사전공고", bid: "본공고", plan: "발주계획" };
 
 loadEnv(path.join(ROOT, ".env"));
-const SERVICE_KEY = process.env.SERVICE_KEY || "";
+const DATA_GO_KR_SERVICE_KEY = process.env.DATA_GO_KR_SERVICE_KEY || "";
 // 요청이 나가는 곳. 기본은 공공데이터포털 직접 호출이다.
 // GitHub Actions 러너에서는 apis.data.go.kr로 TCP 연결이 성립하지 않으므로(차단이 국가가 아니라
 // IP 대역 기준이다) API_BASE에 Worker의 중계 주소를 넣어 우회한다. 예:
@@ -39,7 +39,7 @@ if (require.main === module) main().catch((error) => { console.error(`수집 실
 async function main() {
   await fs.mkdir(DATA_DIR, { recursive: true });
   const state = await readState();
-  if (!SERVICE_KEY) throw new Error(".env에 SERVICE_KEY를 설정하세요.");
+  if (!DATA_GO_KR_SERVICE_KEY) throw new Error(".env에 DATA_GO_KR_SERVICE_KEY를 설정하세요.");
   // 스킴이 빠진 API_BASE는 작업마다 ERR_INVALID_URL을 낼 뿐 원인을 드러내지 않는다.
   // 값은 찍지 않는다 — Actions 로그에서 마스킹을 우회해 시크릿 일부가 노출된다.
   if (process.env.API_BASE && !/^https?:\/\//i.test(API_BASE)) {
@@ -67,7 +67,7 @@ async function main() {
     }
   }
   const httpLimit = Math.max(1, Number(config.concurrency));
-  const { fetchJob } = createClient({ SERVICE_KEY, API_BASE, RELAY_TOKEN, concurrency: httpLimit });
+  const { fetchJob } = createClient({ DATA_GO_KR_SERVICE_KEY, API_BASE, RELAY_TOKEN, concurrency: httpLimit });
   const store = await readStore(begin, end);
   const errors = [];
   const completed = new Set(state.completedJobs);
