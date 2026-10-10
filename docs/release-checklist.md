@@ -70,7 +70,7 @@ git diff --check
 ## 3. 승인 후 운영 확인
 
 1. 현재 배포 버전 ID와 코드 커밋, 시크릿 이름, 계정 플랜, Workers AI 사용량을 기록한다. 시크릿 값은 로그·이슈·스크린샷에 남기지 않는다.
-2. 기본 사이트용 `GATE_PASSWORD`, 갱신용 `GITHUB_PAT_TOKEN`, 중계용 `DATA_GO_KR_PROXY_TOKEN`, 최신 조회용 `DATA_GO_KR_SERVICE_KEY`, AI 사용용 `AI_ANALYSIS_PASSWORD` 설정을 확인한다. AI 전용 암호는 16~512자다. Workers AI 바인딩 호출용 토큰을 브라우저에 넣지 않는다.
+2. 기본 사이트용 `GATE_PASSWORD`, 갱신용 `GITHUB_PAT_TOKEN`, 중계용 `COLLECTOR_PROXY_TOKEN`, 최신 조회용 `DATA_GO_KR_SERVICE_KEY`, AI 사용용 `AI_ANALYSIS_PASSWORD` 설정을 확인한다. AI 전용 암호는 16~512자다. Workers AI 바인딩 호출용 토큰을 브라우저에 넣지 않는다.
 3. 승인된 코드만 main에 푸시한다. main 푸시는 Workers Builds가 곧바로 운영에 배포한다. AI 인증 v2 때문에 기존 AI 쿠키가 무효화되고 재입력이 필요하다. ECR cloud-v4는 이전 작업 캐시를 새 작업으로 자동 승계하지 않으므로 재분석 비용이 생길 수 있다.
 4. 로그아웃 상태의 `/api/ecr`, `/api/ai-access`, `/api/ask` 차단을 확인한다. 사이트 로그인만 한 상태에서 AI 잠금을 풀지 않고 ECR 실행을 시도해 추론·변환이 시작되지 않는지 확인한다.
 5. 허용한 사용량 범위 안에서 작은 문서 하나로 잠금 해제→변환→분석→저장→조회→동일 파일 재개를 확인한다. 기록할 항목은 파일 식별자, 대상 번호, 완료 구간 수, 단계별 시간, 사용량 변화, 오류 참조 번호다. 기밀 RFP를 검증 목적으로 임의 업로드하지 않는다.

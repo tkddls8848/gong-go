@@ -15,7 +15,7 @@ npm ci
 - `DATA_GO_KR_SERVICE_KEY`: 공공데이터포털 일반 인증키(포털이 발급한 키 그대로. 인코딩·디코딩 구분 없음)
 - `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: R2 업로드(uploader/, collector/restore-r2.js). `R2_ENDPOINT_URL`은 대시보드의 S3 API 주소 그대로(`https://<계정ID>.r2.cloudflarestorage.com`)
 - `ANTHROPIC_API_KEY`: Anthropic 분석을 사용할 때만 필요
-- `DATA_GO_KR_PROXY_URL`, `DATA_GO_KR_PROXY_TOKEN`: GitHub Actions 전용 중계 설정. 로컬은 직접 접속하므로 `.env.example`에 두지 않습니다([공공데이터 API 중계](#공공데이터-api-중계) 참고)
+- `COLLECTOR_PROXY_URL`, `COLLECTOR_PROXY_TOKEN`: GitHub Actions 전용 중계 설정. 로컬은 직접 접속하므로 `.env.example`에 두지 않습니다([공공데이터 API 중계](#공공데이터-api-중계) 참고)
 
 다음 값은 Worker만 읽으므로 `.env`에 두지 않습니다. `npx wrangler secret put <이름>`으로 Cloudflare에만
 등록하고 원본 값은 비밀번호 관리자에 보관합니다. `.env`에 사본을 두면 운영 값과 어긋나도 알아채지 못합니다.
@@ -55,10 +55,10 @@ Cloudflare Workers Builds가 이 저장소에 연결되어 있어 **main 푸시�
 GitHub Actions 러너에서는 `apis.data.go.kr:443`으로 TCP 연결이 성립하지 않습니다. 거부가 아니라 타임아웃이고, 같은 코드가 국내에서는 33ms 만에 붙습니다. 차단 기준은 국가가 아니라 **IP 대역**입니다 — Cloudflare 엣지에서는 미국 LAX colo에서도 155~515ms로 응답이 옵니다. 그래서 러너의 수집 요청만 Worker가 대신 내보냅니다.
 
 ```text
-수집기(러너) --Bearer DATA_GO_KR_PROXY_TOKEN--> Worker /api/relay --> apis.data.go.kr
+수집기(러너) --Bearer COLLECTOR_PROXY_TOKEN--> Worker /api/relay --> apis.data.go.kr
 ```
 
-`DATA_GO_KR_PROXY_URL`이 비어 있으면 수집기는 `apis.data.go.kr`을 직접 부릅니다. 국내 로컬은 설정할 필요가 없고, 러너에서만 중계를 탑니다.
+`COLLECTOR_PROXY_URL`이 비어 있으면 수집기는 `apis.data.go.kr`을 직접 부릅니다. 국내 로컬은 설정할 필요가 없고, 러너에서만 중계를 탑니다.
 
 중계는 두 가지로 제한됩니다.
 
@@ -76,14 +76,14 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 > **`wrangler secret put`을 비대화형 셸에서 실행하지 마세요.** 숨김 입력 프롬프트가 EOF를 읽어 **빈 값이 등록**됩니다. 프롬프트 없이 곧바로 성공 메시지가 찍혀 사고를 알아채기 어렵습니다(과거 `GATE_PASSWORD`가 이렇게 두 번 비었습니다). 직접 연 터미널이나 Cloudflare 대시보드에서만 등록합니다.
 
 ```powershell
-npx wrangler secret put DATA_GO_KR_PROXY_TOKEN  # 직접 연 터미널에서
+npx wrangler secret put COLLECTOR_PROXY_TOKEN  # 직접 연 터미널에서
 npm run deploy
 
-gh secret set DATA_GO_KR_PROXY_TOKEN --repo tkddls8848/gong-go
-gh secret set DATA_GO_KR_PROXY_URL --repo tkddls8848/gong-go --body "https://gong-go.<계정>.workers.dev/api/relay"
+gh secret set COLLECTOR_PROXY_TOKEN --repo tkddls8848/gong-go
+gh secret set COLLECTOR_PROXY_URL --repo tkddls8848/gong-go --body "https://gong-go.<계정>.workers.dev/api/relay"
 ```
 
-`DATA_GO_KR_PROXY_URL`을 비워 두면 러너가 직접 호출로 되돌아가 다시 타임아웃납니다.
+`COLLECTOR_PROXY_URL`을 비워 두면 러너가 직접 호출로 되돌아가 다시 타임아웃납니다.
 
 ### 확인
 
@@ -104,7 +104,7 @@ curl -s -i "https://gong-go.<계정>.workers.dev/api/relay/1230000/ad/BidPublicI
 |---|---|---|
 | 401 | JSON `중계 토큰이 올바르지 않습니다` | 정상. 시크릿이 있고 인증이 동작합니다 |
 | 401 | HTML 로그인 화면 | 중계 경로가 없는 **구 배포본**입니다. `npm run deploy` 하세요 |
-| **501** | JSON `DATA_GO_KR_PROXY_TOKEN 시크릿이 설정되지 않았습니다` | **시크릿이 비었거나 이름이 다릅니다** |
+| **501** | JSON `COLLECTOR_PROXY_TOKEN 시크릿이 설정되지 않았습니다` | **시크릿이 비었거나 이름이 다릅니다** |
 
 ## R2 업로드와 배포
 
@@ -116,7 +116,7 @@ node uploader/upload.js --commit  # 확인한 내용을 실제 R2에 반영
 npx wrangler secret put GATE_PASSWORD
 npx wrangler secret put AI_ANALYSIS_PASSWORD
 npx wrangler secret put GITHUB_PAT_TOKEN
-npx wrangler secret put DATA_GO_KR_PROXY_TOKEN  # 이름이 정확해야 한다 — 아래 주의 참고
+npx wrangler secret put COLLECTOR_PROXY_TOKEN  # 이름이 정확해야 한다 — 아래 주의 참고
 npx wrangler secret put DATA_GO_KR_SERVICE_KEY  # 저장 결과 위에 최신 공고를 합치는 /api/live용
 npm run deploy
 ```
@@ -162,11 +162,11 @@ raw에서 서비스 데이터를 복원할 때는 `node collector/restore-r2.js`
 원본의 정정·이동에 따른 중복 정리와 수동 월별 봉인은 데이터 동기화 기능으로 유지한다.
 데이터가 오래됐다는 이유로 삭제하지 않는다.
 
-> 시크릿 이름은 코드가 읽는 것과 **정확히** 같아야 합니다. Worker는 `env.DATA_GO_KR_PROXY_TOKEN`을
+> 시크릿 이름은 코드가 읽는 것과 **정확히** 같아야 합니다. Worker는 `env.COLLECTOR_PROXY_TOKEN`을
 > 읽으므로 `RELAY` 같은 다른 이름으로 등록하면 값이 들어 있어도 중계가 501을 반환합니다.
 > 시크릿은 비대화형 셸에서 등록하지 마세요(아래 [토큰 등록](#토큰-등록) 경고 참고).
 
-Cloudflare 기본 기능 시크릿은 `GATE_PASSWORD`, `GITHUB_PAT_TOKEN`, `DATA_GO_KR_PROXY_TOKEN`, `DATA_GO_KR_SERVICE_KEY`이며, AI 분석에는 별도로 `AI_ANALYSIS_PASSWORD`가 필요합니다. `GITHUB_PAT_TOKEN`이 없으면 배포 화면의 갱신 API가, `DATA_GO_KR_PROXY_TOKEN`이 없으면 수집 중계가, `DATA_GO_KR_SERVICE_KEY`가 없으면 최신 공고 합치기가 501을 반환합니다. GitHub 저장소에도 Actions용 `DATA_GO_KR_SERVICE_KEY`, `DATA_GO_KR_PROXY_URL`, `DATA_GO_KR_PROXY_TOKEN`, `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다.
+Cloudflare 기본 기능 시크릿은 `GATE_PASSWORD`, `GITHUB_PAT_TOKEN`, `COLLECTOR_PROXY_TOKEN`, `DATA_GO_KR_SERVICE_KEY`이며, AI 분석에는 별도로 `AI_ANALYSIS_PASSWORD`가 필요합니다. `GITHUB_PAT_TOKEN`이 없으면 배포 화면의 갱신 API가, `COLLECTOR_PROXY_TOKEN`이 없으면 수집 중계가, `DATA_GO_KR_SERVICE_KEY`가 없으면 최신 공고 합치기가 501을 반환합니다. GitHub 저장소에도 Actions용 `DATA_GO_KR_SERVICE_KEY`, `COLLECTOR_PROXY_URL`, `COLLECTOR_PROXY_TOKEN`, `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`를 등록해야 합니다.
 
 배포 승인, 검증 근거, 장애 대응 및 되돌리기 순서는 [출시 체크리스트](release-checklist.md)를 따릅니다. 로컬 테스트 통과만으로 운영 검증 완료라고 판단하지 않습니다.
 

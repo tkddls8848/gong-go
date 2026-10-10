@@ -10,12 +10,12 @@ const RELAY_ORIGIN = "https://apis.data.go.kr";
 // 응답이 온다. 그래서 수집기의 요청만 이 Worker가 대신 내보낸다.
 // (docs/프로젝트-통합-문서.md 2부)
 export async function handleRelay(request, env, url) {
-  if (!env.DATA_GO_KR_PROXY_TOKEN) return jsonResponse({ message: "DATA_GO_KR_PROXY_TOKEN 시크릿이 설정되지 않았습니다." }, 501);
+  if (!env.COLLECTOR_PROXY_TOKEN) return jsonResponse({ message: "COLLECTOR_PROXY_TOKEN 시크릿이 설정되지 않았습니다." }, 501);
 
   const header = request.headers.get("Authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   // 토큰이 비어 있으면 timingSafeEqual을 태우지 않는다 — 빈 문자열끼리 맞아 떨어지면 안 된다.
-  if (!token || !timingSafeEqual(token, env.DATA_GO_KR_PROXY_TOKEN)) return jsonResponse({ message: "중계 토큰이 올바르지 않습니다." }, 401);
+  if (!token || !timingSafeEqual(token, env.COLLECTOR_PROXY_TOKEN)) return jsonResponse({ message: "중계 토큰이 올바르지 않습니다." }, 401);
   if (request.method !== "GET") return jsonResponse({ message: "GET만 지원합니다." }, 405, { Allow: "GET" });
 
   const target = url.pathname.slice(RELAY_PREFIX.length - 1);

@@ -39,7 +39,7 @@ function ymd(value) { return String(value).replaceAll("-", ""); }
 function ym(value) { return ymd(value).slice(0, 6); }
 
 function createClient({
-  DATA_GO_KR_SERVICE_KEY, API_BASE = "https://apis.data.go.kr", DATA_GO_KR_PROXY_TOKEN = "", concurrency = 1,
+  DATA_GO_KR_SERVICE_KEY, API_BASE = "https://apis.data.go.kr", COLLECTOR_PROXY_TOKEN = "", concurrency = 1,
   fetch = (...args) => globalThis.fetch(...args),
 }) {
   async function fetchJob(job) {
@@ -93,7 +93,7 @@ function createClient({
       let error = null;
       try {
         const response = await fetch(url, {
-          headers: { Accept: "application/json", ...(DATA_GO_KR_PROXY_TOKEN ? { Authorization: `Bearer ${DATA_GO_KR_PROXY_TOKEN}` } : {}) },
+          headers: { Accept: "application/json", ...(COLLECTOR_PROXY_TOKEN ? { Authorization: `Bearer ${COLLECTOR_PROXY_TOKEN}` } : {}) },
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
         status = response.status;
