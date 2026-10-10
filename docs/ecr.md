@@ -244,7 +244,7 @@ PATH의 Xpdf는 한글 CID 데이터가 없으면 이 문서들의 한글을 복
 **분석 전용 잠금:** 사이트 조회 암호와 별도로 `AI_ANALYSIS_PASSWORD` Worker Secret을
 16~512자로 등록해야 합니다(문자열 길이 기준). 이 값이 없거나 허용 길이를 벗어나면 AI 호출은 기본 차단됩니다. Cloudflare의
 `gong-go` Worker 설정에서 Secret으로 등록하거나, 본인의 대화형 터미널에서
-`npx wrangler secret put AI_ANALYSIS_PASSWORD`를 실행해 입력합니다. `.env`에만 넣어서는 배포본에 적용되지 않습니다.
+`npx wrangler secret put AI_ANALYSIS_PASSWORD`를 실행해 입력합니다. Worker만 읽는 값이라 `.env`에는 두지 않습니다.
 
 AI 인증 v2 적용 배포 시 기존 AI 잠금 해제 쿠키는 무효화됩니다. 전용 비밀번호를 다시 입력하면 됩니다.
 사이트 조회 로그인은 이 변경으로 삭제되지 않습니다.

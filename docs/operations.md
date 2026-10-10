@@ -16,10 +16,14 @@ npm ci
 - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: R2 업로드(uploader/, collector/restore-r2.js)
 - `R2_ENDPOINT`: 선택. 설정하면 `R2_ACCOUNT_ID` 대신 이 전체 주소로 R2에 접속
 - `ANTHROPIC_API_KEY`: Anthropic 분석을 사용할 때만 필요
+- `API_BASE`, `RELAY_TOKEN`: 공공데이터 API 중계 경유 설정. 로컬에서는 비워 둡니다([공공데이터 API 중계](#공공데이터-api-중계) 참고)
+
+다음 값은 Worker만 읽으므로 `.env`에 두지 않습니다. `npx wrangler secret put <이름>`으로 Cloudflare에만
+등록하고 원본 값은 비밀번호 관리자에 보관합니다. `.env`에 사본을 두면 운영 값과 어긋나도 알아채지 못합니다.
+
 - `GATE_PASSWORD`: Worker 조회 화면 비밀번호
 - `AI_ANALYSIS_PASSWORD`: AI 분석 전용 암호(16자 이상, 조회 암호와 다르게). 미설정 시 ECR 분석과 자연어 검색의 AI 호출이 잠김
-- `GITHUB_PAT_TOKEN`: 배포 화면의 갱신 버튼용 GitHub fine-grained PAT. 이 저장소의 Actions read/write 권한만 부여
-- `API_BASE`, `RELAY_TOKEN`: 공공데이터 API 중계 경유 설정. 로컬에서는 비워 둡니다([공공데이터 API 중계](#공공데이터-api-중계) 참고)
+- `GITHUB_PAT_TOKEN`: 배포 화면의 갱신 버튼과 매시 cron이 collect.yml을 걸 때 쓰는 GitHub fine-grained PAT. 이 저장소의 Actions read/write 권한만 부여
 
 ## 운영 실행
 
