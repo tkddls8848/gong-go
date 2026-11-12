@@ -91,14 +91,14 @@ const LABELS = {
   수량: String.raw`(?:도입\s*)?수\s*량`,
   도입구분: String.raw`도입\s*구분|구\s*분`,
   CPU: String.raw`CPU|프로세서|Processor`,
-  메모리: String.raw`메모리|Memory|RAM|주기억\s*장치`,
+  메모리: String.raw`메모리|Memory|MEM|RAM|주기억\s*장치`,
   "로컬 디스크": String.raw`(?:내장|로컬|Local|OS)\s*(?:디스크|Disk)|디스크|Disk`,
   이중화: String.raw`이중화`,
   유지보수: String.raw`(?:무상\s*)?(?:유지\s*보수|하자\s*보수)`,
   종류: String.raw`종\s*류|유\s*형`,
   "Raw 용량": String.raw`Raw\s*용량|물리\s*용량`,
   "Usable 용량": String.raw`Usable\s*용량|가용\s*용량|유효\s*용량|실\s*사용\s*용량`,
-  "디스크 구성": String.raw`디스크\s*구성`,
+  "디스크 구성": String.raw`디스크\s*구성|디스크|Disk`,
   프로토콜: String.raw`(?:지원\s*)?프로토콜|Protocol`,
   컨트롤러: String.raw`컨트롤러|Controller`,
   성능: String.raw`성\s*능`,
@@ -107,6 +107,7 @@ const LABELS = {
   "포트 속도": String.raw`포트\s*속도`,
   "스위칭 용량": String.raw`스위칭\s*용량|Switching\s*Capacity`,
   라이선스: String.raw`라이선스|라이센스|Licen[cs]e`,
+  "기타 조건": String.raw`기\s*타(?:\s*(?:조건|사항))?`,
 };
 const NOTE = String.raw`(?:\([^)|]{0,20}\)\s*)?`;
 const LABEL_FINDERS = Object.fromEntries(Object.entries(LABELS).map(([field, label]) => [field, {
@@ -116,10 +117,32 @@ const LABEL_FINDERS = Object.fromEntries(Object.entries(LABELS).map(([field, lab
 const EDGE_PIPES = /^(?:\|\s*)+|(?:\s*\|)+$/g;
 const BULLET = /^(?:[-–—•·○●◦▪■□◆◇※*ㅇo]\s+|[①-⑳]\s*|\(?\d{1,2}[.)]\s+|[가-하][.)]\s+)/;
 const RULE_ONLY = /^[\s|:=–—-]*$/;
+// 표 칸 구분자와 글머리표만 걷어 낸 줄. 줄이 어떤 항목명으로 시작하는지 볼 때 쓴다.
+const plainLine = (line) => String(line).replace(/\s+/g, " ").trim().replace(EDGE_PIPES, "").trim().replace(BULLET, "");
+// 수량을 밝혀 적은 줄: "도입 수량: 3대", "| 수량 | 2식 |". 수와 단위가 함께 있어야 한다 —
+// "수량: 별첨 참조"는 수량을 적은 줄이 아니다.
+const QUANTITY_LABEL = /^(?:도입\s*)?수\s*량\s*(?:\([^)|]{0,20}\)\s*)?[:：|]/;
+const QUANTITY_VALUE = /\d\s*(?:대|식|EA|Set|세트|노드|개)(?![가-힣A-Za-z])/i;
+export function isQuantityLine(line) {
+  const text = plainLine(line), label = QUANTITY_LABEL.exec(text);
+  if (!label) return false;
+  const rest = text.slice(label[0].length);
+  // 단위를 항목명 쪽에 적은 표도 있다("수량(대) | 4").
+  return QUANTITY_VALUE.test(rest) || (/\d/.test(rest) && /[(（]\s*(?:대|식|EA|Set|세트|노드|개)\s*[)）]/i.test(label[0]));
+}
+// 모델이 고른 항목을 원문 줄의 명시적인 항목명으로 바로잡는다. 줄이 "도입 수량:"으로 시작하면 수량이다 —
+// 모델은 이 줄을 도입구분에 넣곤 한다(교육포털 PTL 표에서 실제로 그랬고, 그 때문에 수량 칸이 비었다).
+// 서버의 디스크는 서버 안의 디스크이므로 스토리지용 항목인 디스크 구성이 아니라 로컬 디스크다.
+// 고친 규격에는 모델이 고른 항목을 남긴다.
+export function relabelFact(kind, fact) {
+  const first = String(fact?.근거 || fact?.값 || "").split("\n")[0];
+  const field = isQuantityLine(first) ? "수량" : kind === "서버" && fact.항목 === "디스크 구성" ? "로컬 디스크" : fact.항목;
+  return field === fact.항목 ? fact : { ...fact, 항목: field, 모델항목: fact.항목 };
+}
 function cleanLine(field, line) {
-  let text = line.replace(/\s+/g, " ").trim();
+  let text = String(line).replace(/\s+/g, " ").trim();
   if (RULE_ONLY.test(text)) return "";
-  text = text.replace(EDGE_PIPES, "").trim().replace(BULLET, "");
+  text = plainLine(text);
   const finder = LABEL_FINDERS[field];
   if (finder) {
     // 표 칸에서는 항목명만 든 칸의 뒤쪽이 값이다("서버 | CPU | 2.4GHz" → "2.4GHz").

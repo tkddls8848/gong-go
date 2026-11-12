@@ -70,7 +70,7 @@
   function droppedBlock(items) {
     const dropped = droppedOf(items);
     if (!dropped.length) return "";
-    return `<section class="excluded-specs"><h3>확인 불가로 제외된 규격 ${dropped.length}건</h3><ul>${dropped.map(({ id, text }) => `<li><strong>${escape(id || "ID 없음")}</strong> ${escape(text)}</li>`).join("")}</ul><p class="excluded-note">원문에서 값을 확인하지 못해 아래 표에 싣지 않은 항목입니다. 제안요청서 원문으로 직접 확인하세요.</p></section>`;
+    return `<section class="excluded-specs"><h3>확인 불가로 제외된 규격·장비 ${dropped.length}건</h3><ul>${dropped.map(({ id, text }) => `<li><strong>${escape(id || "ID 없음")}</strong> ${escape(text)}</li>`).join("")}</ul><p class="excluded-note">원문에서 값을 확인하지 못했거나 다른 장비의 규격 줄만 가리켜 아래 표에 싣지 않은 항목입니다. 제안요청서 원문으로 직접 확인하세요.</p></section>`;
   }
   // 종류마다 빠지면 견적도 비교도 할 수 없는 규격. 한 묶음 안에서는 하나만 있어도 채운 것으로 본다
   // (용량은 Usable이나 Raw 중 하나, 포트는 수나 속도 중 하나).
@@ -82,6 +82,7 @@
   // 총괄표의 핵심 규격 칸에 싣는 항목. 나머지는 장비 카드에서 본다.
   const headline = { 서버: ["CPU", "메모리", "로컬 디스크"], 스토리지: ["Usable 용량", "Raw 용량", "디스크 구성"], 스위치: ["포트 수", "포트 속도", "스위칭 용량"] };
   const kinds = Object.keys(fields);
+  const TAPE = /테이프|tape|\bPTL\b|\bLTO\b/i;
   // 종류는 저장된 문자열이다. "toString" 같은 값이 객체의 기본 속성을 집어 오지 않게 자기 항목만 읽는다.
   const own = (table, kind) => (Object.prototype.hasOwnProperty.call(table, kind) ? table[kind] : []);
   const valuesOf = (specs, field) => specs.filter((fact) => fact.항목 === field && typeof fact.값 === "string" && fact.값.trim());
@@ -92,7 +93,10 @@
     const items = Array.isArray(data?.ecr) ? data.ecr : [];
     const list = items.flatMap((item) => (item.장비요약 || []).filter((entry) => entry && Array.isArray(entry.규격)).map((entry) => {
       const specs = specsOf(entry);
-      const missing = own(core, entry.종류).filter((group) => !group.some((field) => valuesOf(specs, field).length)).map((group) => group.join("·"));
+      // 테이프 라이브러리는 드라이브와 슬롯 수로 적는다. 디스크 용량이 없다고 핵심이 빠진 것이 아니다.
+      const tape = entry.종류 === "스토리지" && TAPE.test(`${entry.명칭 || ""} ${item.명칭 || ""}`);
+      const missing = own(core, entry.종류).filter((group) => !(tape && group.includes("Usable 용량")))
+        .filter((group) => !group.some((field) => valuesOf(specs, field).length)).map((group) => group.join("·"));
       return { item, entry, specs, missing, checks: specs.filter(needsCheck).length };
     }));
     const rank = (device) => { const at = kinds.indexOf(device.entry.종류); return at < 0 ? kinds.length : at; };

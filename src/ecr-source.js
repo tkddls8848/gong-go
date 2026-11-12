@@ -10,7 +10,9 @@ const detail = /세부\s*내용|상세\s*내용|요구사항\s*정의|CPU|메모
 // 분류로는 갈리지 않지만 명칭으로는 갈린다 — 같은 이름이 장비와 소프트웨어 양쪽에 있어도
 // 장비 쪽만 꼬리에 서버/스토리지/스위치를 달고 있다(NMS/SMS서버와 NMS/SMS, 백신관리서버와
 // 백신(PC용/서버용)). 그래서 이름이 걸려도 꼬리가 장비면 남긴다.
-const NOT_EQUIPMENT = /\bPC\b|복합기|\bUPS\b|\bDBMS\b|그룹웨어|포털|백신|메신저|전자결재|기안기|오피스|Office|미들웨어|솔루션|소프트웨어|\bSW\b|S\/W|\bWAS\b|\bNMS\b|\bSMS\b|\bDRM\b|UI\/UX|공통|교환기|IP-?PBX|IP\s?Phone|한글|웹메일|레포팅|리포팅|툴\b|\bTool\b|\bWEB\b/i;
+// 운영체제도 소프트웨어다. 교육포털 제안요청서의 ECR-004 "운영체제(OS) 교체"가 장비 표로 걸려
+// 구간 하나의 뉴런을 쓰고, 모델이 옳게 빈 목록을 돌려주자 "미추출" 경고가 떴다.
+const NOT_EQUIPMENT = /운영\s*체제|\bOS\b|\bPC\b|복합기|\bUPS\b|\bDBMS\b|그룹웨어|포털|백신|메신저|전자결재|기안기|오피스|Office|미들웨어|솔루션|소프트웨어|\bSW\b|S\/W|\bWAS\b|\bNMS\b|\bSMS\b|\bDRM\b|UI\/UX|공통|교환기|IP-?PBX|IP\s?Phone|한글|웹메일|레포팅|리포팅|툴\b|\bTool\b|\bWEB\b/i;
 // 랙은 분석 대상이 아니지만 "SFP & Rack"처럼 트랜시버를 함께 적은 표는 스위치 자료다.
 // 이름이 랙 하나로 끝나는 표만 내려놓는다("서버 RACK", "스위치 RACK").
 const RACK_ONLY = /^(?:서버|스위치|네트워크|통신)?\s*(?:랙|RACK)\s*$/i;

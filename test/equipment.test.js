@@ -83,6 +83,9 @@ test("총괄표는 핵심 규격이 빠진 장비와 확인 필요 규격을 줄
   assert.deepEqual(server.missing, ["수량", "CPU"], "값이 빈 규격은 추출된 것으로 세지 않는다");
   assert.equal(server.checks, 1);
   assert.deepEqual(storage.missing, ["Usable 용량·Raw 용량"]);
+  // 테이프 라이브러리는 드라이브·슬롯으로 적는다. 디스크 용량이 없다고 핵심 미기재로 세지 않는다.
+  const [tape] = devices({ schemaVersion: 2, ecr: [{ id: "ECR-002", 명칭: "테이프 라이브러리 시스템(PTL) 규격 정의", 장비요약: [{ 종류: "스토리지", 명칭: "테이프 라이브러리 시스템(PTL)", 규격: [spec("기타 조건", "LTO-8 FC Drive 4개 이상")] }] }] });
+  assert.deepEqual(tape.missing, ["수량"]);
   const table = overviewOf(data);
   assert.match(table, /핵심 규격\(수량·CPU·메모리·용량·포트\)을 찾지 못한 장비가 2종/);
   assert.match(table, /핵심 미기재: 수량, CPU<\/span><span class="spec-mark warn">확인 필요 1/);

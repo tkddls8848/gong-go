@@ -51,6 +51,9 @@ test("이름이 같아도 장비 표만 남기고 소프트웨어·PC·UPS 표�
   const text = table("ECR-010", "NMS/SMS서버") + table("ECR-038", "NMS/SMS") + table("ECR-012", "백신관리서버")
     + table("ECR-046", "백신(PC용/서버용)") + table("ECR-033", "PC 및 복합기") + table("ECR-026", "SAN 스위치");
   assert.deepEqual(requirementSections(text).sections.map((section) => section.id), ["ECR-010", "ECR-012", "ECR-026"]);
+  // 운영체제도 소프트웨어다. 괄호 안에 OS를 적은 서버와 BIOS는 걸리지 않는다.
+  const os = table("ECR-004", "운영체제(OS) 교체") + table("ECR-005", "x86 서버(OS 포함)") + table("ECR-006", "BIOS 설정 서버");
+  assert.deepEqual(requirementSections(os).sections.map((section) => section.id), ["ECR-005", "ECR-006"]);
 });
 
 test("쪽이 갈려 번호만 남은 표는 명칭으로 본문을 잇는다", () => {

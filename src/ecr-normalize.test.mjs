@@ -24,6 +24,11 @@ test("값에서 표 칸 구분자·글머리표·항목명 칸을 걷어 낸다"
   assert.equal(cleanValue("수량", "| 수량(대) | 2 |"), "2");
   assert.equal(cleanValue("Usable 용량", "Usable 용량 100TB 이상을 제공한다."), "100TB 이상을 제공한다.");
   assert.equal(cleanValue("포트 수", "1) 포트 수: 48Port 이상"), "48Port 이상");
+  // 교육포털 제안요청서의 서버 표가 쓰는 표기.
+  assert.equal(cleanValue("메모리", "◦ MEM: 512GB 이상 제공"), "512GB 이상 제공");
+  assert.equal(cleanValue("로컬 디스크", "◦ Disk: (OS 영역) SSD 960GB * 2ea 이상 제공"), "(OS 영역) SSD 960GB * 2ea 이상 제공");
+  assert.equal(cleanValue("기타 조건", "◦ 기타: 전원 및 팬 이중화, Hot Swap 지원"), "전원 및 팬 이중화, Hot Swap 지원");
+  assert.equal(cleanValue("수량", "◦ 도입 수량: 3대"), "3대");
 });
 
 test("조건의 일부이거나 값의 뜻을 가르는 말은 항목명으로 떼지 않는다", () => {
@@ -36,7 +41,7 @@ test("조건의 일부이거나 값의 뜻을 가르는 말은 항목명으로 �
   ]) assert.equal(cleanValue(field, quote), quote);
   assert.equal(cleanValue("NIC/HBA", "| HBA | 32Gb 2Port |"), "HBA | 32Gb 2Port", "NIC와 HBA는 한 항목이라 이름이 값이다");
   assert.equal(cleanValue("CPU", "| CPU |"), "CPU", "뒤에 남는 것이 없으면 떼지 않는다");
-  assert.equal(cleanValue("기타 조건", "| 기타 | 랙 마운트 킷 포함 |"), "기타 | 랙 마운트 킷 포함", "모르는 항목은 표 기호만 정리한다");
+  assert.equal(cleanValue("트랜시버·케이블", "| 케이블 | LC-LC 5m |"), "케이블 | LC-LC 5m", "항목명을 모르는 항목은 표 기호만 정리한다");
 });
 
 test("줄 범위로 복원한 규격만 값을 다듬고 근거와 구형 응답의 값은 그대로 둔다", () => {
