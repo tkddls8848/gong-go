@@ -49,6 +49,7 @@
       $("#ecr-tab").textContent = "ECR \uBD84\uC11D";
       $("#ecr-content").innerHTML = "";
       $("#download-ecr-btn").disabled = true;
+      $("#download-ecr-devices-btn").disabled = true;
       $("#ecr-file").value = "";
       $("#ecr-progress").textContent = "";
       selectTab(initialTab);

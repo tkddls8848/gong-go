@@ -134,3 +134,66 @@ test("누락·오류·불확실 정보는 저장된 통과 플래그보다 화�
   const legacy = { verified: true, ecr: [{ id: "ECR-001" }] };
   assert.equal(equipment.isVerified(legacy), true, "명시적인 충돌 없는 구형 검증 표시는 유지한다");
 });
+
+function runEquipmentExport(data, row = { announcementNumber: "R26-7", title: "테스트 공고" }) {
+  const captured = { rows: null, name: null, errors: [] };
+  createExports({
+    model: { currentRow: row, currentAnalysis: data }, numberOf: (item) => item.announcementNumber,
+    downloadRows: (rows, name) => { captured.rows = rows; captured.name = name; },
+    window: { alert: (message) => captured.errors.push(message) }, EquipmentSummary,
+  }).downloadEquipment();
+  return captured;
+}
+
+test("장비별 규격표 CSV는 장비 한 종이 한 줄이고 규격 항목이 한 열이다", () => {
+  const data = { schemaVersion: 2, verified: false, ecr: [
+    { id: "ECR-002", 명칭: "스토리지 도입", 출처: "rfp.pdf · 구간 3", 불확실: [], 장비요약: [{ 종류: "스토리지", 명칭: "통합 스토리지", 출처: "rfp.pdf · 구간 3", 규격: [
+      { 항목: "Usable 용량", 값: "100TB 이상", 근거: "| Usable | 100TB 이상 |", 검증: "원문 확인", 정규화: [{ 수치: 100, 단위: "TB", 조건: "이상" }] },
+      { 항목: "캐시", 값: "64GB", 근거: "64GB", 검증: "확인 필요" },
+    ] }] },
+    { id: "ECR-001", 명칭: "서버 도입", 불확실: ["[WEB 서버] 장비명 원문 확인 필요", "요구사항 ID 원문 확인 필요"], 장비요약: [
+      { 종류: "서버", 명칭: "WEB 서버", 규격: [{ 항목: "수량", 값: "운영 2대", 근거: "운영 2대", 검증: "원문 확인" }, { 항목: "수량", 값: "개발 1대", 근거: "개발 1대", 검증: "확인 필요" }, { 항목: "CPU", 값: "16Core 이상", 근거: "16Core 이상", 검증: "원문 확인" }] },
+      { 종류: "서버", 명칭: "DB 서버", 규격: [] },
+    ] },
+  ] };
+  const before = JSON.stringify(data);
+  const { rows, name } = runEquipmentExport(data);
+  const [header, ...body] = rows;
+  assert.equal(name, "gong-go-ecr-devices-R26-7");
+  assert.deepEqual(header.slice(0, 4), ["규격번호", "요청내용", "장비 종류", "장비명"]);
+  assert.equal(new Set(header).size, header.length, "같은 이름의 열이 둘이면 값이 어느 열 것인지 모른다");
+  for (const field of ["수량", "CPU", "메모리", "Usable 용량", "포트 수", "기타 조건"]) assert.ok(header.includes(field), `${field} 열이 없다`);
+  for (const row of body) assert.equal(row.length, header.length, `${row[3]} 행의 칸 수가 머리글과 다르다`);
+  const cell = (row, column) => row[header.indexOf(column)];
+  assert.deepEqual(body.map((row) => cell(row, "장비명")), ["WEB 서버", "DB 서버", "통합 스토리지"], "화면 총괄표와 같은 순서다");
+  assert.equal(cell(body[0], "수량"), "운영 2대\n개발 1대 (확인 필요)", "합산하지 않고 확인 못 한 값은 밝힌다");
+  assert.equal(cell(body[0], "핵심 미기재"), "메모리");
+  assert.equal(cell(body[0], "비고"), "[WEB 서버] 장비명 원문 확인 필요\n요구사항 ID 원문 확인 필요");
+  assert.equal(cell(body[1], "비고"), "요구사항 ID 원문 확인 필요", "다른 장비의 사유는 싣지 않고 번호 전체의 사유는 싣는다");
+  assert.equal(cell(body[1], "핵심 미기재"), "수량, CPU, 메모리");
+  assert.equal(cell(body[2], "그 밖의 항목"), "캐시: 64GB (확인 필요)", "열에 없는 항목도 버리지 않는다");
+  assert.equal(cell(body[2], "정규화 수치"), "Usable 용량: 100 TB 이상");
+  assert.equal(cell(body[2], "출처"), "rfp.pdf · 구간 3");
+  assert.equal(JSON.stringify(data), before);
+});
+
+test("장비별 규격표 CSV도 미추출 번호와 요약 없는 항목을 줄로 남긴다", () => {
+  const { rows } = runEquipmentExport({ schemaVersion: 2, verified: false, 누락: ["ECR-003"], coverage: { status: "partial", missingIds: ["ECR-003"] }, ecr: [{ id: "ECR-OLD", 명칭: "구형 장비", 기본규격: [{ 항목: "메모리", 요구사항: "256GB" }] }] });
+  const [header, ...body] = rows;
+  const note = header.indexOf("비고");
+  for (const row of body) assert.equal(row.length, header.length);
+  assert.deepEqual(body.map((row) => [row[0], row[1], row[note]]), [
+    ["", "", "추출된 장비 없음 — 원문 확인 필요"],
+    ["ECR-OLD", "구형 장비", "장비 요약 없음 — 원문 확인 필요"],
+    ["ECR-003", "", "미추출 — 원문 확인 필요"],
+  ]);
+});
+
+test("장비별 규격표 CSV는 결과가 없거나 형식이 깨졌으면 파일을 만들지 않는다", () => {
+  const none = runEquipmentExport(null);
+  assert.equal(none.rows, null);
+  assert.match(none.errors[0], /내보낼 ECR 분석 결과가 없/);
+  const broken = runEquipmentExport({ ecr: "" });
+  assert.equal(broken.rows, null);
+  assert.match(broken.errors[0], /형식/);
+});

@@ -66,7 +66,7 @@ ECR이 가장 넓게 퍼진 도메인입니다. 운영 형식을 바꿀 때는 �
 
 **수집** — Worker cron(UTC `0 0-9 * * *` = KST 09~18시 정각) 또는 화면 버튼 → `refresh.js`가 `workflow_dispatch` → Actions에서 `collector` → `uploader` → R2 → `index.json` 갱신.
 
-**ECR 분석** — 브라우저가 첨부 텍스트 업로드 → `ecr.js`가 작업 키 배치와 lease 잠금 → `ecr-source.js`가 상세 요구사항 표를 선별 → 구간을 Workers AI에 보냄 → 결과 병합 → **결과를 저장하지 않고** 응답. 화면이 `equipment.js`로 검증해 표시.
+**ECR 분석** — 브라우저가 첨부 텍스트 업로드 → `ecr.js`가 작업 키 배치와 lease 잠금 → `ecr-source.js`가 상세 요구사항 표를 선별(업로드당 한 번) → `ecr-chunks.js`가 줄 단위 구간으로 나눔 → 구간을 Workers AI에 보냄 → `ecr-merge.js`가 요구사항 번호별로 묶고 같은 장비를 합침 → `ecr-normalize.js`가 값을 다듬고 수치를 읽음 → **결과를 저장하지 않고** 응답. 화면이 `equipment.js`로 검증해 총괄표와 장비 카드로 표시.
 
 ## Persistence
 

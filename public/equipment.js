@@ -72,6 +72,47 @@
     if (!dropped.length) return "";
     return `<section class="excluded-specs"><h3>확인 불가로 제외된 규격 ${dropped.length}건</h3><ul>${dropped.map(({ id, text }) => `<li><strong>${escape(id || "ID 없음")}</strong> ${escape(text)}</li>`).join("")}</ul><p class="excluded-note">원문에서 값을 확인하지 못해 아래 표에 싣지 않은 항목입니다. 제안요청서 원문으로 직접 확인하세요.</p></section>`;
   }
+  // 종류마다 빠지면 견적도 비교도 할 수 없는 규격. 한 묶음 안에서는 하나만 있어도 채운 것으로 본다
+  // (용량은 Usable이나 Raw 중 하나, 포트는 수나 속도 중 하나).
+  const core = {
+    서버: [["수량"], ["CPU"], ["메모리"]],
+    스토리지: [["수량"], ["Usable 용량", "Raw 용량"]],
+    스위치: [["수량"], ["포트 수", "포트 속도"]],
+  };
+  // 총괄표의 핵심 규격 칸에 싣는 항목. 나머지는 장비 카드에서 본다.
+  const headline = { 서버: ["CPU", "메모리", "로컬 디스크"], 스토리지: ["Usable 용량", "Raw 용량", "디스크 구성"], 스위치: ["포트 수", "포트 속도", "스위칭 용량"] };
+  const kinds = Object.keys(fields);
+  // 종류는 저장된 문자열이다. "toString" 같은 값이 객체의 기본 속성을 집어 오지 않게 자기 항목만 읽는다.
+  const own = (table, kind) => (Object.prototype.hasOwnProperty.call(table, kind) ? table[kind] : []);
+  const valuesOf = (specs, field) => specs.filter((fact) => fact.항목 === field && typeof fact.값 === "string" && fact.값.trim());
+  // 장비 하나씩의 요약. 화면의 총괄표와 장비별 CSV가 이것 하나를 쓴다 — 둘이 장비를 따로 세면
+  // 어긋났을 때 어느 쪽도 믿을 수 없다. 종류 순으로 모으고 그 안에서는 문서에 나온 순서다.
+  // 미기재는 추출값이 없다는 뜻이지 원문에 없다는 판정이 아니다.
+  function devices(data) {
+    const items = Array.isArray(data?.ecr) ? data.ecr : [];
+    const list = items.flatMap((item) => (item.장비요약 || []).filter((entry) => entry && Array.isArray(entry.규격)).map((entry) => {
+      const specs = specsOf(entry);
+      const missing = own(core, entry.종류).filter((group) => !group.some((field) => valuesOf(specs, field).length)).map((group) => group.join("·"));
+      return { item, entry, specs, missing, checks: specs.filter(needsCheck).length };
+    }));
+    const rank = (device) => { const at = kinds.indexOf(device.entry.종류); return at < 0 ? kinds.length : at; };
+    return list.map((device, index) => ({ device, index })).sort((a, b) => rank(a.device) - rank(b.device) || a.index - b.index).map(({ device }) => device);
+  }
+  const oneLine = (facts) => facts.map((fact) => fact.값.trim().replace(/\s*\n\s*/g, " / ")).join(" / ");
+  const clip = (text, limit) => (text.length > limit ? `${text.slice(0, limit - 1)}…` : text);
+  // 장비를 한 줄씩 늘어놓은 표. 카드를 하나씩 펴 보지 않고도 무엇을 몇 대 사는지 훑을 수 있게 한다.
+  function overviewBlock(data) {
+    const list = devices(data);
+    if (!list.length) return "";
+    const lacking = list.filter((device) => device.missing.length).length;
+    const rows = list.map(({ item, entry, specs, missing, checks }) => {
+      const quantity = valuesOf(specs, "수량");
+      const picks = own(headline, entry.종류).map((field) => [field, valuesOf(specs, field)]).filter(([, facts]) => facts.length);
+      const marks = [missing.length ? `<span class="spec-mark warn">핵심 미기재: ${escape(missing.join(", "))}</span>` : "", checks ? `<span class="spec-mark warn">확인 필요 ${checks}</span>` : ""].join("") || '<span class="spec-mark ok">핵심 항목 추출</span>';
+      return `<tr class="spec-row ${missing.length || checks ? "unverified" : "verified"}"><td>${escape(entry.종류 || "미기재")}</td><td class="overview-id">${escape(item.id || "ID 없음")}</td><th scope="row">${escape(entry.명칭 || "장비명 확인 필요")}</th><td>${quantity.length ? escape(clip(oneLine(quantity), 60)) : "미기재"}</td><td>${picks.length ? picks.map(([field, facts]) => `<span class="overview-spec"><b>${escape(field)}</b> ${escape(clip(oneLine(facts), 90))}</span>`).join("") : "미기재"}</td><td class="overview-marks">${marks}</td></tr>`;
+    }).join("");
+    return `<section class="equipment-overview"><h3>장비 총괄 <small>${list.length}종</small></h3>${lacking ? `<p class="warning-text">핵심 규격(수량·CPU·메모리·용량·포트)을 찾지 못한 장비가 ${lacking}종 있습니다. 원문에 없는 것인지 추출에서 빠진 것인지 아래 카드와 원문으로 확인하세요.</p>` : ""}<div class="ecr-scroll"><table class="nested-spec overview-table"><thead><tr><th>종류</th><th>번호</th><th>장비명</th><th>수량</th><th>핵심 규격</th><th>확인</th></tr></thead><tbody>${rows}</tbody></table></div><p class="hint">수량과 규격은 원문 표현 그대로이며 합산·환산하지 않았습니다. 긴 값은 줄여 적었으니 전체는 아래 카드에서 확인하세요.</p></section>`;
+  }
   // 0건인 종류도 0으로 적는다. "없다"도 읽어야 하는 정보다 — 빠뜨린 것인지 없는 것인지 갈린다.
   function countsBlock(groups) {
     const checks = groups.reduce((sum, { found }) => sum + found.reduce((inner, { entry }) => inner + specsOf(entry).filter(needsCheck).length, 0), 0);
@@ -115,8 +156,9 @@
         }).join("")}</tbody></table></div><details><summary>ECR 원문 보기 · ${escape(item.id)}</summary><div class="detail-text">${escape(item.세부내용_원문 || "원문 없음")}</div></details></article>`;
       }).join("")}</section>`;
     });
-    return `<div class="equipment-summaries">${legacyWarning}${countsBlock(groups)}<p class="hint">${escape(coverageText)}</p><p class="hint">원문 표현과 조건을 그대로 표시합니다. 미기재는 추출값이 없다는 뜻이며, 근거 대조는 규격 해석의 정확성을 보증하지 않습니다.</p>${dropped}${(data.verification?.warnings || []).map((warning) => `<p class="warning-text">${escape(warning)}</p>`).join("")}${sections.join("")}</div>`;
+    return `<div class="equipment-summaries">${legacyWarning}${countsBlock(groups)}<p class="hint">${escape(coverageText)}</p><p class="hint">원문 표현과 조건을 그대로 표시합니다. 미기재는 추출값이 없다는 뜻이며, 근거 대조는 규격 해석의 정확성을 보증하지 않습니다.</p>${dropped}${(data.verification?.warnings || []).map((warning) => `<p class="warning-text">${escape(warning)}</p>`).join("")}${overviewBlock(data)}${sections.join("")}</div>`;
   }
-  if (typeof module !== "undefined" && module.exports) module.exports = { render, validate, isVerified, normalized };
-  else root.EquipmentSummary = { render, validate, isVerified, normalized };
+  const api = { render, validate, isVerified, normalized, devices, fields };
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  else root.EquipmentSummary = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

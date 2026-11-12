@@ -337,13 +337,31 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
 .spec-row.unverified { border-left-color: var(--warn-dot); background: var(--warn-bg); }
 .spec-row.missing td { color: var(--faint); }
 .nested-spec thead tr { border-left: 3px solid transparent; }
-.spec-value { overflow-wrap: anywhere; }
+/* 여러 줄에 걸친 규격은 줄마다 다듬은 값이다. 줄바꿈을 살려야 한 줄이 한 조건으로 읽힌다. */
+.spec-value { overflow-wrap: anywhere; white-space: pre-line; }
 .spec-mark { display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 17px; white-space: nowrap; }
 .spec-mark.ok { border: 1px solid var(--ok-line); background: var(--ok-bg); color: var(--ok); }
 .spec-mark.warn { border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn); }
 .spec-norm { display: block; margin-top: 3px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .equipment-tally { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0 0; }
 .equipment-tally .spec-mark { margin-left: 0; }
+/* 장비 총괄표. 장비 한 종이 한 줄이다. 카드를 펴 보기 전에 무엇을 몇 대 사는지 훑는 자리.
+   공고 목록 표의 칸별 규칙(5·6번째 칸 오른쪽 정렬, 칸 너비)이 걸리지 않게 칸마다 다시 정한다.
+   좁은 화면에서는 칸을 접지 않고 .ecr-scroll 안에서 옆으로 민다 — 한 줄이 한 장비여야 훑을 수 있다. */
+.equipment-overview h3 { margin: 20px 0 10px; font-size: 15px; }
+.equipment-overview h3 small { margin-left: 6px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.overview-table { min-width: 720px; }
+.overview-table th, .overview-table td { width: auto; text-align: left; vertical-align: top; color: var(--text-2); font-family: inherit; font-size: 12px; }
+.overview-table thead th { color: var(--muted); }
+.overview-table tbody th { padding: 8px 10px; border-bottom: 1px solid var(--line-weak); color: var(--text); font-weight: 600; min-width: 120px; overflow-wrap: anywhere; }
+.overview-table td:first-child { white-space: nowrap; }
+.overview-table td:nth-child(4) { min-width: 96px; }
+.overview-table td:nth-child(5) { min-width: 220px; }
+.overview-table .overview-id { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; white-space: nowrap; }
+.overview-spec { display: block; }
+.overview-spec + .overview-spec { margin-top: 3px; }
+.overview-spec b { margin-right: 4px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.overview-marks .spec-mark { margin: 0 4px 3px 0; white-space: normal; }
 
 /* ── 좁은 화면 ────────────────────────────────────────────────────────────
    레일은 서랍이 되고 표는 카드 목록이 된다. 열이 여섯이라 가로 스크롤로는 사업명을

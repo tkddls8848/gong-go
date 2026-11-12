@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { render } = require("../public/equipment");
+const { render, devices } = require("../public/equipment");
 
 test("구형 항목 하나 때문에 함께 저장된 신형 장비 요약을 숨기지 않는다", () => {
   const data = { schemaVersion: 2, verified: true, ecr: [
@@ -165,4 +165,57 @@ test("정규화 수치는 원문 값 옆에 보조로 그리고 형식이 어긋
     broken.ecr[0].장비요약[0].규격[0].정규화 = [bad];
     assert.throws(() => validate(broken), /형식이 올바르지 않습니다/);
   }
+});
+
+const spec = (항목, 값, 검증 = "원문 확인") => ({ 항목, 값, 근거: 값, 검증 });
+const overviewOf = (data) => { const output = render(data); const at = output.indexOf('<section class="equipment-overview">'); return at < 0 ? "" : output.slice(at, output.indexOf("</section>", at)); };
+
+test("장비 총괄표는 장비 한 종을 한 줄로, 종류 순으로 싣는다", () => {
+  const data = { schemaVersion: 2, verified: false, ecr: [
+    { id: "ECR-005", 장비요약: [{ 종류: "스위치", 명칭: "L3 스위치", 규격: [spec("수량", "2대"), spec("포트 수", "48Port 이상")] }] },
+    { id: "ECR-001", 장비요약: [
+      { 종류: "서버", 명칭: "WEB 서버", 규격: [spec("수량", "운영 2대\n개발 1대"), spec("CPU", "2.4GHz 16Core 이상"), spec("메모리", "256GB 이상")] },
+      { 종류: "스토리지", 명칭: "통합 스토리지", 규격: [spec("수량", "1식"), spec("Raw 용량", "200TB 이상")] },
+    ] },
+  ] };
+  const before = JSON.stringify(data);
+  const table = overviewOf(data);
+  assert.match(table, /장비 총괄 <small>3종<\/small>/);
+  const order = [...table.matchAll(/<th scope="row">([^<]+)<\/th>/g)].map((found) => found[1]);
+  assert.deepEqual(order, ["WEB 서버", "통합 스토리지", "L3 스위치"]);
+  assert.match(table, /<td>운영 2대 \/ 개발 1대<\/td>/, "여러 줄 수량은 한 줄로 잇되 합산하지 않는다");
+  assert.match(table, /<b>CPU<\/b> 2\.4GHz 16Core 이상/);
+  assert.match(table, /<b>Raw 용량<\/b> 200TB 이상/);
+  assert.equal((table.match(/핵심 항목 추출/g) || []).length, 3, "용량은 Raw나 Usable 하나, 포트는 수나 속도 하나면 채운 것이다");
+  assert.ok(!table.includes("warning-text"));
+  assert.equal(JSON.stringify(data), before);
+});
+
+test("총괄표는 핵심 규격이 빠진 장비와 확인 필요 규격을 줄마다 밝힌다", () => {
+  const data = { schemaVersion: 2, verified: false, ecr: [{ id: "ECR-002", 장비요약: [
+    { 종류: "서버", 명칭: "DB 서버", 규격: [spec("메모리", "512GB 이상", "확인 필요"), spec("CPU", "  ")] },
+    { 종류: "스토리지", 명칭: "백업 스토리지", 규격: [spec("수량", "1식")] },
+  ] }] };
+  const [server, storage] = devices(data);
+  assert.deepEqual(server.missing, ["수량", "CPU"], "값이 빈 규격은 추출된 것으로 세지 않는다");
+  assert.equal(server.checks, 1);
+  assert.deepEqual(storage.missing, ["Usable 용량·Raw 용량"]);
+  const table = overviewOf(data);
+  assert.match(table, /핵심 규격\(수량·CPU·메모리·용량·포트\)을 찾지 못한 장비가 2종/);
+  assert.match(table, /핵심 미기재: 수량, CPU<\/span><span class="spec-mark warn">확인 필요 1/);
+  assert.match(table, /핵심 미기재: Usable 용량·Raw 용량/);
+  assert.match(table, /<td>미기재<\/td>/);
+});
+
+test("총괄표는 긴 값을 줄이고 저장된 문자열을 그대로 믿지 않는다", () => {
+  const long = "가".repeat(200);
+  const table = overviewOf({ schemaVersion: 2, ecr: [{ id: "<b>ECR</b>", 장비요약: [
+    { 종류: "서버", 명칭: "<img src=x onerror=alert(1)>", 규격: [spec("CPU", long), spec("수량", "<script>2대</script>")] },
+    { 종류: "__proto__", 명칭: "기타", 규격: [spec("수량", "1대")] },
+  ] }] });
+  assert.ok(!table.includes("<img") && !table.includes("<script>") && !table.includes("<b>ECR"));
+  assert.ok(table.includes(`${"가".repeat(89)}…`) && !table.includes("가".repeat(91)), "긴 값은 줄여 적는다");
+  assert.match(table, /<td>__proto__<\/td>/, "모르는 종류도 줄을 숨기지 않는다");
+  assert.equal(overviewOf({ schemaVersion: 2, ecr: [] }), "", "장비가 없으면 빈 표를 그리지 않는다");
+  assert.deepEqual(devices(null), []);
 });

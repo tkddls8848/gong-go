@@ -22,10 +22,10 @@
 | 누락 번호 재분석 대상·직전 결과와 병합 | [ecr-retry.js](../public/ecr-retry.js) | ecr-retry, ecr-rerun |
 | 브라우저 HWP/HWPX → PDF·취소·다운로드 | [hwp-converter.js](../public/hwp-converter.js), hwp-worker.js, convert-ui.js, convert.html | hwp-converter, hwp-assets, ecr-hwp, tools/browser-convert.cjs |
 | ECR 표·경고·원문 상세 | [ecr-view.js](../public/ecr-view.js) | ecr-view, exports |
-| 장비 요약·결과 검증 | [equipment.js](../public/equipment.js) | equipment, ecr-data |
+| 장비 총괄표·핵심 규격 미기재·장비 카드·결과 검증 | [equipment.js](../public/equipment.js) | equipment, ecr-data |
 | 공고 링크·첨부·입찰 일정 | [notice-view.js](../public/notice-view.js) | notice-view |
 | 상세 모달·포커스·탭 | [notice-modal.js](../public/notice-modal.js) | notice-modal, ecr-progress, 브라우저 검증 |
-| 공고·이번 ECR 결과 내보내기 | [exports.js](../public/exports.js), [csv.js](../public/csv.js) | exports, csv |
+| 공고·이번 ECR 결과(규격번호별·장비별) 내보내기 | [exports.js](../public/exports.js), [csv.js](../public/csv.js) | exports, csv |
 | 통신 시간 제한·오류 | [http.js](../public/http.js) | http |
 | KST 날짜·표시·HTML 이스케이프 | [dates.js](../public/dates.js), [format.js](../public/format.js) | dates, notice-view |
 | 테마·레이아웃·반응형 화면 | [style.css](../public/style.css) | ui-contract, 브라우저 검증 |
@@ -54,7 +54,9 @@ test/의 파일명 규칙은 셋입니다 — 모듈 단위는 `<모듈>.test.js
 | 자연어 스키마·규칙 파서·날짜 해석 | [ask.js](../src/ask.js) |
 | ECR 작업·추론·결과 응답(저장 없음) | [ecr.js](../src/ecr.js) |
 | ECR 원문 선별·번호 대조·오류 | ecr-source.js, ecr-coverage.js, ecr-errors.js |
-| ECR 규격 수치·단위 정규화(모델 호출 없음) | ecr-normalize.js |
+| ECR 구간 나누기(줄 단위·표 머리 반복·반분) | ecr-chunks.js |
+| ECR 구간 결과 병합(번호별 묶기·같은 장비 합치기·원문 잇기, 모델 호출 없음) | ecr-merge.js |
+| ECR 규격 값 다듬기·수치·단위 정규화(모델 호출 없음) | ecr-normalize.js |
 | AI 권한·예산 | ai-access.js, ai-budget.js |
 | KST 날짜 해석 공용 | [kst-date.js](../src/kst-date.js) |
 | 범용 응답 헬퍼(JSON·HTML·리다이렉트·상수 시간 비교) | [http.js](../src/http.js) |

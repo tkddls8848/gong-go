@@ -98,6 +98,7 @@ test("조회 줄에는 매번 바꾸는 것만 남기고 나머지는 ☰ 메뉴
   assert.ok(!panel.includes('id="download-ecr-btn"'), "ECR 내보내기는 메뉴에 두지 않는다");
   const upload = HTML.slice(at('id="ecr-upload-form"'), at('id="ecr-content"'));
   assert.ok(upload.includes('id="download-ecr-btn"'), "ECR 내보내기는 분석 모달에 있어야 한다");
+  assert.ok(upload.includes('id="download-ecr-devices-btn"') && !panel.includes('id="download-ecr-devices-btn"'), "장비별 규격표도 분석 모달에서만 내려받는다");
   // 검색은 메뉴로 내리지 않는다. 조회 줄의 유일한 주 동작이다.
   assert.ok(!panel.includes('id="search"'), "검색 버튼은 조회 줄에 남아야 한다");
 });

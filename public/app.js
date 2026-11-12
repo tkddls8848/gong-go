@@ -91,7 +91,7 @@ const { openModal, closeModal, selectTab, modalKeydown } = GongModal.createModal
   model, $, modal, html, normalizeFiles, modalSubtitle, detailLink,
   attachmentWarnings, planLinks, renderBidSchedule, stopEcrAnalysis, refreshAiAccess, loadEcr
 });
-const { downloadCsv, downloadEcr, downloadAll } = GongExports.createExports({
+const { downloadCsv, downloadEcr, downloadEquipment, downloadAll } = GongExports.createExports({
   model, $, downloadRows, MODE_NAMES, normalizeFiles, numberOf
 });
 $("#ai-unlock-form").onsubmit = unlockAiAccess;
@@ -205,7 +205,7 @@ function setMode(key) {
   $("#close-col").textContent = key === "plan" ? "\uBC1C\uC8FC\uC608\uC815" : "\uB9C8\uAC10\uC77C";
 }
 function applyMode(key) { setMode(key); closeModal(); page = 1; applyFilters(); }
-$("#previous").onclick = () => { if (page > 1) { page -= 1; renderRows(model.filtered); } }; $("#next").onclick = () => { if (page * pageSize < model.filtered.length) { page += 1; renderRows(model.filtered); } }; $("#download-btn").onclick = downloadCsv; $("#download-ecr-btn").onclick = downloadEcr;
+$("#previous").onclick = () => { if (page > 1) { page -= 1; renderRows(model.filtered); } }; $("#next").onclick = () => { if (page * pageSize < model.filtered.length) { page += 1; renderRows(model.filtered); } }; $("#download-btn").onclick = downloadCsv; $("#download-ecr-btn").onclick = downloadEcr; $("#download-ecr-devices-btn").onclick = downloadEquipment;
 $("#refresh-btn").onclick = startRefresh; $("#menu-refresh").onclick = startRefresh;
 $("#page-size").onchange = () => { pageSize = Number($("#page-size").value) || 50; page = 1; renderRows(model.filtered); };
 $("#add-row-btn").onclick = addInstitution;

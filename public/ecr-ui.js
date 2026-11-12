@@ -36,6 +36,7 @@
     function showAnalysis(data) {
       model.currentAnalysis = data;
       $("#download-ecr-btn").disabled = false;
+      $("#download-ecr-devices-btn").disabled = false;
       $("#ecr-tab").textContent = `ECR 규격 (${data.ecr.length})`;
       renderEcr(data);
       $("#ecr-content").insertAdjacentHTML("afterbegin", EquipmentSummary.render(data));

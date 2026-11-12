@@ -213,9 +213,10 @@ async function main() {
           renderEcr(data);
           document.querySelector("#ecr-content").insertAdjacentHTML("afterbegin", EquipmentSummary.render(data));
           const modal = document.querySelector(".modal");
-          return { cards: document.querySelectorAll(".equipment-card").length, width: modal.clientWidth, scrollWidth: modal.scrollWidth, renderMs: Math.round(performance.now() - started) };
+          return { cards: document.querySelectorAll(".equipment-card").length, overviewRows: document.querySelectorAll(".overview-table tbody tr").length, width: modal.clientWidth, scrollWidth: modal.scrollWidth, renderMs: Math.round(performance.now() - started) };
         });
         assert.equal(longLayout.cards, 100);
+        assert.equal(longLayout.overviewRows, 100, "장비 총괄표는 카드와 같은 수의 장비를 싣는다");
         assert.equal(await page.getByRole("heading", { name: "장비 요약 형식이 없는 요구사항 1건" }).count(), 1);
         assert.equal(await page.getByRole("button", { name: "ECR-LEGACY 구형 저장 장비 원문 상세", exact: true }).count(), 1);
         assert.match(await page.locator(".equipment-count").filter({ hasText: "분류 확인 필요" }).innerText(), /^분류 확인 필요\s+1$/);
@@ -266,6 +267,19 @@ async function main() {
         assert.equal(records[1]["요청내용"], "'=1+1", "spreadsheet formula must remain text");
         assert.equal(records[1]["스펙"], '메모리: 256GB, "이상"\n조건 유지 (수량 0)');
         console.log(`PASS ECR CSV ${viewport.width}: actual download, 5 columns, multi-equipment ownership, newlines/quotes, legacy specs, formula protection`);
+        // 장비별 규격표: 장비 한 종이 한 줄, 규격 항목이 한 열. 같은 결과를 다른 모양으로 내려받는다.
+        const [deviceDownload] = await Promise.all([page.waitForEvent("download"), page.locator("#download-ecr-devices-btn").click()]);
+        assert.match(deviceDownload.suggestedFilename(), /^gong-go-ecr-devices-/);
+        const deviceChunks = [];
+        for await (const chunk of await deviceDownload.createReadStream()) deviceChunks.push(chunk);
+        const deviceRecords = parseCsv(Buffer.concat(deviceChunks).toString("utf8"));
+        assert.deepEqual(deviceRecords.map((record) => [record["규격번호"], record["장비 종류"], record["장비명"], record["수량"]]), [
+          ["ECR-MULTI", "서버", '웹 "이중화", 서버', "2대"], ["ECR-MULTI", "스토리지", "공유 스토리지", "1식"], ["ECR-MULTI", "미분류", "추가 장비", ""], ["ECR-LEGACY", "", "", ""],
+        ]);
+        assert.equal(deviceRecords[0]["핵심 미기재"], "CPU, 메모리");
+        assert.equal(deviceRecords[3]["요청내용"], "'=1+1", "spreadsheet formula must remain text");
+        assert.equal(deviceRecords[3]["비고"], "장비 요약 없음 — 원문 확인 필요");
+        console.log(`PASS ECR device CSV ${viewport.width}: actual download, one row per device, columns per spec field`);
         await page.locator("#modal-close").click();
         await page.evaluate(() => loadIndex(false));
         assert.doesNotMatch(await page.locator("#data-count").innerText(), /ECR/);

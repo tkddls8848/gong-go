@@ -39,6 +39,8 @@ test("파일을 고르지 않으면 정렬된 첫 공고 첨부를 받아 분석
   assert.match(s.requests[0].url, /action=upload&notice=R26-1&name=%EC%A0%9C/);
   assert.equal(s.requests[0].body.name, "제안요청서.pdf");
   assert.equal(s.model.currentAnalysis.ecr.length, 1);
+  assert.equal(s.$("#download-ecr-btn").disabled, false);
+  assert.equal(s.$("#download-ecr-devices-btn").disabled, false, "결과가 있으면 장비별 규격표도 내려받을 수 있다");
   assert.equal(s.$("#ecr-retry-btn").hidden, true, "누락이 없으면 재분석을 권하지 않는다");
 });
 
