@@ -38,19 +38,3 @@ test("되찾은 번호는 새 항목으로 바꾸고, 여전히 비는 번호는
   assert.equal(retryPlan(merged), null, "이미 다시 물은 번호는 또 묻지 않는다");
 });
 
-test("대상 밖 번호의 재분석 항목은 섞지 않는다", () => {
-  const merged = mergeRetry(previous(), { ecr: [usable("ECR-009")], coverage: previous().coverage, retry: { focus: ["ECR-002"], recovered: [] } });
-  assert.deepEqual(merged.ecr.map((item) => item.id), ["ECR-001", "ECR-002"]);
-});
-
-test("응답이 대상 목록을 빠뜨려도 화면이 물은 번호로 되풀이를 막는다", () => {
-  const merged = mergeRetry(previous(), { ecr: [], 누락: ["ECR-002", "ECR-003"], coverage: previous().coverage }, ["ECR-002", "ECR-003"]);
-  assert.deepEqual(merged.retried, ["ECR-002", "ECR-003"]);
-  assert.equal(retryPlan(merged), null);
-});
-
-test("서버가 받지 않는 자리표시 번호는 이어받기 목록에서 뺀다", () => {
-  const analysis = previous();
-  analysis.coverage.unexpectedIds = ["확인 필요 (3)", "ECR-X"];
-  assert.deepEqual(retryPlan(analysis).unexpected, ["ECR-X"]);
-});

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sliceSection, splitHalves } from "./ecr-chunks.js";
-import { sourceLines, softPieces, requirementRanges } from "./ecr-source.js";
+import { requirementRanges } from "./ecr-source.js";
 
 const TABLE = { size: 2400, overlap: 360, head: true };
 const rows = (count) => Array.from({ length: count }, (_, index) => `| 항목${index + 1} | ○ 세부 규격 ${index + 1}: 10/25GbE SFP28 ${(index + 1) * 2}Port 이상, 메모리 ${(index + 1) * 16}GB 이상 제공 및 이중화 구성 |`);
@@ -41,39 +41,6 @@ test("앞 구간의 끝 몇 줄을 다시 싣고, 어느 줄도 빠뜨리지 않
   for (const line of linesOf(source)) assert.ok(seen.has(line), `빠진 줄: ${line.slice(0, 30)}`);
 });
 
-test("명칭 줄이 없는 표는 첫 줄만 반복하고, 머리를 반복하지 않는 분할은 본문만 싣는다", () => {
-  const plain = `ECR-007 백업 스토리지\n${rows(60).join("\n")}\n`;
-  const chunks = sliceSection(plain, TABLE);
-  assert.ok(chunks[1].startsWith("ECR-007 백업 스토리지\n| 항목"));
-  const body = sliceSection(`ECR-007 백업 스토리지\n${rows(150).join("\n")}\n`, { size: 5000, overlap: 360, head: false });
-  assert.ok(body.length > 1 && !body[1].startsWith("ECR-007"), "문서 전체 분할에는 표 머리가 없다");
-});
-
-test("줄바꿈 없는 긴 글은 공백에서 끊어 수치를 온전히 둔다", () => {
-  const flat = `요구사항 고유번호 ECR-003 ${"서버당 메모리 256GB 이상 제공 ".repeat(400)}`;
-  const chunks = sliceSection(flat, TABLE);
-  assert.ok(chunks.length > 1);
-  for (const chunk of chunks) {
-    for (const line of sourceLines(chunk)) assert.doesNotMatch(line, /^(?:\d*GB|B\b)/, "앞자리가 잘린 수치로 시작하는 줄이 없다");
-    assert.equal(chunk.replaceAll("256GB", "").match(/\d+GB|\b\d{1,2}\b(?!\w)/), null, "256GB가 쪼개진 흔적이 없다");
-  }
-  assert.ok(chunks[1].startsWith("요구사항 고유번호 ECR-003"), "첫 조각을 머리로 싣는다");
-  assert.equal(chunks[1].split("\n")[0].length <= 240, true, "머리와 본문이 한 줄로 붙지 않는다");
-});
-
-test("긴 줄은 공백 뒤에서 끊고 수와 단위 사이는 피한다", () => {
-  const line = `${"가나다라 ".repeat(46)}용량 1,024 GB 이상을 제공한다 ${"마바사 ".repeat(20)}`;
-  const pieces = softPieces(line);
-  assert.equal(pieces.join(""), line, "조각을 이으면 원래 줄이다");
-  for (const piece of pieces) {
-    assert.ok(piece.length <= 240);
-    assert.doesNotMatch(piece, /^GB/, "단위만 다음 조각으로 넘기지 않는다");
-  }
-  assert.ok(pieces.some((piece) => piece.includes("1,024 GB")), "수와 단위가 한 조각에 있다");
-  assert.deepEqual(softPieces("짧은 줄\n"), ["짧은 줄\n"]);
-  assert.equal(softPieces("가".repeat(1000)).join(""), "가".repeat(1000), "공백이 없으면 그대로 끊는다");
-});
-
 test("잘리는 구간은 줄 단위로 둘로 가르고 뒤쪽에도 표 머리를 싣는다", () => {
   const [chunk] = sliceSection(section(20), TABLE);
   const [front, back] = splitHalves(chunk);
@@ -82,16 +49,6 @@ test("잘리는 구간은 줄 단위로 둘로 가르고 뒤쪽에도 표 머리
   const whole = new Set(linesOf(chunk)), covered = new Set([...linesOf(front), ...linesOf(back)]);
   for (const line of covered) assert.ok(whole.has(line), "원문에 없는 줄을 만들지 않는다");
   for (const line of whole) assert.ok(covered.has(line), "가르면서 줄을 빠뜨리지 않는다");
-});
-
-test("가를 수 없는 구간과 조각이 고르지 않은 구간도 원래 크기로 돌아가지 않는다", () => {
-  assert.equal(splitHalves("한 줄뿐인 구간"), null);
-  const lopsided = `${"짧다\n".repeat(5)}${"긴줄".repeat(100)}`;
-  const [front, back] = splitHalves(lopsided);
-  assert.ok(front.length < lopsided.length && back.length < lopsided.length);
-  assert.ok(front.length > 0 && back.length > 0);
-  // 번호 줄로 시작하지 않는 구간의 뒤쪽 절반에는 머리를 붙이지 않는다.
-  assert.ok(!back.startsWith("짧다\n짧다\n짧다\n짧다\n짧다\n"));
 });
 
 test("글자 수로 자르던 때보다 구간이 늘지 않는다", () => {

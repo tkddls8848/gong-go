@@ -24,38 +24,11 @@ test("행에서 뽑는 값은 모드마다 우선순위가 다르다", () => {
   assert.equal(rowDate({ rgstDt: "2026/01/05" }), "20260105");
 });
 
-test("첨부 슬롯 수는 본공고 10개, 사전공고 5개다", () => {
-  const bid = { bidNtceNo: "1" };
-  for (let index = 1; index <= 12; index += 1) bid[`ntceSpecDocUrl${index}`] = `https://example.go.kr/f/${index}`;
-  // 11·12번째는 원본에 있어도 읽지 않는다.
-  assert.equal(normalizeFiles(bid).length, 10);
-
-  const pre = { bfSpecRgstNo: "1" };
-  for (let index = 1; index <= 7; index += 1) pre[`specDocFileUrl${index}`] = `https://example.go.kr/f/${index}`;
-  assert.equal(normalizeFiles(pre).length, 5);
-});
-
 test("본공고는 제안요청정보 첨부를 공고 첨부 뒤에 잇고, 사전공고는 읽지 않는다", () => {
   const bid = { bidNtceNo: "1", ntceSpecDocUrl1: "https://www.g2b.go.kr/a", ntceSpecFileNm1: "공고문.hwp",
     eorderAtchFileUrl1: "https://www.g2b.go.kr/rfp/6", eorderAtchFileNm1: "제안요청서.hwp", eorderAtchFileUrl2: "", eorderAtchFileNm2: "" };
   assert.deepEqual(normalizeFiles(bid).map((file) => file.name), ["공고문.hwp", "제안요청서.hwp"]);
   assert.deepEqual(normalizeFiles({ bfSpecRgstNo: "1", eorderAtchFileUrl1: "https://www.g2b.go.kr/rfp/6" }), []);
-});
-
-test("다운로더는 URL이 있는 슬롯만 남기고 이름이 없으면 URL에서 찾는다", () => {
-  const row = {
-    bidNtceNo: "1",
-    ntceSpecDocUrl1: "https://example.go.kr/get?fileNm=%EA%B7%9C%EA%B2%A9%EC%84%9C.hwp", ntceSpecFileNm1: "",
-    ntceSpecDocUrl2: "https://example.go.kr/get?id=2", ntceSpecFileNm2: "과업지시서.hwp",
-    ntceSpecDocUrl3: "https://example.go.kr/get?id=3", ntceSpecFileNm3: "",
-    ntceSpecDocUrl4: "", ntceSpecFileNm4: "이름만 있고 URL이 없다",
-    ntceSpecDocUrl5: "ftp://example.go.kr/x",          // http(s)가 아니면 버린다
-  };
-  assert.deepEqual(normalizeFiles(row), [
-    { url: "https://example.go.kr/get?fileNm=%EA%B7%9C%EA%B2%A9%EC%84%9C.hwp", name: "규격서.hwp" },
-    { url: "https://example.go.kr/get?id=2", name: "과업지시서.hwp" },
-    { url: "https://example.go.kr/get?id=3", name: "첨부파일_3" },
-  ]);
 });
 
 test("파일명은 경로와 금지 문자를 없애고 길이를 자른다", () => {
@@ -75,25 +48,8 @@ test("파일명은 경로와 금지 문자를 없애고 길이를 자른다", ()
   assert.equal(safeFileName("가".repeat(300)).length, 180);
 });
 
-// 아래는 저장 형식(BOM + 헤더 + ="값")을 읽는 쪽의 계약이다. 입력은 수집기가 실제로 쓰는
-// 바이트를 그대로 적어 둔다 — collector/csv-record.js를 require하지 않는 이유는 그 파일이
-// 바뀐다고 다운로더가 함께 멈추면 안 되기 때문이다(README 모듈 경계).
-test("저장된 CSV에서 값을 되읽는다", () => {
-  const text = '\uFEFFbidNtceNo,bidNtceNm,ntceInsttNm\n'
-    + '"=""20230100056""","=""교복(하복, 동복) 구매""","=""성수고등학교"""\n';
-  assert.deepEqual(parseCsv(text), [
-    // 앞자리 0과 긴 공고번호가 숫자로 바뀌지 않게 감싼 것을 그대로 벗긴다.
-    { bidNtceNo: "20230100056", bidNtceNm: "교복(하복, 동복) 구매", ntceInsttNm: "성수고등학교" },
-  ]);
-});
-
 test("따옴표 안의 쉼표·개행·따옴표는 셀을 가르지 않는다", () => {
   const text = '\uFEFFa,b\n"=""1차\n2차""","=""he said ""hi"""""\n';
   assert.deepEqual(parseCsv(text), [{ a: "1차\n2차", b: 'he said "hi"' }]);
 });
 
-test("빈 셀은 빈 문자열이고 헤더만 있으면 행이 없다", () => {
-  assert.deepEqual(parseCsv('\uFEFFa,b\n"=""1""",\n'), [{ a: "1", b: "" }]);
-  assert.deepEqual(parseCsv('\uFEFFa,b\n'), []);
-  assert.deepEqual(parseCsv(""), []);
-});

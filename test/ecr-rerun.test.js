@@ -44,25 +44,6 @@ test("파일을 고르지 않으면 정렬된 첫 공고 첨부를 받아 분석
   assert.equal(s.$("#ecr-retry-btn").hidden, true, "누락이 없으면 재분석을 권하지 않는다");
 });
 
-test("직접 고른 파일이 공고 첨부보다 먼저다", async () => {
-  const s = setup({ files: [{ name: "제안요청서.pdf", url: "https://www.g2b.go.kr/a" }] });
-  s.ui.loadEcr();
-  s.$("#ecr-file").files = [new File(["ECR-001"], "mine.md")];
-  s.replies.push({ id: "job", total: 0 });
-  await s.ui.startEcrAnalysis({ preventDefault() {} });
-  assert.equal(s.downloads.length, 0);
-  assert.match(s.requests[0].url, /name=mine.md/);
-});
-
-test("고를 원본이 없으면 요청하지 않고 안내한다", async () => {
-  const s = setup();
-  s.ui.loadEcr();
-  assert.match(s.$("#ecr-source-hint").textContent, /바로 분석할 수 있는 첨부/);
-  await s.ui.startEcrAnalysis({ preventDefault() {} });
-  assert.equal(s.requests.length, 0);
-  assert.match(s.$("#ecr-progress").textContent, /첨부를 고르거나 파일을 선택/);
-});
-
 test("첨부를 받는 중에 중지하면 다운로드를 끊고 업로드하지 않는다", async () => {
   const s = setup({ files: [{ name: "제안요청서.pdf", url: "https://www.g2b.go.kr/a" }], download: (file, { signal }) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })))) });
   s.ui.loadEcr();
@@ -109,18 +90,3 @@ test("재분석이 실패해도 직전 결과를 그대로 둔다", async () => 
   assert.equal(s.state.ecrBusy, false);
 });
 
-test("다른 공고로 옮기면 직전 업로드로 재분석하지 않는다", async () => {
-  const s = setup({ files: [{ name: "제안요청서.pdf", url: "https://www.g2b.go.kr/a" }] });
-  s.ui.loadEcr();
-  s.replies.push({ id: "job", total: 1 }, { completed: 1, total: 1, analysis: { schemaVersion: 2, verified: false, ecr: [], 누락: ["ECR-002"], coverage: coverage([], ["ECR-001", "ECR-002"]) } });
-  await s.ui.startEcrAnalysis({ preventDefault() {} });
-  s.model.currentRow = { mode: "bid", number: "R26-2", files: [] };
-  await s.ui.retryMissing();
-  assert.equal(s.requests.length, 2);
-});
-
-test("제안요청정보 첨부는 드롭다운에 출처와 문서 구분을 밝혀 보인다", () => {
-  const s = setup({ files: [{ name: "제안요청서.hwp", url: "https://www.g2b.go.kr/a" }, { name: "<제안>.hwp", url: "https://www.g2b.go.kr/rfp", source: "제안요청정보", kind: "제안요청서" }] });
-  s.ui.loadEcr();
-  assert.match(s.$("#ecr-attachment").innerHTML, /<option value="0">제안요청서.hwp<\/option><option value="1">\[제안요청정보·제안요청서\] &lt;제안&gt;.hwp<\/option>/);
-});

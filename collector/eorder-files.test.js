@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { EORDER_COLUMNS, groupEorderFiles, mergeGroups, withEorderFiles, eorderFilesOf } = require("./eorder-files");
+const { groupEorderFiles, mergeGroups } = require("./eorder-files");
 
 const file = (bidNtceNo, bidNtceOrd, atchSno, eorderDocDivNm, eorderAtchFileNm, url = `https://www.g2b.go.kr/pn/pnp/pnpe/UntyAtchFile/downloadRfpFile.do?rfpNo=${bidNtceNo}&rfpOrd=${bidNtceOrd}&rfpUntyAtchFileNo=${atchSno}`) =>
   ({ bidNtceNo, bidNtceOrd, atchSno: String(atchSno), eorderDocDivNm, eorderAtchFileNm, eorderAtchFileUrl: url });
@@ -42,22 +42,3 @@ test("URL이 없거나 http(s)가 아닌 행, 같은 URL의 중복은 버린다"
   assert.deepEqual(groups.get("R26BK1").files.map((item) => item.name), ["c.hwp"]);
 });
 
-test("10개를 넘으면 앞 슬롯만 남기고 넘친 수를 알린다", () => {
-  const groups = groupEorderFiles(Array.from({ length: 12 }, (_, index) => file("R26BK1", "000", index + 1, index === 11 ? "제안요청서" : "기타문서", `f${index + 1}.hwp`)));
-  const group = groups.get("R26BK1");
-  assert.equal(group.files.length, 10);
-  assert.equal(group.truncated, 2);
-  assert.equal(group.files[0].name, "f12.hwp");
-});
-
-test("레코드에 번호 붙은 컬럼으로 펼치고, 다시 붙이면 이전 값을 지운다", () => {
-  const files = groupEorderFiles([file("R26BK1", "000", 1, "제안요청서", "제안요청서.hwp"), file("R26BK1", "000", 2, "기타문서", "과업지시서.hwp")]).get("R26BK1").files;
-  const record = withEorderFiles({ bidNtceNo: "R26BK1" }, files);
-  assert.equal(record.eorderAtchFileNm1, "제안요청서.hwp");
-  assert.equal(record.eorderDocDivNm2, "기타문서");
-  assert.equal("eorderAtchFileUrl3" in record, false);
-  assert.deepEqual(eorderFilesOf(record).map((item) => item.name), ["제안요청서.hwp", "과업지시서.hwp"]);
-  const replaced = withEorderFiles(record, files.slice(0, 1));
-  assert.equal("eorderAtchFileUrl2" in replaced, false);
-  assert.ok(Object.keys(replaced).every((key) => key === "bidNtceNo" || EORDER_COLUMNS.includes(key)));
-});

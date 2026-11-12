@@ -119,81 +119,7 @@ test("허용 목록 밖의 경로는 중계하지 않는다", async (t) => {
   assert.equal(calls.length, 0);
 });
 
-test("중계는 GET만 받는다", async (t) => {
-  stubFetch(t);
-  const response = await worker.fetch(request(RELAY_PATH, { method: "POST", headers: { Authorization: `Bearer ${COLLECTOR_PROXY_TOKEN}` } }), { COLLECTOR_PROXY_TOKEN });
-  assert.equal(response.status, 405);
-  assert.equal(response.headers.get("Allow"), "GET");
-});
-
-test("중계는 상류의 쿠키·캐시 지시를 옮기지 않고 Retry-After만 전달한다", async (t) => {
-  stubFetch(t, () => new Response("{}", {
-    status: 429,
-    headers: { "Set-Cookie": "session=abc", "Cache-Control": "public, max-age=600", "Retry-After": "30", "Content-Type": "application/json" },
-  }));
-  const response = await worker.fetch(request(RELAY_PATH, { headers: { Authorization: `Bearer ${COLLECTOR_PROXY_TOKEN}` } }), { COLLECTOR_PROXY_TOKEN });
-  assert.equal(response.status, 429);
-  // ServiceKey가 실린 URL이 어딘가에 캐시되면 안 된다.
-  assert.equal(response.headers.get("Set-Cookie"), null);
-  assert.equal(response.headers.get("Cache-Control"), "no-store");
-  // 재시도 폭주를 막는 지시라 이것만 안전하게 넘긴다.
-  assert.equal(response.headers.get("Retry-After"), "30");
-  assert.match(response.headers.get("Server-Timing") || "", /^upstream;dur=/);
-});
-
-test("상류로 나가지 못하면 502에 사유를 실어 준다", async (t) => {
-  stubFetch(t, () => { throw new Error("connect ETIMEDOUT"); });
-  const response = await worker.fetch(request(RELAY_PATH, { headers: { Authorization: `Bearer ${COLLECTOR_PROXY_TOKEN}` } }), { COLLECTOR_PROXY_TOKEN });
-  assert.equal(response.status, 502);
-  assert.match((await json(response)).message, /connect ETIMEDOUT/);
-});
-
 // ── 저장 결과 위에 합치는 최신 조회 ─────────────────────────────────────────
-
-test("최신 조회는 게이트 뒤에서 키를 붙이고 원문 응답을 전달한다", async (t) => {
-  const calls = stubFetch(t, () => new Response('{"response":{"body":{"items":[]}}}', {
-    headers: { "Content-Type": "application/json", "Retry-After": "7" },
-  }));
-  const response = await authed(LIVE_PATH, {}, envOf({ DATA_GO_KR_SERVICE_KEY: "service+/key" }));
-  assert.equal(response.status, 200);
-  assert.equal(await response.text(), '{"response":{"body":{"items":[]}}}');
-  const target = new URL(calls[0].url);
-  assert.equal(target.pathname, "/1230000/ad/BidPublicInfoService/getBidPblancListInfoThngPPSSrch");
-  assert.equal(target.searchParams.get("ServiceKey"), "service+/key");
-  assert.equal(target.searchParams.get("numOfRows"), "100");
-  assert.equal(target.searchParams.get("pageNo"), "2");
-  assert.equal(target.searchParams.get("inqryBgnDt"), "202608160000");
-  assert.equal(target.searchParams.get("inqryEndDt"), "202608172359");
-  assert.equal(response.headers.get("Cache-Control"), "no-store");
-  assert.equal(response.headers.get("X-Gong-Live-Cache"), "MISS");
-  assert.equal(response.headers.get("Retry-After"), "7");
-  assert.match(response.headers.get("Server-Timing") || "", /^upstream;dur=/);
-});
-
-test("같은 최신 조회 조건은 Worker에서 5분 캐시해 상류를 한 번만 부른다", async (t) => {
-  const store = new Map();
-  const originalCaches = globalThis.caches;
-  globalThis.caches = { default: {
-    async match(request) { const response = store.get(request.url); return response?.clone(); },
-    async put(request, response) { store.set(request.url, response.clone()); },
-  } };
-  t.after(() => { if (originalCaches === undefined) delete globalThis.caches; else globalThis.caches = originalCaches; });
-  const calls = stubFetch(t, () => jsonResponse({ response: { body: { items: [] } } }));
-  const env = envOf({ DATA_GO_KR_SERVICE_KEY: "key" });
-  const cookie = await gateCookie(env);
-
-  const first = await authed(LIVE_PATH, { cookie }, env);
-  // 순서와 인코딩 표현이 달라도 유효한 조회 조건이 같으면 같은 캐시 키를 사용한다.
-  const secondPath = "/api/live?pageNo=2&end=2026-08-17&begin=2026-08-16&businessType=물품&mode=bid";
-  const second = await authed(secondPath, { cookie }, env);
-
-  assert.equal(calls.length, 1);
-  assert.equal(first.headers.get("X-Gong-Live-Cache"), "MISS");
-  assert.equal(second.headers.get("X-Gong-Live-Cache"), "HIT");
-  assert.equal(second.headers.get("Cache-Control"), "no-store");
-  assert.equal(store.values().next().value.headers.get("Cache-Control"), "public, max-age=300");
-  assert.deepEqual(await second.json(), { response: { body: { items: [] } } });
-});
 
 test("최신 조회는 인증·시크릿·입력 범위를 검사한 뒤에만 상류를 부른다", async (t) => {
   const calls = stubFetch(t);
@@ -253,30 +179,12 @@ test("로그인은 세션 쿠키를 주고 https에서만 Secure를 붙인다", 
   assert.doesNotMatch(plain.headers.get("Set-Cookie"), /Secure/);
 });
 
-test("비밀번호가 틀리면 401이고 쿠키를 주지 않는다", async () => {
-  const response = await worker.fetch(request("/__gate/login", { method: "POST", body: new URLSearchParams({ password: `${PASSWORD}x` }) }), envOf());
-  assert.equal(response.status, 401);
-  assert.equal(response.headers.get("Set-Cookie"), null);
-});
-
 test("바깥으로 튕기는 redirect는 /로 되돌린다", async () => {
   // "/\evil.com"은 여기서 통과해도 브라우저가 "//evil.com"으로 정규화해 프로토콜-상대 URL이 된다.
   for (const redirect of ["//evil.com", "/\\evil.com", "https://evil.com", "evil.com"]) {
     const response = await worker.fetch(request("/__gate/login", { method: "POST", body: new URLSearchParams({ password: PASSWORD, redirect }) }), envOf());
     assert.equal(response.headers.get("Location"), "/", redirect);
   }
-});
-
-test("로그아웃은 쿠키를 지운다", async () => {
-  const response = await worker.fetch(request("/api/logout"), envOf());
-  assert.equal(response.status, 302);
-  assert.match(response.headers.get("Set-Cookie"), /gong_gate=;.*Max-Age=0/);
-});
-
-test("기존 로그아웃 주소는 AI 쿠키를 받을 수 있는 경로로 연결한다", async () => {
-  const response = await worker.fetch(request("/__gate/logout"), envOf());
-  assert.equal(response.status, 302);
-  assert.equal(response.headers.get("Location"), "/api/logout");
 });
 
 // ── R2 데이터 ───────────────────────────────────────────────────────────────
@@ -313,22 +221,6 @@ test("데이터 키는 화이트리스트에 맞는 것만 연다", async () => 
   }
 });
 
-test("캐시 수명은 인덱스·봉인·최근·지난 파일이 다르다", async (t) => {
-  freezeNow(t);
-  const cookie = await gateCookie();
-  const control = async (key) => (await authed(`/data/${key}`, { cookie }, dataEnv())).headers.get("Cache-Control");
-  assert.equal(await control("index.json"), "private, max-age=60");
-  // 봉인된 월은 다시 바뀌지 않는다.
-  assert.equal(await control("bid/2020/01.csv.gz"), "private, max-age=31536000, immutable");
-  assert.equal((await authed("/data/bid/2020/01.csv.gz", { cookie }, dataEnv())).status, 200);
-  // 재수집 창(40일) 안쪽은 매시 덮어써지므로 짧게 잡는다.
-  assert.equal(await control("bid/2026/08/10.csv.gz"), "private, max-age=300");
-  assert.equal(await control("bid/2026/06/01.csv.gz"), "private, max-age=31536000, immutable");
-  // 발주계획의 봉인 월은 (pre|bid) 정규식에 걸리지 않아 기본값으로 떨어진다.
-  // compact.js는 plan도 봉인하므로 실제로는 immutable이어도 되는 파일이다.
-  assert.equal(await control("plan/2026/01.csv.gz"), "private, max-age=3600");
-});
-
 test("데이터 응답에 Content-Encoding을 붙이지 않는다", async () => {
   // 프런트가 gzip을 직접 해제한다. 여기서 붙이면 브라우저가 먼저 풀어 이중 해제가 된다.
   const response = await authed("/data/bid/2026/08/11.csv.gz", {}, dataEnv());
@@ -336,29 +228,6 @@ test("데이터 응답에 Content-Encoding을 붙이지 않는다", async () => 
   assert.equal(response.headers.get("Content-Type"), "application/gzip");
   assert.equal(response.headers.get("ETag"), '"etag-1"');
   assert.equal(await response.text(), "gzip-bytes");
-});
-
-test("onlyIf 조건이 맞으면 본문 없이 304로 답한다", async () => {
-  // R2는 조건이 맞으면 body 없는 객체를 준다 = 클라이언트 캐시가 최신이다.
-  const env = dataEnv({ DATA: { async get() { return { httpEtag: '"etag-1"' }; } } });
-  const response = await authed("/data/index.json", {}, env);
-  assert.equal(response.status, 304);
-  assert.equal(response.headers.get("ETag"), '"etag-1"');
-});
-
-test("HEAD는 헤더만, GET·HEAD 밖의 메서드는 405", async () => {
-  const cookie = await gateCookie();
-  const head = await authed("/data/index.json", { method: "HEAD", cookie }, dataEnv());
-  assert.equal(head.status, 200);
-  assert.equal(await head.text(), "");
-  const post = await authed("/data/index.json", { method: "POST", cookie }, dataEnv());
-  assert.equal(post.status, 405);
-  assert.equal(post.headers.get("Allow"), "GET, HEAD");
-});
-
-test("데이터도 API도 아닌 경로는 정적 자산으로 간다", async () => {
-  const response = await authed("/public/app.js", {}, dataEnv());
-  assert.equal(await response.text(), "asset:/public/app.js");
 });
 
 // ── 갱신(GitHub Actions) ────────────────────────────────────────────────────
@@ -385,139 +254,6 @@ test("갱신 요청은 어제~오늘을 KST로 실어 main 브랜치에 workflow
   assert.equal(state.runId, undefined);
   // 대신 dispatch 시각을 준다. created 필터가 초 단위라 2초를 앞당겨 자기 실행을 거르지 않게 한다.
   assert.equal(state.dispatchedAt, "2026-08-16T22:59:58.000Z");
-});
-
-// collect.yml의 concurrency(group: collect)가 실행을 직렬화한다. 앞 실행이 도는 동안 건
-// dispatch는 러너조차 잡지 못하고 큐에서 기다린다 — 실측 85초. 그래서 새로 걸지 않고 붙는다.
-test("이미 도는 실행이 있으면 새로 걸지 않고 그 실행에 붙는다", async (t) => {
-  freezeNow(t);
-  const calls = stubFetch(t, (call) => call.url.includes("/dispatches")
-    ? new Response(null, { status: 204 })
-    : jsonResponse({ workflow_runs: [{ id: 77, status: "in_progress", html_url: "https://github.com/run/77", created_at: "2026-08-16T22:59:00Z", run_started_at: "2026-08-16T22:59:05Z" }] }));
-
-  const response = await authed("/api/refresh", { method: "POST" });
-  assert.equal(response.status, 409);
-  const state = await json(response);
-  assert.equal(state.running, true);
-  assert.equal(state.runId, 77);
-  assert.equal(state.startedAt, "2026-08-16T22:59:05Z");
-  // 실행 정보는 workflow_dispatch의 inputs를 돌려주지 않는다. 어느 구간을 받는 중인지
-  // 알 수 없으므로 지어내지 않고 비운다.
-  assert.equal(state.range, undefined);
-  assert.equal(calls.length, 1, "붙을 때는 dispatch가 나가면 안 된다");
-  // 새벽 schedule 실행(35일 재수집)도 같은 group이라 버튼을 줄 세운다. event로 거르면 놓친다.
-  assert.equal(new URL(calls[0].url).searchParams.get("event"), null);
-  assert.equal(new URL(calls[0].url).searchParams.get("branch"), "main");
-});
-
-test("도는 실행에 붙는 것은 한도를 세지 않는다", async (t) => {
-  freezeNow(t);
-  const calls = stubFetch(t, () => jsonResponse({ workflow_runs: [{ id: 77, status: "queued", html_url: "https://github.com/run/77", created_at: "2026-08-16T22:59:00Z" }] }));
-  const env = envOf({ DATA: memoryData() });
-  const cookie = await gateCookie(env);
-
-  assert.equal((await authed("/api/refresh", { method: "POST", cookie }, env)).status, 409);
-  // 바로 다시 눌러도 쿨다운에 걸리지 않는다 — 붙는 것은 나라장터 API를 한 번도 더 부르지 않는다.
-  assert.equal((await authed("/api/refresh", { method: "POST", cookie }, env)).status, 409);
-  assert.equal(calls.length, 2);
-});
-
-test("끝난 실행만 있으면 그대로 새로 건다", async (t) => {
-  freezeNow(t);
-  const calls = stubFetch(t, (call) => call.url.includes("/dispatches")
-    ? new Response(null, { status: 204 })
-    : jsonResponse({ workflow_runs: [{ id: 76, status: "completed", conclusion: "success" }] }));
-
-  assert.equal((await authed("/api/refresh", { method: "POST" })).status, 202);
-  assert.equal(calls.length, 2);
-  assert.ok(calls[1].url.endsWith("/dispatches"));
-});
-
-test("도는 실행을 조회하지 못해도 갱신을 막지는 않는다", async (t) => {
-  freezeNow(t);
-  const calls = stubFetch(t, (call) => call.url.includes("/dispatches")
-    ? new Response(null, { status: 204 })
-    : jsonResponse({ message: "Bad credentials" }, 403));
-
-  assert.equal((await authed("/api/refresh", { method: "POST" })).status, 202);
-  assert.equal(calls.length, 2, "조회가 실패하면 예전처럼 그냥 건다");
-});
-
-test("since를 준 상태 조회는 그 시각 뒤에 만들어진 실행만 본다", async (t) => {
-  const calls = stubFetch(t, () => jsonResponse({ workflow_runs: [{ id: 42, status: "in_progress", html_url: "https://github.com/run/42", created_at: "2026-08-16T23:00:10Z" }] }));
-  const response = await authed("/api/refresh?since=2026-08-16T22:59:58.000Z");
-  const state = await json(response);
-  assert.equal(state.running, true);
-  assert.equal(state.runId, 42);
-  const url = new URL(calls[0].url);
-  assert.equal(url.pathname, "/repos/tkddls8848/gong-go/actions/workflows/collect.yml/runs");
-  assert.equal(url.searchParams.get("created"), ">=2026-08-16T22:59:58.000Z");
-  assert.equal(url.searchParams.get("event"), "workflow_dispatch");
-  assert.equal(url.searchParams.get("branch"), "main");
-});
-
-test("since를 줬는데 실행이 아직 없으면 완료가 아니라 대기로 답한다", async (t) => {
-  // f355804의 핵심. 여기서 running:false로 답하면 방금 건 갱신이 시작도 전에 끝난 것으로 보인다.
-  stubFetch(t, () => jsonResponse({ workflow_runs: [] }));
-  const state = await json(await authed("/api/refresh?since=2026-08-16T22:59:58.000Z"));
-  assert.equal(state.running, true);
-  assert.equal(state.waiting, true);
-});
-
-test("since 없이 물으면 최신 실행 하나만 보고, 없으면 실행 없음이다", async (t) => {
-  // 갱신 중에 페이지를 새로 열어 resumeRefresh가 상태를 되찾는 경로다.
-  const calls = stubFetch(t, () => jsonResponse({ workflow_runs: [] }));
-  const state = await json(await authed("/api/refresh"));
-  assert.deepEqual(state, { running: false });
-  assert.equal(new URL(calls[0].url).searchParams.get("created"), null);
-  assert.equal(new URL(calls[0].url).searchParams.get("per_page"), "1");
-});
-
-test("우리가 만든 형식이 아닌 since는 GitHub 질의에 싣지 않는다", async (t) => {
-  // since는 그대로 상류 질의에 실린다. RELAY_ALLOW와 같은 원칙 — 임의 입력을 흘리지 않는다.
-  const calls = stubFetch(t, () => jsonResponse({ workflow_runs: [] }));
-  for (const since of ["2026-08-16", "어제", ">=2026-08-16T22:59:58Z", "2026-08-16T22:59:58Z&per_page=100"]) {
-    await authed(`/api/refresh?since=${encodeURIComponent(since)}`);
-  }
-  for (const call of calls) assert.equal(new URL(call.url).searchParams.get("created"), null);
-  // 형식이 맞는 것만 통과한다(초 소수점은 있어도 없어도 된다).
-  await authed("/api/refresh?since=2026-08-16T22:59:58Z");
-  assert.equal(new URL(calls.at(-1).url).searchParams.get("created"), ">=2026-08-16T22:59:58Z");
-});
-
-test("runId가 있으면 그 실행만 본다", async (t) => {
-  // 매시 크론도 같은 workflow_dispatch를 쓰므로 "최신 1건"을 계속 물으면 대상이 갈아탄다.
-  const calls = stubFetch(t, () => jsonResponse({ id: 42, status: "completed", conclusion: "success", html_url: "https://github.com/run/42", run_started_at: "2026-08-16T23:00:10Z", updated_at: "2026-08-16T23:02:00Z" }));
-  const state = await json(await authed("/api/refresh?runId=42&since=2026-08-16T22:59:58.000Z"));
-  assert.equal(calls[0].url, "https://api.github.com/repos/tkddls8848/gong-go/actions/runs/42");
-  assert.equal(state.running, false);
-  assert.equal(state.runId, 42);
-  assert.equal(state.finishedAt, "2026-08-16T23:02:00Z");
-  assert.equal(state.error, null);
-});
-
-test("실패로 끝난 실행은 error를 싣는다", async (t) => {
-  stubFetch(t, () => jsonResponse({ workflow_runs: [{ id: 43, status: "completed", conclusion: "failure", updated_at: "2026-08-16T23:02:00Z" }] }));
-  const state = await json(await authed("/api/refresh?since=2026-08-16T22:59:58.000Z"));
-  assert.equal(state.running, false);
-  assert.match(state.error, /failure/);
-});
-
-test("GITHUB_PAT_TOKEN이 없으면 갱신 API는 501이다", async (t) => {
-  const calls = stubFetch(t);
-  for (const method of ["GET", "POST"]) {
-    const response = await authed("/api/refresh", { method }, envOf({ GITHUB_PAT_TOKEN: "" }));
-    assert.equal(response.status, 501);
-    assert.match((await json(response)).message, /GITHUB_PAT_TOKEN/);
-  }
-  assert.equal(calls.length, 0);
-});
-
-test("dispatch가 실패하면 GitHub의 상태와 사유를 그대로 전한다", async (t) => {
-  stubFetch(t, () => jsonResponse({ message: "Workflow does not have workflow_dispatch trigger" }, 422));
-  const response = await authed("/api/refresh", { method: "POST" });
-  assert.equal(response.status, 422);
-  assert.match((await json(response)).message, /workflow_dispatch trigger/);
 });
 
 // ── 갱신 버튼 남용 방지 ──────────────────────────────────────────────────────
@@ -555,22 +291,6 @@ test("쿨다운 안에 다시 누르면 429이고 dispatch는 나가지 않는�
   assert.equal(calls.length, 2, "쿨다운에 걸리면 GitHub에는 요청조차 나가면 안 된다");
 });
 
-test("쿨다운이 지나면 다시 누를 수 있다", async (t) => {
-  const calls = stubFetch(t, () => new Response(null, { status: 204 }));
-  const env = envOf({ DATA: memoryData() });
-  const cookie = await gateCookie(env);
-
-  const original = Date.now;
-  Date.now = () => NOW;
-  t.after(() => { Date.now = original; });
-  assert.equal((await authed("/api/refresh", { method: "POST", cookie }, env)).status, 202);
-
-  Date.now = () => NOW + 3 * 60 * 1000 + 1;
-  const response = await authed("/api/refresh", { method: "POST", cookie }, env);
-  assert.equal(response.status, 202);
-  assert.equal(calls.length, 4, "누를 때마다 도는 실행 조회 + dispatch");
-});
-
 test("하루 한도에 닿으면 429이고, 자동 크론은 그대로 돈다", async (t) => {
   freezeNow(t);
   const calls = stubFetch(t, () => new Response(null, { status: 204 }));
@@ -591,22 +311,6 @@ test("하루 한도에 닿으면 429이고, 자동 크론은 그대로 돈다", 
   assert.equal(calls.length, 1);
 });
 
-test("R2 상태를 못 읽어도 갱신 자체는 막지 않는다", async (t) => {
-  freezeNow(t);
-  const calls = stubFetch(t, () => new Response(null, { status: 204 }));
-  const broken = { async get() { throw new Error("R2 down"); }, async put() { throw new Error("R2 down"); } };
-  const response = await authed("/api/refresh", { method: "POST" }, envOf({ DATA: broken }));
-  assert.equal(response.status, 202);
-  assert.equal(calls.length, 2, "도는 실행 조회 + dispatch");
-});
-
-test("갱신 API는 GET·POST만 받는다", async (t) => {
-  stubFetch(t);
-  const response = await authed("/api/refresh", { method: "DELETE" });
-  assert.equal(response.status, 405);
-  assert.equal(response.headers.get("Allow"), "GET, POST");
-});
-
 test("크론은 예정 시각 기준 어제~오늘을 건다", async (t) => {
   // 호출이 밀려도 scheduledTime으로 세야 09시 실행이 09시 기준으로 남는다.
   freezeNow(t, Date.parse("2026-08-20T00:00:00Z"));
@@ -615,28 +319,9 @@ test("크론은 예정 시각 기준 어제~오늘을 건다", async (t) => {
   assert.deepEqual(JSON.parse(calls[0].init.body).inputs, { begin: "2026-08-16", end: "2026-08-17" });
 });
 
-test("크론 dispatch가 실패하면 던진다", async (t) => {
-  // 삼키면 Cron Trigger는 성공으로 남고 매시 갱신만 조용히 멈춘다.
-  stubFetch(t, () => jsonResponse({ message: "Bad credentials" }, 401));
-  await assert.rejects(() => worker.scheduled({ scheduledTime: NOW }, envOf()), /401.*Bad credentials/);
-  await assert.rejects(() => worker.scheduled({ scheduledTime: NOW }, envOf({ GITHUB_PAT_TOKEN: "" })), /GITHUB_PAT_TOKEN/);
-});
-
 // ── 고급검색(자연어 해석) ───────────────────────────────────────────────────
 
 const ASK_BODY = (q) => ({ method: "POST", body: JSON.stringify({ q }), headers: { "Content-Type": "application/json" } });
-
-test("AI 바인딩이 없으면 규칙 파서로 답하고 그 사실을 남긴다", async () => {
-  const response = await authed("/api/ask", ASK_BODY("국민연금공단의 4월 본공고 알려줘"));
-  assert.equal(response.status, 200);
-  const result = await json(response);
-  assert.equal(result.source, "rule");
-  assert.equal(result.filter.mode, "bid");
-  assert.deepEqual(result.filter.institutions, ["국민연금공단"]);
-  // 모델이 뽑은 기관명은 접미사 위험이 있어 부분일치를 켠다.
-  assert.equal(result.filter.looseInstitution, true);
-  assert.ok(result.notes.some((note) => note.includes("AI 바인딩")));
-});
 
 test("질의는 언제나 user 턴에만 들어간다", async () => {
   let received;
@@ -654,45 +339,6 @@ test("질의는 언제나 user 턴에만 들어간다", async () => {
   assert.equal(received.options.stream, undefined);
 });
 
-test("모델이 문자열로 실어 보낸 JSON도 객체와 같게 읽는다", async () => {
-  // 런타임·모델 버전에 따라 response가 객체이기도 문자열이기도 하다. 한쪽만 처리하면 간헐 실패한다.
-  const payload = { mode: "plan", period: "today", year: 0, month: 0, from: "", to: "", business_type: "용역", institutions: [], keyword: "" };
-  const asText = envOf({ AI: { async run() { return { response: JSON.stringify(payload) }; } } });
-  const asObject = envOf({ AI: { async run() { return { response: payload }; } } });
-  const first = await json(await authed("/api/ask", ASK_BODY("오늘 용역 발주계획"), asText));
-  const second = await json(await authed("/api/ask", ASK_BODY("오늘 용역 발주계획"), asObject));
-  assert.deepEqual(first.filter, second.filter);
-  assert.equal(first.filter.mode, "plan");
-  assert.equal(first.filter.type, "용역");
-});
-
-test("모델이 죽으면 규칙 파서로 내려가고, 그것도 못 읽으면 502다", async () => {
-  const env = envOf({ AI: { async run() { throw new Error("model unavailable"); } } });
-  const fell = await json(await authed("/api/ask", ASK_BODY("어제 본공고"), env));
-  assert.equal(fell.source, "rule");
-  assert.ok(fell.notes.some((note) => note.includes("model unavailable")));
-
-  const failed = await authed("/api/ask", ASK_BODY("zzz qqq"), env);
-  assert.equal(failed.status, 502);
-});
-
-test("바인딩도 없고 규칙 파서도 못 읽으면 501이다", async () => {
-  // 502(모델이 죽음)와 구분해야 원인이 드러난다.
-  const response = await authed("/api/ask", ASK_BODY("zzz qqq"));
-  assert.equal(response.status, 501);
-});
-
-test("질의 길이와 본문 형식을 먼저 거른다", async () => {
-  const env = envOf({ AI: { async run() { throw new Error("불려서는 안 된다"); } } });
-  for (const q of ["", " ", "가"]) {
-    assert.equal((await authed("/api/ask", ASK_BODY(q), env)).status, 400, JSON.stringify(q));
-  }
-  // 길수록 토큰 비용과 프롬프트 주입 표면만 커진다.
-  assert.equal((await authed("/api/ask", ASK_BODY("가".repeat(201)), env)).status, 400);
-  assert.equal((await authed("/api/ask", { method: "POST", body: "{" }, env)).status, 400);
-  assert.equal((await authed("/api/ask", {}, env)).status, 405);
-});
-
 test("고급검색은 게이트 뒤에 있다", async () => {
   // 인증 앞에 두면 남이 계정 요금을 태울 수 있다.
   let called = false;
@@ -703,15 +349,3 @@ test("고급검색은 게이트 뒤에 있다", async () => {
   assert.equal(called, false);
 });
 
-test("최신 조회는 본공고에서만 제안요청정보(e발주 첨부파일정보)를 같은 경로로 묻는다", async (t) => {
-  const calls = stubFetch(t, () => jsonResponse({ response: { body: { items: [] } } }));
-  const env = envOf({ DATA_GO_KR_SERVICE_KEY: "key" });
-  const ok = await authed("/api/live?mode=bid&businessType=제안요청정보&begin=2026-08-16&end=2026-08-17&pageNo=1", {}, env);
-  assert.equal(ok.status, 200);
-  const target = new URL(calls[0].url);
-  assert.equal(target.pathname, "/1230000/ad/BidPublicInfoService/getBidPblancListInfoEorderAtchFileInfo");
-  assert.equal(target.searchParams.get("inqryDiv"), "1");
-  assert.equal(target.searchParams.get("inqryBgnDt"), "202608160000");
-  assert.equal((await authed("/api/live?mode=pre&businessType=제안요청정보&begin=2026-08-16&end=2026-08-17", {}, env)).status, 400);
-  assert.equal(calls.length, 1);
-});

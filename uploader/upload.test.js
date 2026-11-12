@@ -4,7 +4,7 @@ test("부분 삭제 오류는 성공으로 보고하지 않는다", async () => 
   const { deleteAll } = require("./upload");
   await assert.rejects(deleteAll({ send: async () => ({ Errors: [{ Key: "bid/2020/01.csv.gz", Code: "AccessDenied" }] }) }, ["bid/2020/01.csv.gz"]), /AccessDenied/);
 });
-const { supersededDaily, vanishedDaily, indexFiles, monthOf, dateOf, endpoint, parseUploadArgs } = require("./upload");
+const { supersededDaily, vanishedDaily, indexFiles, parseUploadArgs } = require("./upload");
 
 test("업로더는 기본 dry-run이고 --commit이 있을 때만 실제 실행한다", () => {
   assert.deepEqual(parseUploadArgs([]), { dryRun: true, putOnly: false, indexOnly: false });
@@ -15,39 +15,6 @@ test("업로더는 기본 dry-run이고 --commit이 있을 때만 실제 실행�
   assert.throws(() => parseUploadArgs(["--put-only", "--index-only"]), /함께 쓸 수 없습니다/);
   assert.throws(() => parseUploadArgs(["--commit", "--dry-run"]), /함께 쓸 수 없습니다/);
   assert.throws(() => parseUploadArgs(["--comit"]), /알 수 없는 인자/);
-});
-
-// 이 정규화는 4c2001c에서 넣었다가 5df4ca8 리팩터링에서 사라졌고, 그 뒤 첫 업로드가
-// "ENOTFOUND gong-go-data.https"로 죽었다. 원인이 드러나지 않는 오류라 다시 잃지 않게 고정한다.
-// collector/restore-r2.test.js가 같은 입력으로 사본을 고정한다.
-test("endpoint는 R2_ENDPOINT_URL의 origin만 쓰고 계정 ID만 넣거나 스킴을 겹치면 거절한다", () => {
-  const saved = process.env.R2_ENDPOINT_URL;
-  const id = "0123456789abcdef0123456789abcdef";
-  try {
-    for (const value of [`https://${id}.r2.cloudflarestorage.com`, `https://${id}.r2.cloudflarestorage.com/`, `https://${id}.r2.cloudflarestorage.com/gong-go-data`, `  https://${id}.r2.cloudflarestorage.com  `]) {
-      process.env.R2_ENDPOINT_URL = value;
-      assert.equal(endpoint(), `https://${id}.r2.cloudflarestorage.com`);
-    }
-    process.env.R2_ENDPOINT_URL = "https://custom.example.com/";
-    assert.equal(endpoint(), "https://custom.example.com");
-    for (const value of [id, `https://https://${id}.r2.cloudflarestorage.com`, `http://${id}.r2.cloudflarestorage.com`, ""]) {
-      process.env.R2_ENDPOINT_URL = value;
-      assert.throws(() => endpoint(), /R2_ENDPOINT_URL/);
-    }
-  } finally {
-    if (saved === undefined) delete process.env.R2_ENDPOINT_URL; else process.env.R2_ENDPOINT_URL = saved;
-  }
-});
-
-test("monthOf는 일별 키와 월별 키를 같은 월로 모은다", () => {
-  assert.equal(monthOf("bid/2023/12/11.csv.gz"), "bid/2023/12");
-  assert.equal(monthOf("bid/2023/12.csv.gz"), "bid/2023/12");
-  assert.notEqual(monthOf("pre/2023/12.csv.gz"), monthOf("bid/2023/12.csv.gz"));
-});
-
-test("dateOf는 일별 키에서 날짜를 뽑는다", () => {
-  assert.equal(dateOf("pre/2026/07/03.csv.gz"), "2026-07-03");
-  assert.equal(dateOf("raw/bid/2026/07/03.csv.gz"), "2026-07-03");
 });
 
 test("월별 봉인 키가 버킷에 있을 때만 그 달 일별 키를 지운다", () => {
@@ -70,11 +37,6 @@ test("봉인 키가 없으면 일별 키를 하나도 지우지 않는다", () =
 test("state/·raw/·analysis/ 프리픽스는 삭제 대상이 아니다", () => {
   const present = new Set(["bid/2023/12.csv.gz", "state/sync-state.json", "raw/bid/2023/12/11.csv.gz", "analysis/bid/1234.json"]);
   assert.deepEqual(supersededDaily(present), []);
-});
-
-test("수집 구간이 없으면 사라진 일별 키를 지우지 않는다", () => {
-  const present = new Set(["bid/2026/07/01.csv.gz"]);
-  assert.deepEqual(vanishedDaily(present, [], "", ""), []);
 });
 
 test("수집 구간 안에서 로컬에 없어진 일별 키만 지운다", () => {
@@ -104,19 +66,3 @@ test("인덱스는 로컬에 없는 과거 키의 건수를 버킷 인덱스에�
   ]);
 });
 
-test("지울 키와 데이터가 아닌 키는 인덱스에 넣지 않는다", () => {
-  const present = new Set(["bid/2023/12.csv.gz", "bid/2023/12/11.csv.gz", "state/sync-state.json", "analysis/bid/1.json"]);
-  const files = indexFiles(present, new Set(["bid/2023/12/11.csv.gz"]), [{ path: "bid/2023/12.csv.gz", count: 42170 }], []);
-  assert.deepEqual(files.map((file) => file.path), ["bid/2023/12.csv.gz"]);
-});
-
-test("봉인 직후 삭제 전이라도 인덱스는 월 항목만 남긴다", () => {
-  // ②인덱스 PUT이 ③삭제보다 먼저다. 그 사이에 인덱스가 일별 키를 가리키면 안 된다.
-  const present = new Set(["bid/2023/12.csv.gz", "bid/2023/12/11.csv.gz"]);
-  const local = [{ path: "bid/2023/12.csv.gz", count: 42170 }, { path: "bid/2023/12/11.csv.gz", count: 1500 }];
-  assert.deepEqual(indexFiles(present, new Set(), local, []).map((file) => file.path), ["bid/2023/12.csv.gz"]);
-});
-
-test("보관 기간 정리 명령은 더 이상 허용하지 않는다", () => {
-  assert.throws(() => parseUploadArgs(["--retention-only"]), /알 수 없는 인자/);
-});

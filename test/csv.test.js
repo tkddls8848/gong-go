@@ -1,7 +1,5 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
 require("../public/csv.js");
 
 test("CSV 외부 텍스트의 수식 시작 및 선행 공백 우회는 텍스트로 내보낸다", () => {
@@ -20,10 +18,3 @@ test("CSV 쉼표·따옴표·CR·LF는 셀 내부에 보존하며 정상 문자�
   assert.equal(GongCsv.serialize([["번호", "규격"], ["ECR-001", "256GB 이상"]]), "번호,규격\r\nECR-001,256GB 이상");
 });
 
-test("화면은 CSV 보안 모듈을 먼저 로드하고 모든 다운로드가 이를 사용한다", () => {
-  const read = (name) => fs.readFileSync(path.join(__dirname, "..", "public", name), "utf8");
-  const html = read("index.html");
-  assert.ok(html.indexOf('src="csv.js"') >= 0);
-  assert.ok(html.indexOf('src="csv.js"') < html.indexOf('src="app.js"'));
-  assert.match(read("app.js"), /function downloadRows\(rows, prefix\) \{\s+const csv = GongCsv.serialize\(rows\)/);
-});

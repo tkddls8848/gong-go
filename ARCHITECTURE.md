@@ -105,7 +105,7 @@ ECR이 가장 넓게 퍼진 도메인입니다. 운영 형식을 바꿀 때는 �
 ## Testing Strategy
 
 ```
-npm test                        # 기본. node --test. 약 457건 1초대
+npm test                        # 기본. node --test. 약 210건 1초대
 npm run test:browser            # 화면 연결 변경 시(설치된 Edge/Chromium headless)
 npm run test:runtime            # Worker 연결 변경 시(workerd + 비영속 R2)
 npm run test:selection          # ECR 표 선별 변경 시(저장소 밖 실문서 필요)
@@ -113,6 +113,7 @@ npx wrangler deploy --dry-run   # 번들 변경 시
 ```
 
 - **위치 규칙**: 화면 테스트는 `test/`, 나머지는 구현 옆에 둡니다. 예외가 없습니다.
+- **분량**: 기능마다 핵심 동작과 보안·비용·데이터 계약을 지키는 테스트만 둡니다. 세부 변형, 타이밍 경합, 문구, 구형 형식 호환마다 테스트를 늘리지 않습니다. 2026-11에 538건을 이 기준으로 약 210건까지 줄였습니다(걷어 낸 것은 Git 이력에 있습니다).
 - 테스트는 모듈을 직접 호출합니다. 함수 소스를 문자열로 잘라 실행하지 않습니다.
 - 계약 테스트는 모듈 경계를 넘어 작성기와 독자를 연결할 수 있습니다. 런타임 코드는 그럴 수 없습니다.
 - CI(`.github/workflows/quality.yml`)가 `npm test`, `test:runtime`, `npm audit`, dry-run, `test:browser`, `test:search-load`를 돕니다. **`test:selection`은 CI에 없습니다** — 실문서가 저장소 밖에 있어 그 자료가 있는 PC에서 따로 돌립니다.

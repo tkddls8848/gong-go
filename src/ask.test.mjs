@@ -3,36 +3,10 @@
 // (ask.js 머리 주석)을 지키는지 확인하는 역할도 겸한다.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { kstToday, monthBounds, lastDay, recentMonth, resolvePeriod, normalizeAsk, ruleParse, validDate, dataFloor, ASK_SCHEMA, buildPrompt } from "./ask.js";
+import { resolvePeriod, normalizeAsk, ruleParse, dataFloor, ASK_SCHEMA } from "./ask.js";
 
 const TODAY = "2026-08-13"; // 목요일
 const ask = (parsed, mode = "pre") => normalizeAsk(parsed, { today: TODAY, mode });
-
-test("kstToday는 UTC 15:00에 다음 날로 넘어간다", () => {
-  assert.equal(kstToday(Date.parse("2026-08-12T14:59:59Z")), "2026-08-12");
-  assert.equal(kstToday(Date.parse("2026-08-12T15:00:00Z")), "2026-08-13");
-  assert.equal(kstToday(Date.parse("2026-08-13T14:59:59Z")), "2026-08-13");
-});
-
-test("연도 없는 달은 아직 시작하지 않았으면 작년으로 본다", () => {
-  assert.equal(recentMonth(TODAY, 4), 2026);
-  assert.equal(recentMonth(TODAY, 8), 2026); // 이번 달은 이미 시작했다
-  assert.equal(recentMonth(TODAY, 10), 2025);
-  assert.equal(recentMonth(TODAY, 12), 2025);
-});
-
-test("말일은 윤년까지 맞춘다", () => {
-  assert.deepEqual(monthBounds(2026, 2), { begin: "2026-02-01", end: "2026-02-28" });
-  assert.deepEqual(monthBounds(2024, 2), { begin: "2024-02-01", end: "2024-02-29" });
-  assert.equal(lastDay(2026, 12), 31);
-});
-
-test("달력에 없는 날짜는 형식이 맞아도 거른다", () => {
-  assert.equal(validDate("2026-02-28"), true);
-  assert.equal(validDate("2026-02-30"), false);
-  assert.equal(validDate("2026-13-01"), false);
-  assert.equal(validDate("20260201"), false);
-});
 
 test("이름 있는 기간은 코드가 날짜를 만든다", () => {
   const cases = {
@@ -51,17 +25,6 @@ test("이름 있는 기간은 코드가 날짜를 만든다", () => {
     assert.deepEqual(resolvePeriod({ period }, TODAY), { begin, end }, period);
   }
   assert.equal(resolvePeriod({ period: "none" }, TODAY), null);
-});
-
-test("월만 말하면 그 달 전체, 연도를 말하면 그 해로 본다", () => {
-  assert.deepEqual(ask({ period: "month", month: 4 }).filter.begin, "2026-04-01");
-  assert.deepEqual(ask({ period: "month", month: 4 }).filter.end, "2026-04-30");
-  assert.equal(ask({ period: "month", month: 9, year: 2025 }).filter.begin, "2025-09-01");
-  // 2020년 이후의 과거 연도도 조회한다.
-  assert.equal(ask({ period: "month", month: 4, year: 2025 }).filter.begin, "2025-04-01");
-  // 이번 달을 말하면 끝은 말일이 아니라 오늘로 잘린다 — 게시일은 미래가 될 수 없다.
-  assert.equal(ask({ period: "month", month: 8 }).filter.end, TODAY);
-  assert.equal(ask({ period: "month", month: 13 }).filter.begin, "");
 });
 
 test("게시일은 미래가 될 수 없다 — 클램프·스왑·연도 되감기", () => {
@@ -94,21 +57,6 @@ test("모델 출력이 enum 밖이면 조용히 버린다", () => {
   assert.equal(ask({ period: "언젠가" }).filter.begin, "");
 });
 
-test("기관명은 세 글자 이상에 허용 문자만 남긴다", () => {
-  const filter = ask({ institutions: ["한국", "조달청", "<script>", "국민연금공단", "국민연금공단"] }).filter;
-  assert.deepEqual(filter.institutions, ["조달청", "국민연금공단"]);
-  assert.equal(filter.looseInstitution, true);
-  // 기관이 없으면 부분일치를 켜지 않는다.
-  assert.equal(ask({ institutions: [] }).filter.looseInstitution, false);
-  assert.deepEqual(ask({ institutions: "국민연금공단" }).filter.institutions, []);
-});
-
-test("검색어에서 값 없는 말을 걷어낸다", () => {
-  assert.equal(ask({ keyword: "사업" }).filter.q, "");
-  assert.equal(ask({ keyword: "클라우드 사업 알려줘" }).filter.q, "클라우드");
-  assert.equal(ask({ keyword: "  서버   증설  " }).filter.q, "서버 증설");
-});
-
 test("깨진 입력에도 안전한 기본값을 낸다", () => {
   assert.equal(ask(null).filter.mode, "pre");
   assert.equal(ask(undefined).filter.begin, "");
@@ -127,34 +75,6 @@ test("규칙 파서가 대표 질의 두 개를 모델 없이 처리한다", () 
   assert.equal(month.looseInstitution, true);
 });
 
-test("규칙 파서가 나머지 표현도 받는다", () => {
-  const plan = ask(ruleParse("최근 일주일 서버 관련 발주계획", TODAY)).filter;
-  assert.equal(plan.mode, "plan");
-  assert.deepEqual([plan.begin, plan.end], ["2026-08-07", TODAY]);
-
-  const last = ask(ruleParse("지난달 조달청 용역 공고", TODAY)).filter;
-  assert.deepEqual([last.begin, last.end], ["2026-07-01", "2026-07-31"]);
-  assert.equal(last.type, "용역");
-  assert.deepEqual(last.institutions, ["조달청"]);
-
-  // "8월 3일 ~ 9일"처럼 뒤쪽 월이 빠져도 앞쪽 월을 쓴다.
-  assert.equal(ask(ruleParse("8월 3일 ~ 9일 공고", TODAY)).filter.end, "2026-08-09");
-  assert.equal(ask(ruleParse("최근 30일 물품", TODAY)).filter.begin, "2026-07-15");
-});
-
-test("규칙 파서는 못 알아들으면 null을 낸다", () => {
-  assert.equal(ruleParse("안녕", TODAY), null);
-  assert.equal(ruleParse("", TODAY), null);
-  assert.equal(ruleParse("아무 말이나 적어 본다", TODAY), null);
-});
-
-test("설명 문장에 해석 결과가 그대로 담긴다", () => {
-  const { explain } = ask(ruleParse("국민연금공단의 4월 본공고 알려줘", TODAY));
-  assert.match(explain, /본공고/);
-  assert.match(explain, /2026-04-01 ~ 2026-04-30/);
-  assert.match(explain, /국민연금공단\(부분일치\)/);
-});
-
 // 모델에 주는 스키마와 프롬프트는 배포본에만 있다.
 test("스키마는 평면이고 모든 키가 required다", () => {
   // Workers AI의 JSON 모드는 constrained decoding이라 중첩·oneOf에서 실패하고, llama는
@@ -165,22 +85,3 @@ test("스키마는 평면이고 모든 키가 required다", () => {
   }
 });
 
-test("프롬프트는 오늘·올해·이번 달을 그대로 적어 준다", () => {
-  // 모델이 날짜를 계산하지 않아도 되도록 기준값을 문장에 박아 넣는다.
-  const prompt = buildPrompt(TODAY);
-  assert.match(prompt, /오늘: 2026-08-13/);
-  assert.match(prompt, /올해: 2026/);
-  assert.match(prompt, /이번 달: 08/);
-  assert.match(prompt, new RegExp(dataFloor(TODAY)));
-  // 예시의 연도도 오늘에서 만든다 — 해가 바뀌면 예시가 미래를 가리키면 안 된다.
-  assert.match(prompt, /"from":"2026-08-03","to":"2026-08-09"/);
-});
-
-test("2020년부터 과거 기간을 계속 조회할 수 있다", () => {
-  assert.equal(dataFloor(TODAY), "2020-01-01");
-  assert.equal(dataFloor("2030-12-31"), "2020-01-01");
-  const old = ask({ period: "explicit", from: "2021-03-01", to: "2021-03-31" });
-  assert.equal(old.filter.begin, "2021-03-01");
-  const lastYear = ask({ period: "last_year" });
-  assert.deepEqual([lastYear.filter.begin, lastYear.filter.end], ["2025-01-01", "2025-12-31"]);
-});

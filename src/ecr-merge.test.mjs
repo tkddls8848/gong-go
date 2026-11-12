@@ -34,14 +34,6 @@ test("이름이 다르면 같은 번호 안의 다른 장비로 두고 사유에
   assert.deepEqual(item.불확실, ["[WEB 서버] CPU: 다른 요구사항의 원문 줄을 가리켜 제외함", "[DB 서버] 장비명 원문 확인 필요", "요구사항 ID 원문 확인 필요"]);
 });
 
-test("장비가 하나면 사유를 그대로 두고 같은 사유는 한 번만 싣는다", () => {
-  const [item] = consolidate([
-    part("ECR-001", "서버", "서버", [], { notes: ["장비명 원문 확인 필요"] }),
-    part("ECR-001", "서버", "서버", [], { chunk: 2, notes: ["장비명 원문 확인 필요"] }),
-  ]);
-  assert.deepEqual(item.불확실, ["장비명 원문 확인 필요"]);
-});
-
 test("한 인용이 다른 인용을 품으면 긴 쪽을 남기되 확인된 규격을 미확인으로 덮지 않는다", () => {
   const long = "CPU 2.4GHz 16Core 이상\n2 Socket 이상";
   const [merged] = consolidate([

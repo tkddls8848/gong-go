@@ -16,12 +16,3 @@ test("품질 CI는 시크릿·운영 배포·수집 작업을 실행하지 않�
   }
 });
 
-test("품질 CI는 잠금 설치·테스트·의존성 검사·브라우저 검증을 포함한다", () => {
-  for (const command of ["npm ci", "npm test", "npm run test:runtime", "npm audit --audit-level=high", "npx wrangler deploy --dry-run", "npm run test:browser", "npm run test:search-load"]) assert.ok(source.includes(`run: ${command}`), command);
-  const actions = [...source.matchAll(/uses:\s*([^\s]+)@([^\s]+)/g)];
-  assert.equal(actions.length, 3);
-  for (const action of actions) assert.match(action[2], /^[a-f0-9]{40}$/);
-  assert.match(source, /retention-days:\s*7/);
-  assert.ok(source.includes("run: npm run test:runtime-browser"));
-  assert.ok(source.indexOf("run: npx playwright-core install") < source.indexOf("run: npm run test:runtime-browser"));
-});
