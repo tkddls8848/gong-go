@@ -45,6 +45,12 @@ Cloudflare Workers Builds가 이 저장소에 연결되어 있어 **main 푸시�
 - API token: Workers Builds 전용 토큰. 이 토큰을 지우거나 롤하면 빌드가
   `The build token selected for this build has been deleted or rolled`로 실패합니다.
   같은 화면에서 토큰을 새로 고른 뒤 실패한 빌드를 Retry합니다.
+- 빌드 로그가 `An internal error occurred. Please retry your build.` 한 줄로 끝나면 Cloudflare 쪽 오류입니다.
+  2026-11-12에는 푸시 1초 뒤에 이 줄만 찍혔습니다 — 저장소를 받거나 `npm test`를 돌린 흔적이 없어 코드와 무관합니다.
+  그때는 빌드 화면이 `Build not found`로 뜨고 Retry도 눌리지 않았습니다. 그 빌드 기록은 되살릴 수 없으니
+  main에 새 커밋을 푸시해 새 빌드를 일으키거나 `npm run deploy`로 수동 배포합니다.
+- 배포됐는지는 같은 Worker의 Deployments 목록에서 최신 배포의 시각과 커밋으로 확인합니다. GitHub의 quality
+  워크플로가 통과한 것은 배포됐다는 뜻이 아닙니다.
 
 시크릿 이름을 바꾸는 커밋은 **새 시크릿을 먼저 등록한 뒤** 푸시합니다. 순서가 바뀌면 푸시와 동시에
 배포된 코드가 없는 시크릿을 읽어 매시 수집이나 중계가 멈춥니다. `npm run deploy`는 Workers Builds가
