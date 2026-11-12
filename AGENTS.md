@@ -41,7 +41,7 @@ npm run deploy                  # 수동 배포. 평소에는 main 푸시가 자
 
 # 의존성
 
-런타임 의존은 `@aws-sdk/client-s3` 하나뿐이다. 새 dependency는 Worker 번들 크기와 무료 한도에 바로 영향을 주므로, 표준 API나 기존 모듈로 안 되는 경우에만 추가하고 이유를 PR에 적는다. Node 22.7 이상이 필요하다(`engines`). `package.json`에 `"type"`이 없다 — src/는 ESM, 나머지는 CJS이고 어느 쪽으로 선언해도 한쪽이 깨진다.
+런타임 의존은 `@aws-sdk/client-s3` 하나뿐이다. 새 dependency는 Worker 번들 크기와 무료 한도에 바로 영향을 주므로, 표준 API나 기존 모듈로 안 되는 경우에만 추가하고 이유를 PR에 적는다. Node 22.12 이상이 필요하다(`engines`). `package.json`에 `"type"`이 없다 — src/는 ESM, 나머지는 CJS이고 어느 쪽으로 선언해도 한쪽이 깨진다.
 
 # 수정하면 안 되는 것
 

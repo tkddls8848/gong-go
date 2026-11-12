@@ -125,6 +125,6 @@ npx wrangler deploy --dry-run   # 번들 변경 시
 - **ECR 구간 상한 33** — 임의값이 아닙니다. 무료 Worker의 요청당 subrequest 한도 50에서 예산 재시도와 구간 표식 몫을 뺀 역산값입니다.
 - **`src/ecr.js`의 `VERSION`** — 표 선별이나 구간 나누기를 고치면 반드시 올립니다. 올리지 않으면 예전 방식으로 자른 구간을 재사용해 고친 것이 반영되지 않습니다.
 - **`public/`은 전부 배포됩니다.** 임시 파일을 두지 않습니다.
-- **Node 22.7 이상** (`package.json`의 `engines`). `package.json`에 `"type"`이 없습니다 — `src/`는 ESM, 나머지는 CJS입니다. `"type"`을 추가하면 한쪽이 깨집니다.
+- **Node 22.12 이상** (`package.json`의 `engines`). `package.json`에 `"type"`이 없습니다 — `src/`는 ESM, 나머지는 CJS입니다. `"type"`을 추가하면 한쪽이 깨집니다.
 - **`docs/history/`** 는 과거 기록입니다. 현재 계획이나 배포 상태로 읽지 않습니다.
 - **main 푸시가 곧 운영 배포입니다.** Cloudflare Workers Builds가 저장소에 연결되어 main 푸시마다 빌드 명령(`npm test`) 뒤 `npx wrangler deploy`를 실행합니다. GitHub의 quality 워크플로와는 따로 돌기 때문에, quality가 실패해도 Workers Builds의 `npm test`가 통과하면 배포됩니다. `npm run deploy`는 수동 배포가 필요할 때만 씁니다.

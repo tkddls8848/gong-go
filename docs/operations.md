@@ -4,7 +4,7 @@
 
 ## 준비
 
-Node.js 22.7 이상에서 설치하고 `.env.example`을 `.env`로 복사해 필요한 값을 채웁니다.
+Node.js 22.12 이상에서 설치하고 `.env.example`을 `.env`로 복사해 필요한 값을 채웁니다.
 
 ```powershell
 npm ci
