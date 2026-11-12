@@ -80,6 +80,61 @@ export function normalizeFact(field, quote) {
   }
   return mentions;
 }
+// 줄 범위로 복원한 규격은 원문 줄이 통째로 값이 된다("| CPU | 2.4GHz 16Core 이상 |").
+// 값에서는 표 칸 구분자·글머리표·항목명 칸을 걷어 낸다. 줄의 앞뒤만 덜어 내므로 남은 값은
+// 여전히 원문 줄의 이어진 일부다 — 글자를 바꾸거나 줄 가운데를 잘라 잇지 않는다. 근거는 손대지 않는다.
+// 항목명은 뒤에 칸 구분자·쌍점이 오거나 곧바로 수가 올 때만 뗀다. "CPU 사용률 70% 이하"의 CPU는
+// 항목명 칸이 아니라 조건의 일부다. 값의 뜻을 가르는 말은 항목명으로 보지 않는다 — SSD·HDD는
+// 디스크 종류이고, NIC·HBA와 트랜시버·케이블은 한 항목에 둘이 함께 들어 있어 떼면 어느 쪽인지 잃는다.
+const LABELS = {
+  용도: String.raw`용\s*도`,
+  수량: String.raw`(?:도입\s*)?수\s*량`,
+  도입구분: String.raw`도입\s*구분|구\s*분`,
+  CPU: String.raw`CPU|프로세서|Processor`,
+  메모리: String.raw`메모리|Memory|RAM|주기억\s*장치`,
+  "로컬 디스크": String.raw`(?:내장|로컬|Local|OS)\s*(?:디스크|Disk)|디스크|Disk`,
+  이중화: String.raw`이중화`,
+  유지보수: String.raw`(?:무상\s*)?(?:유지\s*보수|하자\s*보수)`,
+  종류: String.raw`종\s*류|유\s*형`,
+  "Raw 용량": String.raw`Raw\s*용량|물리\s*용량`,
+  "Usable 용량": String.raw`Usable\s*용량|가용\s*용량|유효\s*용량|실\s*사용\s*용량`,
+  "디스크 구성": String.raw`디스크\s*구성`,
+  프로토콜: String.raw`(?:지원\s*)?프로토콜|Protocol`,
+  컨트롤러: String.raw`컨트롤러|Controller`,
+  성능: String.raw`성\s*능`,
+  복제: String.raw`복\s*제`,
+  "포트 수": String.raw`포트\s*수|Port\s*수`,
+  "포트 속도": String.raw`포트\s*속도`,
+  "스위칭 용량": String.raw`스위칭\s*용량|Switching\s*Capacity`,
+  라이선스: String.raw`라이선스|라이센스|Licen[cs]e`,
+};
+const NOTE = String.raw`(?:\([^)|]{0,20}\)\s*)?`;
+const LABEL_FINDERS = Object.fromEntries(Object.entries(LABELS).map(([field, label]) => [field, {
+  cell: new RegExp(String.raw`(?:^|\|)\s*(?:${label})\s*${NOTE}\|\s*`, "i"),
+  lead: new RegExp(String.raw`^(?:${label})\s*${NOTE}(?:[:：]\s*|\s+(?=\d))`, "i"),
+}]));
+const EDGE_PIPES = /^(?:\|\s*)+|(?:\s*\|)+$/g;
+const BULLET = /^(?:[-–—•·○●◦▪■□◆◇※*ㅇo]\s+|[①-⑳]\s*|\(?\d{1,2}[.)]\s+|[가-하][.)]\s+)/;
+const RULE_ONLY = /^[\s|:=–—-]*$/;
+function cleanLine(field, line) {
+  let text = line.replace(/\s+/g, " ").trim();
+  if (RULE_ONLY.test(text)) return "";
+  text = text.replace(EDGE_PIPES, "").trim().replace(BULLET, "");
+  const finder = LABEL_FINDERS[field];
+  if (finder) {
+    // 표 칸에서는 항목명만 든 칸의 뒤쪽이 값이다("서버 | CPU | 2.4GHz" → "2.4GHz").
+    const found = (text.includes("|") && finder.cell.exec(text)) || finder.lead.exec(text);
+    const from = found ? found.index + found[0].length : 0;
+    if (from && from < text.length) text = text.slice(from);
+  }
+  return text.replace(EDGE_PIPES, "").trim();
+}
+export function cleanValue(field, quote) {
+  if (typeof quote !== "string") return quote;
+  const lines = quote.split("\n").map((line) => cleanLine(field, line)).filter(Boolean);
+  // 걷어 내고 남는 것이 없으면 원문을 그대로 둔다. 값을 비우지 않는다.
+  return lines.length ? lines.join("\n") : quote;
+}
 // 확인된 원문 인용(값)에서만 뽑는다. 근거를 확인하지 못한 값은 정규화해도 믿을 수 없다.
 export function normalizeItems(items) {
   return items.map((item) => ({
@@ -87,8 +142,11 @@ export function normalizeItems(items) {
     장비요약: (item.장비요약 || []).map((entry) => ({
       ...entry,
       규격: (entry.규격 || []).map((fact) => {
-        const mentions = fact.검증 === "원문 확인" ? normalizeFact(fact.항목, fact.값) : [];
-        return mentions.length ? { ...fact, 정규화: mentions } : fact;
+        // 값과 근거가 같은 것은 줄 범위로 복원한 규격이다. 모델이 값을 따로 적은 구형 응답은 다듬지 않는다.
+        const value = fact.값 && fact.값 === fact.근거 ? cleanValue(fact.항목, fact.값) : fact.값;
+        const cleaned = value === fact.값 ? fact : { ...fact, 값: value };
+        const mentions = fact.검증 === "원문 확인" ? normalizeFact(fact.항목, value) : [];
+        return mentions.length ? { ...cleaned, 정규화: mentions } : cleaned;
       }),
     })),
   }));

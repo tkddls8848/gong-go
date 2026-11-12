@@ -407,3 +407,63 @@ test("모델이 번호의 대시·공백을 바꿔 적어도 원문 번호로 �
   assert.equal(other.id, "ECR-003");
   assert.ok(other.불확실.includes("요구사항 ID 원문 확인 필요"));
 });
+
+const longTable = () => {
+  const rows = Array.from({ length: 60 }, (_, index) => `| 항목${index + 1} | 전원 이중화 구성 및 10/25GbE ${(index + 1) * 2}Port, 디스크 ${(index + 1) * 16}GB 이상 제공 |`);
+  return `요구사항 고유번호 ECR-001\n요구사항 명칭 WEB 서버\n세부내용\n| CPU | 2.4GHz 16Core 이상 |\n${rows.join("\n")}\n| 수량 | 2대 |\n`;
+};
+test("상세 표는 줄 단위로 나누고 이어지는 구간에 번호와 명칭을 싣는다", () => {
+  const text = longTable();
+  const lines = new Set(text.split("\n"));
+  const chunks = splitDocument(text);
+  assert.ok(chunks.length > 1);
+  for (const chunk of chunks) {
+    assert.ok(chunk.startsWith("요구사항 고유번호 ECR-001\n요구사항 명칭 WEB 서버\n"));
+    for (const line of chunk.split("\n")) assert.ok(lines.has(line), `줄이 중간에서 잘렸다: ${line.slice(0, 30)}`);
+  }
+});
+
+test("여러 구간에 걸친 같은 장비는 결과에서 한 항목으로 합치고 값은 다듬어 싣는다", async () => {
+  const text = longTable();
+  const chunks = splitDocument(text);
+  // 첫 구간의 마지막 줄은 둘째 구간에도 다시 실린다. 모델이 양쪽에서 같은 줄을 가리키는 상황이다.
+  const shared = chunks[0].trimEnd().split("\n").at(-1);
+  assert.ok(chunks[1].includes(shared));
+  const env = { DATA: bucket(), AI: { run: async (model, options) => {
+    const facts = [];
+    for (const line of options.messages[1].content.split("\n")) {
+      const [, number, body] = /^\[L(\d+)\] (.*)$/.exec(line) || [];
+      const field = body?.startsWith("| CPU |") ? "CPU" : body?.startsWith("| 수량 |") ? "수량" : body === shared ? "기타 조건" : "";
+      if (field) facts.push({ field, from: Number(number), to: Number(number) });
+    }
+    return { response: { items: [{ id: "ECR-001", kind: "서버", name: "WEB 서버", facts }] } };
+  } } };
+  const job = await (await handleEcr(request({ action: "upload", notice: "R26-910", name: "rfp.md" }, text), env)).json();
+  assert.equal(job.total, chunks.length);
+  let analysis;
+  for (let index = 0; index < job.total; index++) ({ analysis } = await (await handleEcr(request({ action: "step", id: job.id, index, finalize: index === job.total - 1 ? "1" : "0" }), env)).json());
+  assert.equal(analysis.ecr.length, 1, "구간 수만큼 항목을 만들지 않는다");
+  const [item] = analysis.ecr;
+  assert.equal(item.명칭, "WEB 서버");
+  assert.equal(item.장비요약.length, 1);
+  const specs = item.장비요약[0].규격;
+  assert.deepEqual(specs.map((fact) => fact.항목), ["수량", "CPU", "기타 조건"], "겹친 줄의 규격은 한 번만 싣는다");
+  assert.deepEqual(specs.map((fact) => fact.값), ["2대", "2.4GHz 16Core 이상", shared.replace(/^\| | \|$/g, "")]);
+  assert.equal(specs[1].근거, "| CPU | 2.4GHz 16Core 이상 |", "근거는 원문 줄 그대로다");
+  assert.equal(item.장비요약[0].출처, `rfp.md · 구간 ${chunks.map((_, index) => index + 1).join(", ")}`);
+  assert.equal(item.세부내용_원문, text, "원문은 겹친 줄과 반복한 머리를 걷어 내고 한 번만 싣는다");
+  assert.equal(analysis.coverage.status, "matched");
+});
+
+test("띄어쓰기만 다른 장비명은 원문의 이름으로 본다", () => {
+  const text = "ECR-001 WEB 서버 도입\n메모리 256GB 이상";
+  const reply = (name) => ({ response: { items: [{ id: "ECR-001", kind: "서버", name, facts: [{ field: "메모리", from: 2, to: 2 }] }] } });
+  assert.deepEqual(parseResult(reply("WEB서버"), text, "rfp.md", 0)[0].불확실, []);
+  assert.deepEqual(parseResult(reply("DB 서버"), text, "rfp.md", 0)[0].불확실, ["장비명 원문 확인 필요"]);
+});
+
+test("한 구간에 표가 여럿이면 원문은 그 번호의 표만 싣는다", () => {
+  const reply = (id) => ({ response: { items: [{ id, kind: "스토리지", name: "스토리지 도입", facts: [{ field: "Usable 용량", from: 4, to: 4 }] }] } });
+  assert.equal(parseResult(reply("ECR-002"), twoTables, "rfp.md", 0)[0].세부내용_원문, "ECR-002 스토리지 도입\nUsable 용량 100TB 이상을 제공한다.");
+  assert.equal(parseResult(reply("ECR-009"), twoTables, "rfp.md", 0)[0].세부내용_원문, twoTables, "구간에서 번호를 찾지 못하면 구간 전체를 싣는다");
+});

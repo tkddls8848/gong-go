@@ -55,7 +55,9 @@ function equipmentTable(text, naming = {}) {
 }
 // 괄호로 덧붙인 용도를 떼어 낸 이름. 짝을 찾을 때는 이 형태로 견준다.
 const baseName = (name) => name.replace(/\s*\([^)]*\)\s*$/, "").trim();
-function tableName(text) {
+// 명칭 칸의 표기. 구간을 나눌 때 표 머리가 어디까지인지도 이 표기로 본다.
+export const NAME_MARK = /요구\s*사항\s*(?:명\s*칭|명)(?![가-힣])/;
+export function tableName(text) {
   // HWP 셀은 줄바꿈으로, Markdown 셀은 |로 나뉜다. 다음 셀을 이름에 섞지 않는다.
   const name = (text.match(/요구\s*사항\s*(?:명\s*칭|명)(?![가-힣])[\s|:]*([^\n|]{1,120})/) || [])[1];
   if (!name || /^\s*(?:시스템\s*장비구성|요구사항|정의)/.test(name)) return "";
@@ -151,7 +153,11 @@ function bodyByName(text, section) {
 }
 export function requirementSections(source) {
   // 좌우로 붙은 표를 먼저 위아래로 편다. 이미 편 글은 번호 칸이 한 열에 모여 그대로 돌아온다.
-  const text = unfoldColumns(source);
+  return sectionsOf(unfoldColumns(source));
+}
+// 이미 편 글에서 고른다. 업로드는 문서 전체를 한 번만 펴고 그 결과를 구간·번호 대조에 함께 쓴다 —
+// 무료 Worker는 요청당 CPU가 빠듯해서 60만 자를 여러 번 훑을 여유가 없다.
+export function sectionsOf(text) {
   const ranges = requirementRanges(text).filter((section) => target(section.id));
   // 이름 짓는 방식은 문서마다 다르다. 한 표만 보지 말고 문서 전체의 이름을 모아 견준다.
   const naming = { devices: ranges.map((entry) => tableName(entry.text)).filter(Boolean) };
@@ -166,11 +172,41 @@ export function priorityOrder(chunks) {
   const rank = (text) => requirementSections(text).sections.length ? 0 : /ECR[-–]|장비\s*[-–]?\s*\d/i.test(text) ? 1 : 2;
   return chunks.map((text, index) => ({ index, rank: rank(text) })).sort((a, b) => a.rank - b.rank || a.index - b.index).map((entry) => entry.index);
 }
+// 요구사항 번호가 든 줄인지. 구간을 가를 때 첫 줄을 표 머리로 다시 실을지 정하는 데 쓴다.
+export const hasRequirementId = (line) => ONE_ID.test(line);
+// 긴 줄은 240자에서 끊되 공백 바로 뒤에서 끊는다. 글자 수로만 끊으면 "256GB"가 "25"와 "6GB"로
+// 갈리고, 뒷줄만 가리킨 규격이 "6GB 이상"으로 원문 확인을 통과한다 — 틀린 값에 확인 표시가 붙는다.
+// 수와 단위 사이("1,024 GB", "2 대")도 되도록 피한다. 뒤쪽 3분의 1 안에 끊을 자리가 없으면
+// (공백 없는 긴 글) 그대로 끊는다. 조각을 이으면 원래 줄과 글자 하나 다르지 않다.
+const LINE_MAX = 240;
+const SPACE = /\s/;
+export function softPieces(line, limit = LINE_MAX) {
+  const pieces = [];
+  let start = 0;
+  while (line.length - start > limit) {
+    const end = start + limit, floor = start + Math.ceil(limit * 2 / 3);
+    let cut = 0, afterNumber = 0;
+    for (let at = end; at > floor; at--) {
+      if (!SPACE.test(line[at - 1]) || SPACE.test(line[at])) continue;
+      let back = at - 1;
+      while (back > start && SPACE.test(line[back])) back--;
+      if (/\d/.test(line[back])) { afterNumber ||= at; continue; }
+      cut = at;
+      break;
+    }
+    cut ||= afterNumber || end;
+    pieces.push(line.slice(start, cut));
+    start = cut;
+  }
+  if (start < line.length) pieces.push(line.slice(start));
+  return pieces;
+}
 // 모델은 원문을 다시 쓰지 않고 줄 번호만 반환한다. 값·근거는 서버가 이 원문에서 복원한다.
 export function sourceLines(text) {
   const lines = [];
   for (const match of text.matchAll(/[^\n]*(?:\n|$)/g)) {
-    for (let start = 0; start < match[0].length; start += 240) lines.push(match[0].slice(start, start + 240));
+    if (match[0].length <= LINE_MAX) { if (match[0]) lines.push(match[0]); continue; }
+    lines.push(...softPieces(match[0]));
   }
   return lines;
 }

@@ -96,7 +96,9 @@ async function main() {
     const completed = await step();
     assert.equal(completed.status, 200);
     const { analysis } = await completed.json();
-    assert.equal(analysis.ecr[0].장비요약[0].규격[0].값, "메모리 256GB 이상");
+    // 값은 항목명을 걷어 낸 원문 줄의 일부이고, 근거는 원문 줄 그대로다.
+    assert.equal(analysis.ecr[0].장비요약[0].규격[0].값, "256GB 이상");
+    assert.equal(analysis.ecr[0].장비요약[0].규격[0].근거, "메모리 256GB 이상");
     assert.equal(analysis.coverage.status, "matched");
     assert.equal(EquipmentSummary.validate(analysis), analysis);
     const summary = EquipmentSummary.render(analysis);
