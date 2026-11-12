@@ -4,9 +4,13 @@
   const MAX_INPUT = 32 * 1024 * 1024;
   const MAX_OUTPUT = 64 * 1024 * 1024;
   const isHwp = (file) => /\.hwpx?$/i.test(file?.name || "");
+  // 변환 한 건의 제한 시간. 엔진과 글꼴을 받는 시간까지 포함하므로 느린 회선·기기에서도 긴 문서가
+  // 끝날 만큼 둔다. 90초였을 때 운영에서 실제 제안요청서가 제한에 걸렸다. 기다리는 동안에도 중지할 수 있다.
+  const TIMEOUT_MS = 5 * 60 * 1000;
+  const limitText = (ms) => (ms % 60000 === 0 ? `${ms / 60000}분` : `${Math.round(ms / 1000)}초`);
   function createConverter({
     workerFactory = () => new scope.Worker("/hwp-worker.js"),
-    setTimer = setTimeout, clearTimer = clearTimeout, timeoutMs = 90000,
+    setTimer = setTimeout, clearTimer = clearTimeout, timeoutMs = TIMEOUT_MS,
     makeBlob = (bytes) => new Blob([bytes], { type: "application/pdf" })
   } = {}) {
     let active = null;
@@ -27,7 +31,7 @@
           if (error) reject(error); else resolve(result);
         } };
         active = job;
-        timer = setTimer(() => job.finish(new Error("변환 제한 시간(90초)을 초과했습니다. 작은 문서로 나누어 다시 시도해 주세요.")), timeoutMs);
+        timer = setTimer(() => job.finish(new Error(`변환 제한 시간(${limitText(timeoutMs)})을 초과했습니다. 작은 문서로 나누어 다시 시도해 주세요.`)), timeoutMs);
         try {
           worker = workerFactory();
           worker.onerror = (event) => { event.preventDefault?.(); job.finish(new Error("변환 엔진을 실행하지 못했습니다. 브라우저를 업데이트하거나 다시 시도해 주세요.")); };

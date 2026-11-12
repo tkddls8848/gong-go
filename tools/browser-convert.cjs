@@ -37,7 +37,7 @@ async function main() {
       const beats = await page.evaluate(() => window.beats);
       const start = performance.now();
       await page.locator("#convert-start").click();
-      await page.waitForFunction(() => !document.querySelector("#convert-start").disabled, { }, { timeout: 100000 });
+      await page.waitForFunction(() => !document.querySelector("#convert-start").disabled, { }, { timeout: 310000 });
       const status = await page.locator("#convert-status").textContent();
       assert.ok(await page.locator("#pdf-download").isVisible(), status);
       const downloadEvent = page.waitForEvent("download");
