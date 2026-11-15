@@ -3,7 +3,7 @@ const key = (id) => String(id).replace(/–/g, "-").replace(/\s/g, "").toUpperCa
 const unique = (ids) => [...new Map(ids.map((id) => [key(id), id])).values()];
 
 export function sourceCoverage(selection) {
-  const expectedIds = unique(selection.sections.map((section) => section.id));
+  const expectedIds = unique(selection.sections.map((section) => section.id).filter(Boolean));
   const selected = new Set(expectedIds.map(key));
   return { expectedIds, excludedIds: unique(selection.ids).filter((id) => !selected.has(key(id))) };
 }

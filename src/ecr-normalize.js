@@ -2,6 +2,7 @@
 // 값은 원문에 적힌 수 그대로다 — 단위를 환산하거나(1TB→1024GB) 합산하거나(운영 2대+개발 1대)
 // 하나를 골라내지 않는다. 장비당/전체, Raw/Usable의 구분은 원문 쪽에 남아 있고, 여기서는
 // 비교·정렬하기 쉬운 형태로 나란히 놓을 뿐이다. 읽지 못한 표기는 비워 둔다 — 지어내지 않는다.
+import { cellValue } from './ecr-cells.js';
 const NUMBER = String.raw`(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)`;
 // 단위 표기를 한 이름으로 모은다. 큰 단위를 먼저 둔다(GbE를 Gb로, TB/s를 TB로 먹지 않게).
 const UNITS = [
@@ -12,9 +13,9 @@ const UNITS = [
   { unit: "GB/s", pattern: String.raw`GB\/s|GBps` },
   { unit: "MB/s", pattern: String.raw`MB\/s|MBps` },
   { unit: "IOPS", pattern: String.raw`IOPS` },
-  { unit: "PB", pattern: String.raw`PB\b|PiB` },
-  { unit: "TB", pattern: String.raw`TB\b|TiB` },
-  { unit: "GB", pattern: String.raw`GB\b|GiB` },
+  { unit: "PB", pattern: String.raw`(?:PB\b|PiB)(?!\s*[/／])` },
+  { unit: "TB", pattern: String.raw`(?:TB\b|TiB)(?!\s*[/／])` },
+  { unit: "GB", pattern: String.raw`(?:GB\b|GiB)(?!\s*[/／])` },
   { unit: "GHz", pattern: String.raw`GHz` },
   { unit: "코어", pattern: String.raw`cores?\b|Cores?\b|CORES?\b|코어` },
   { unit: "소켓", pattern: String.raw`sockets?\b|Sockets?\b|소켓` },
@@ -134,9 +135,60 @@ export function isQuantityLine(line) {
 // 모델은 이 줄을 도입구분에 넣곤 한다(교육포털 PTL 표에서 실제로 그랬고, 그 때문에 수량 칸이 비었다).
 // 서버의 디스크는 서버 안의 디스크이므로 스토리지용 항목인 디스크 구성이 아니라 로컬 디스크다.
 // 고친 규격에는 모델이 고른 항목을 남긴다.
-export function relabelFact(kind, fact) {
+export function relabelFact(kind, fact, source = '') {
   const first = String(fact?.근거 || fact?.값 || "").split("\n")[0];
-  const field = isQuantityLine(first) ? "수량" : kind === "서버" && fact.항목 === "디스크 구성" ? "로컬 디스크" : fact.항목;
+  const value = String(fact?.값 || '');
+  // OS를 주어로 삼은 단독 조건을 CPU·메모리 등 여러 하드웨어 항목에 복제한 응답.
+  // 하드웨어 조건도 함께 언급한 인용은 단일 항목으로 재분류하지 않는다.
+  const quote=String(fact?.근거||'').trim();
+  if(fact.항목==='수량'&&/^(?:신규|증설|교체|재사용|재활용)$/.test(value.trim()))
+    return {...fact,항목:'도입구분',모델항목:fact.항목};
+  // '제공'은 개수가 아니며, 발주기관 제공 여부는 주체까지 보존해야 한다.
+  if(['수량','전원'].includes(fact.항목)&&value.trim()==='제공'
+    &&/(?:본회|발주기관|수요기관|발주처)(?:에서|가|이|는|은)?\s*제공/.test(quote)
+    &&!/전원|전력|power/i.test(quote))
+    return {...fact,항목:'기타 조건',값:quote,모델항목:fact.항목};
+  if(kind==='서버'&&['CPU','메모리','로컬 디스크','디스크 구성','폼팩터','RAID','전원'].includes(fact.항목)
+    &&/^[§•○◦※\s-]*(?:서버\s*)?(?:OS|운영체제)\s*(?:는|은|[:：])/i.test(quote)
+    &&!/\b(?:CPU|GPU|RAM|DIMM|DDR\d*|SSD|HDD|NVMe|RAID)\b|메모리|디스크|프로세서|전원|폼팩터|폼\s*팩터|\d\s*(?:GB|TB|GHz|코어)/i.test(quote))
+    return {...fact,항목:'OS',모델항목:fact.항목};
+  if(fact.항목==='라이선스'&&/케어\s*팩|care\s*pack/i.test(value)&&!/라이선스|licen[cs]e/i.test(value))
+    return {...fact,항목:'유지보수',모델항목:fact.항목};
+  if(kind==='스위치'&&fact.항목==='스위칭 용량'&&!/\d\s*(?:[GMTP]?bps|[GMTP]?b\/s|Mpps)/i.test(value)) {
+    const field=/SFP|GBIC|슬롯/i.test(value)?'포트 수':'기타 조건';
+    return {...fact,항목:field,모델항목:fact.항목};
+  }
+  if(kind==='스토리지'&&fact.항목==='스위칭 용량'&&/^\d+(?:\.\d+)?\s*[GT]B\s*(?:이상|이하)?$/i.test(value)
+    &&/usable|가용|사용공간/i.test(String(fact.근거)))return {...fact,항목:'Usable 용량',모델항목:fact.항목};
+  // 응용 소프트웨어를 OS로 분류한 경우만 바로잡는다. Oracle Linux 등 실제 OS는 유지한다.
+  if (fact.항목 === 'OS' && /\b(?:Oracle\s+(?:Database\s+)?\d+[cg]?|Oracle\s+RAC|MLOps)\b/i.test(value)
+    && !/\b(?:Linux|Windows|Solaris|AIX|HP-UX|Unix)\b/i.test(value)) {
+    return { ...fact, 항목: /라이선스|licen[cs]e/i.test(value) ? '라이선스' : '기타 조건', 모델항목: fact.항목 };
+  }
+  if (kind === '서버' && fact.항목 === '프로토콜' && /\d\s*[- ]?\s*(?:소켓|sockets?|cores?|코어)/i.test(value)
+    && !/TCP|UDP|HTTP|iSCSI|Fibre|Ethernet/i.test(value)) return { ...fact, 항목: 'CPU', 모델항목: fact.항목 };
+  // 인용 위치가 유일하고 직전 규격 머리가 GPU일 때만 GPU 하위 규격으로 분류한다.
+  // 서버 이름에 GPU가 있다는 이유만으로 일반 메모리까지 GPU로 옮기지 않는다.
+  const evidence = String(fact?.근거 || '').trim();
+  const at = evidence ? source.indexOf(evidence) : -1;
+  let gpuScope = false;
+  if (at >= 0 && source.indexOf(evidence, at + 1) < 0) {
+    const labels = [...source.slice(0, at).matchAll(/^(GPU|그래픽\s*카드|CPU|Memory|메모리|저장장치|Disk|I\/O\s*인터페이스|전원|Power)(?=\s|[-:|]|$)[^\n]*/gim)];
+    gpuScope = /^(?:GPU|그래픽\s*카드)$/i.test(labels.at(-1)?.[1] || '');
+  }
+  if (kind === '서버' && gpuScope && ['메모리','성능','기타 조건'].includes(fact.항목)) return { ...fact, 항목: 'GPU', 모델항목: fact.항목 };
+  if (fact.항목 === '수량' && /^(?:포함|별도|전체)$/.test(String(fact.값).trim())) return { ...fact, 항목: '기타 조건', 모델항목: fact.항목 };
+  // 모델이 저장 용량을 수량으로 반환하기도 한다. 용량만 있는 값은 장비 개수가 아니다.
+  if (fact.항목 === '수량' && /^\s*\d[\d,.]*\s*(?:[PTGM]B|[PTGM]iB)\s*(?:이상|이하|초과|미만)?\s*$/i.test(String(fact.값))) {
+    const unique = at >= 0 && source.indexOf(evidence, at + 1) < 0;
+    const context = unique ? source.slice(Math.max(source.lastIndexOf('\n', at) + 1, at - 160), at + evidence.length) : evidence;
+    const field = kind === '스토리지' && /사용\s*공간|usable|실효|가용\s*용량/i.test(context) ? 'Usable 용량'
+      : kind === '스토리지' && /raw|물리\s*용량/i.test(context) ? 'Raw 용량' : '기타 조건';
+    return { ...fact, 항목: field, 모델항목: fact.항목 };
+  }
+  // 전원으로 오분류한 순수 디스크 규격만 바로잡는다. 전력 조건이 함께 있으면 유지한다.
+  const diskAsPower = fact.항목 === '전원' && /\b(?:SSD|HDD|NVMe)\b/i.test(first) && !/전원|전력|power|\d\s*W\b/i.test(first);
+  const field = isQuantityLine(first) ? "수량" : kind === "서버" && (diskAsPower || fact.항목 === "디스크 구성" || /^(?:Raw|Usable) 용량$/.test(fact.항목) && /NVMe|SSD|HDD|디스크/i.test(first)) ? "로컬 디스크" : fact.항목;
   return field === fact.항목 ? fact : { ...fact, 항목: field, 모델항목: fact.항목 };
 }
 function cleanLine(field, line) {
@@ -154,6 +206,7 @@ function cleanLine(field, line) {
 }
 export function cleanValue(field, quote) {
   if (typeof quote !== "string") return quote;
+  quote = cellValue(field, quote);
   const lines = quote.split("\n").map((line) => cleanLine(field, line)).filter(Boolean);
   // 걷어 내고 남는 것이 없으면 원문을 그대로 둔다. 값을 비우지 않는다.
   return lines.length ? lines.join("\n") : quote;

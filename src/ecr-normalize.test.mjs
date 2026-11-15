@@ -1,8 +1,82 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeFact, normalizeItems, cleanValue } from "./ecr-normalize.js";
+import { normalizeFact, normalizeItems, cleanValue, relabelFact } from "./ecr-normalize.js";
 
 const pick = (field, quote) => normalizeFact(field, quote).map(({ 수치, 단위, 조건 }) => `${수치}${단위}${조건 ? ` ${조건}` : ""}`);
+
+test('OS 단독 조건을 하드웨어 규격으로 복제한 응답은 OS로 분류한다',()=>{
+  const quote='§ 서버 OS는 제조사 직접 지원이 가능한 제품이어야 함';
+  for(const field of ['CPU','메모리','디스크 구성','로컬 디스크','폼팩터','RAID','전원']) {
+    const fact={항목:field,값:'제조사 직접 지원이 가능한 제품',근거:quote};
+    const corrected=relabelFact('서버',fact);
+    assert.equal(corrected.항목,'OS');assert.equal(corrected.모델항목,field);
+    assert.equal(corrected.근거,quote);assert.equal(corrected.값,fact.값);
+  }
+  for(const quote of ['OS는 64GB 메모리를 지원해야 함','운영체제: Linux / CPU 16코어',
+    '서버 OS는 제조사 지원 제품\n디스크 SSD 1TB 이상','CPU는 운영체제를 지원해야 함'])
+    assert.equal(relabelFact('서버',{항목:'CPU',값:quote,근거:quote}).항목,'CPU');
+  assert.equal(relabelFact('서버',{항목:'라이선스',값:'포함',근거:'OS는 라이선스를 포함'}).항목,'라이선스');
+});
+
+test('신규와 발주기관 제공을 수량으로 표시하지 않고 제공 주체를 보존한다',()=>{
+  const action=relabelFact('서버',{항목:'수량',값:'신규',근거:'신규 서버'});
+  assert.equal(action.항목,'도입구분');assert.equal(action.값,'신규');
+  const quote='DB 서버, 스토리지, SAN 스위치는 본회에서 제공하며 기타 구성에 필요한 장비는 제안';
+  for(const field of ['수량','전원']) {
+    const fact=relabelFact('스토리지',{항목:field,값:'제공',근거:quote});
+    assert.equal(fact.항목,'기타 조건');assert.equal(fact.값,quote);assert.equal(fact.근거,quote);
+  }
+  assert.equal(relabelFact('서버',{항목:'수량',값:'2',근거:'서버 2대 신규 제공'}).항목,'수량');
+  assert.equal(relabelFact('서버',{항목:'전원',값:'제공',근거:'발주기관에서 제공하는 전원 장치'}).항목,'전원');
+});
+
+test('케어팩 지원 조건은 유지보수로 분류하되 명시적인 라이선스는 유지',()=>{
+  const value='제조사의 파트너사가 제공하는 케어팩(24시간×7일)';
+  assert.equal(relabelFact('서버',{항목:'라이선스',값:value,근거:value}).항목,'유지보수');
+  assert.equal(relabelFact('서버',{항목:'라이선스',값:'라이선스 및 케어팩 포함',근거:'라이선스 및 케어팩 포함'}).항목,'라이선스');
+});
+test('스위칭 용량의 MAC·SFP 오분류를 수정하고 실제 대역폭은 유지',()=>{
+  for(const [value,field] of [['8,000개의 MAC주소','기타 조건'],['구성기능','기타 조건'],['2 SFP','포트 수'],['SFP GBIC 슬롯 제공','포트 수'],['56Gbps','스위칭 용량']]) {
+    const result=relabelFact('스위치',{항목:'스위칭 용량',값:value,근거:value});
+    assert.equal(result.항목,field);assert.equal(result.값,value);
+  }
+});
+test('응용 소프트웨어와 CPU 소켓 오분류를 고치되 실제 OS와 프로토콜은 유지',()=>{
+  for(const [field,value,expected] of [
+    ['OS','Oracle 19C','기타 조건'],['OS','Oracle RAC','기타 조건'],
+    ['OS','GUI 기반 상용 MLops 내장','기타 조건'],['OS','Oracle Linux 9','OS'],
+    ['OS','Linux 및 MLOps 설치','OS'],['OS','Oracle 19C 라이선스','라이선스'],
+    ['프로토콜','2-소켓','CPU'],['프로토콜','2개 장착 (서버당 64core)','CPU'],
+    ['프로토콜','TCP/IP','프로토콜'],
+  ]){
+    const actual=relabelFact('서버',{항목:field,값:value,근거:value});
+    assert.equal(actual.항목,expected,value);assert.equal(actual.값,value);
+    assert.equal(actual.근거,value);
+  }
+});
+test('스토리지 용량을 장비 수량으로 표시하지 않고 명시된 사용공간만 가용 용량으로 분류',()=>{
+  const fact={항목:'수량',값:'19TB 이상',근거:'19TB 이상'};
+  assert.equal(relabelFact('스토리지',fact,'3. 저장장치 사용공간은 RAID10 구성으로 19TB 이상, 확장을\n위한 Enclosure를 납품').항목,'Usable 용량');
+  assert.equal(relabelFact('스토리지',fact,'물리 용량 19TB 이상').항목,'Raw 용량');
+  assert.equal(relabelFact('스토리지',fact,'RAID10 구성으로 19TB 이상').항목,'기타 조건');
+  assert.equal(relabelFact('스토리지',fact,'사용공간 19TB 이상\n물리 용량 19TB 이상').항목,'기타 조건');
+  assert.equal(relabelFact('서버',fact,'메모리 19TB 이상').항목,'기타 조건');
+  const quantity={항목:'수량',값:'2대',근거:'2대'};
+  assert.equal(relabelFact('스토리지',quantity,'2대').항목,'수량');
+});
+
+test('GPU 하위 메모리 대역폭만 GPU로 분류하고 일반 메모리는 유지',()=>{
+  const source='Memory - 1TB 이상\n그래픽카드\n- 메모리대역폭 4TB/s이상\nI/O 인터페이스 10G';
+  const bandwidth={항목:'메모리',값:'4TB/s이상',근거:'- 메모리대역폭 4TB/s이상'};
+  assert.equal(relabelFact('서버',bandwidth,source).항목,'GPU');
+  assert.equal(relabelFact('서버',{항목:'메모리',값:'1TB 이상',근거:'Memory - 1TB 이상'},source).항목,'메모리');
+  assert.equal(relabelFact('서버',bandwidth,source+'\n'+bandwidth.근거).항목,'메모리');
+});
+test('GPU 메모리 대역폭을 메모리 용량으로 정규화하지 않는다',()=>{
+  assert.deepEqual(pick('메모리','4TB/s 이상, 80GB 용량'),['80GB']);
+  assert.deepEqual(pick('메모리','4 TiB / s'),[]);
+  assert.deepEqual(pick('성능','4GB/s 이상'),['4GB/s 이상']);
+});
 
 test("원문 수와 단위를 그대로 두고 조건어만 붙인다 — 환산하지 않는다", () => {
   assert.deepEqual(pick("메모리", "서버당 메모리 512GB 이상 (DDR5)"), ["512GB 이상"]);

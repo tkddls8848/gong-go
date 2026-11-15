@@ -13,6 +13,7 @@
     "analyze": "node analyzer/analyze.js",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test",
     "test:browser": "node tools/browser-smoke.cjs",
+    "pretest:browser": "node tools/build-pdf-assets.cjs",
     "test:search-load": "node tools/search-benchmark.cjs",
     "test:runtime": "node tools/runtime-smoke.cjs",
     "test:runtime-browser": "node tools/runtime-smoke.cjs --browser-auth",
@@ -24,6 +25,7 @@
   "devDependencies": {
     "esbuild": "0.28.2",
     "miniflare": "5.20261110.1-beta",
+    "pdfjs-dist": "6.5.438",
     "playwright-core": "^1.63.0",
     "wrangler": "4.160.1"
   }

@@ -23,9 +23,23 @@ const quoteOf = (fact) => squash(fact.근거 || fact.값);
 // 제 종류의 규격(스위치의 포트 수 등)을 갖고 이름도 원문에 있으면 실제 장비일 수 있어 그대로 둔다.
 // 같은 종류끼리는 건드리지 않는다 — 운영·개발 서버가 규격 줄을 함께 쓰는 표가 있다.
 function hostOf(device, devices) {
+  // 원문 주석이 납품 포함을 명시한 SAN 스위치는 단순 연결 기능과 구분한다.
+  if(device.종류==='스위치'&&device.규격.some(fact=>fact.추출==='원문 포함 구성'
+    &&fact.항목==='종류'&&/^SAN\s*스위치$/i.test(fact.값)&&fact.검증===VERIFIED))return null;
   const quotes = device.규격.map(quoteOf).filter(Boolean);
   if (!quotes.length) return null;
+  // NIC/HBA 부품을 독립 스위치로 생성한 경우, 같은 표의 서버가 그 인용을
+  // 포함하면 제외한다. 서버와 부품이 같은 한 줄을 인용해도 판정할 수 있다.
+  if (device.종류 === "스위치" && /\b(?:NIC|HBA)\b|\bFC\s*\d+\s*port/i.test(device.명칭)
+      && !/스위치|switch/i.test(device.명칭)) {
+    const server = devices.find(other => other.종류 === "서버" && quotes.every(quote => other.규격.some(fact => quoteOf(fact).includes(quote))));
+    if (server) return server;
+  }
   const own = Object.hasOwn(OWN_FIELDS, device.종류) && device.규격.some((fact) => OWN_FIELDS[device.종류].includes(fact.항목));
+  if (!own && device.종류 === "스위치" && !/스위치|switch/i.test(device.명칭)) {
+    const server = devices.find(other => other.종류 === "서버" && quotes.every(quote => other.규격.some(fact => quoteOf(fact).includes(quote))));
+    if (server) return server;
+  }
   if (own && !device.unnamed) return null;
   return devices.find((other) => other !== device && other.종류 !== device.종류
     && quotes.every((quote) => other.규격.some((fact) => quoteOf(fact).includes(quote)))
@@ -41,7 +55,10 @@ function hostOf(device, devices) {
 function quantityFact(source, id) {
   const ranges = requirementRanges(source);
   if (ranges.length !== 1 || idKey(ranges[0].id) !== idKey(id)) return null;
-  const lines = [...new Set(source.split("\n").map((line) => line.trim()).filter(isQuantityLine))];
+  const sourceRows = source.split("\n").map(line => line.trim());
+  const labelled = sourceRows.filter(isQuantityLine);
+  const standalone = /수\s*량/.test(source) ? sourceRows.filter(line => /^\d+\s*(?:대|식|EA|set)\s*$/i.test(line)) : [];
+  const lines = [...new Set(labelled.length ? labelled : standalone)];
   return lines.length === 1 ? { 항목: "수량", 값: lines[0], 근거: lines[0], 검증: VERIFIED, 추출: "규칙" } : null;
 }
 
@@ -51,8 +68,11 @@ function addFact(facts, fact) {
   const text = squash(fact.근거 || fact.값), ok = fact.검증 === VERIFIED;
   if (!text) { facts.push(fact); return; }
   const quoteOf = (held) => squash(held.근거 || held.값);
-  if (facts.some((held) => held.항목 === fact.항목 && quoteOf(held).includes(text) && (held.검증 === VERIFIED || !ok))) return;
-  const covered = (held) => held.항목 === fact.항목 && !!quoteOf(held) && text.includes(quoteOf(held)) && (ok || held.검증 !== VERIFIED);
+  // 같은 근거 문장에서도 서로 다른 값(CPU 속도와 장착 수량)을 뽑는다.
+  // 근거 포함만으로 지우면 뒤에 나온 조건이 사라지므로 값까지 포함해야 중복이다.
+  const value = squash(fact.값);
+  if (facts.some((held) => held.항목 === fact.항목 && quoteOf(held).includes(text) && squash(held.값).includes(value) && (held.검증 === VERIFIED || !ok))) return;
+  const covered = (held) => held.항목 === fact.항목 && !!quoteOf(held) && text.includes(quoteOf(held)) && value.includes(squash(held.값)) && (ok || held.검증 !== VERIFIED);
   const at = facts.findIndex(covered);
   if (at < 0) { facts.push(fact); return; }
   const kept = facts.filter((held, index) => index === at || !covered(held));
@@ -108,7 +128,7 @@ function joinSources(list) {
 }
 
 // items는 구간 순서대로 이어 붙인 구간별 항목이다(항목마다 장비 하나). fieldOrder는 규격을 늘어놓는 순서다.
-export function consolidate(items, { fieldOrder = [] } = {}) {
+export function consolidate(items, { fieldOrder = [], verifiedOnly = false } = {}) {
   const groups = new Map();
   for (const item of items) {
     const key = idKey(item.id);
@@ -122,7 +142,13 @@ export function consolidate(items, { fieldOrder = [] } = {}) {
       if (!device) group.devices.set(deviceKey, device = { 종류: entry.종류, 명칭: entry.명칭, places: [], 규격: [], unnamed: false });
       if (entry.출처 && !device.places.includes(entry.출처)) device.places.push(entry.출처);
       if ((item.불확실 || []).includes(NAME_NOTE)) device.unnamed = true;
-      for (const fact of entry.규격 || []) addFact(device.규격, relabelFact(entry.종류, fact));
+      for (const fact of entry.규격 || []) {
+        if (verifiedOnly && fact.검증 !== VERIFIED) {
+          group.notes.push({ name: entry.명칭, device, messages: [`${fact.항목}: 원문 근거를 검증하지 못해 규격에서 제외함`] });
+          continue;
+        }
+        addFact(device.규격, relabelFact(entry.종류, fact, item.세부내용_원문 || ''));
+      }
     }
     const first = item.장비요약?.[0];
     group.notes.push({ name: first?.명칭 || item.명칭, device: first ? group.devices.get(`${first.종류}|${squash(first.명칭).toUpperCase()}`) : null, messages: item.불확실 || [] });
@@ -130,10 +156,16 @@ export function consolidate(items, { fieldOrder = [] } = {}) {
   const rank = (fact) => { const at = fieldOrder.indexOf(fact.항목); return at < 0 ? fieldOrder.length : at; };
   return [...groups.values()].map((group) => {
     const all = [...group.devices.values()];
-    const hosts = new Map(all.map((device) => [device, hostOf(device, all)]));
-    const devices = all.filter((device) => !hosts.get(device));
+    const nonTargets=all.filter(device=>/\bPC\b|개인용\s*컴퓨터|노트북|모니터/i.test(device.명칭)
+      && !/서버|스토리지|스위치|\bserver\b|\bstorage\b|\bswitch\b/i.test(device.명칭));
+    const eligible=all.filter(device=>!nonTargets.includes(device));
+    const hosts = new Map(eligible.map((device) => [device, hostOf(device, eligible)]));
+    const unsupportedParts = all.filter(device => !device.규격.length && (verifiedOnly || device.종류 === '스위치' && /\b(?:NIC|HBA)\b|\bFC\b/i.test(device.명칭) && !/스위치|switch/i.test(device.명칭)));
+    const devices = all.filter((device) => !hosts.get(device) && !unsupportedParts.includes(device) && !nonTargets.includes(device));
     const many = devices.length > 1;
     const notes = [];
+    for(const device of nonTargets)notes.push(`장비 "${device.명칭}": 서버·스토리지·스위치가 아닌 PC/모니터 항목이므로 장비 요약에서 제외함`);
+    for (const device of unsupportedParts) notes.push(`장비 "${device.명칭}": 유효한 원문 규격이 없어 장비 요약에서 제외함`);
     for (const { name, device, messages } of group.notes) for (const message of messages) {
       const shared = message === ID_NOTE || OVERFLOW_NOTE.test(message);
       // 싣지 않은 장비의 사유는 함께 내려놓는다. 번호와 구간 전체에 걸린 사유만 남긴다.
@@ -146,9 +178,12 @@ export function consolidate(items, { fieldOrder = [] } = {}) {
     // 이름으로 시작하면 장비별 CSV의 어느 줄에도 실리지 않는다.
     for (const [device, host] of hosts) if (host) notes.push(`장비 "${device.명칭}": "${host.명칭}"의 규격 줄만 가리켜 별도 장비에서 제외함`);
     const source = stitch(group.sources);
-    if (devices.length === 1 && !devices[0].규격.some((fact) => fact.항목 === "수량")) {
+    if (devices.length === 1 && !devices[0].규격.some((fact) => fact.항목 === "수량" && /\d+\s*(?:대|식|EA|set|개)/i.test(fact.값))) {
       const quantity = quantityFact(source, group.id);
-      if (quantity) devices[0].규격.push(quantity);
+      if (quantity) {
+        devices[0].규격 = devices[0].규격.filter(fact => fact.항목 !== '수량');
+        devices[0].규격.push(quantity);
+      }
     }
     // 요구사항 이름은 원문 표의 명칭 칸에서 읽는다. 못 읽으면 장비 이름으로 대신한다.
     const name = tableName(source) || (many ? `${devices[0].명칭} 외 ${devices.length - 1}종` : devices[0]?.명칭 || group.name);

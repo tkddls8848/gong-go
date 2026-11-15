@@ -21,6 +21,7 @@
 | 공고 첨부 후보 정렬·나라장터 직접 다운로드 | [ecr-attachments.js](../public/ecr-attachments.js) | ecr-attachments, ecr-rerun |
 | 누락 번호 재분석 대상·직전 결과와 병합 | [ecr-retry.js](../public/ecr-retry.js) | ecr-retry, ecr-rerun |
 | 브라우저 HWP/HWPX → PDF·취소·다운로드 | [hwp-converter.js](../public/hwp-converter.js), hwp-worker.js, convert-ui.js, convert.html | hwp-converter, hwp-assets, ecr-hwp, tools/browser-convert.cjs |
+| PDF 좌표 원문 읽기·모아찍기 순서·표 셀·취소 | [pdf-text.js](../public/pdf-text.js), pdf-geometry.js, tools/build-pdf-assets.cjs | pdf-text, pdf-geometry, ecr-pdf-text, 브라우저 검증 |
 | ECR 표·경고·원문 상세 | [ecr-view.js](../public/ecr-view.js) | ecr-view, exports |
 | 장비 총괄표·핵심 규격 미기재·장비 카드·결과 검증 | [equipment.js](../public/equipment.js) | equipment, ecr-data |
 | 공고 링크·첨부·입찰 일정 | [notice-view.js](../public/notice-view.js) | notice-view |
@@ -52,11 +53,14 @@ test/의 파일명 규칙은 셋입니다 — 모듈 단위는 `<모듈>.test.js
 | 수집기용 API 중계 | [relay.js](../src/relay.js) |
 | 자연어 HTTP·모델 호출 | [ask-handler.js](../src/ask-handler.js) |
 | 자연어 스키마·규칙 파서·날짜 해석 | [ask.js](../src/ask.js) |
-| ECR 작업·추론·결과 응답(저장 없음) | [ecr.js](../src/ecr.js) |
-| ECR 원문 선별·번호 대조·오류 | ecr-source.js, ecr-coverage.js, ecr-errors.js |
-| ECR 구간 나누기(줄 단위·표 머리 반복·반분) | ecr-chunks.js |
+| ECR 작업·추론·결과 응답(저장 없음) | [ecr.js](../src/ecr.js), ecr.test.mjs, ecr-evidence.test.mjs |
+| ECR 원문 선별·번호 없는 도입 목록·번호 대조·오류 | ecr-source.js, ecr-inventory.js, ecr-coverage.js, ecr-errors.js |
+| ECR 구간 나누기(줄 단위·표 머리 반복·반분·등급별 사양 연결) | ecr-chunks.js, ecr-grade-groups.js |
+| 원문 주석의 명시적 스토리지·SAN 포함 구성 보존 | ecr-included-equipment.js, ecr-included-equipment.test.mjs |
 | ECR 구간 결과 병합(번호별 묶기·같은 장비 합치기·원문 잇기, 모델 호출 없음) | ecr-merge.js |
 | ECR 규격 값 다듬기·수치·단위 정규화(모델 호출 없음) | ecr-normalize.js |
+| PDF 변환에서 붙은 명시적 항목·수량 셀 경계 분리 | ecr-cells.js, ecr-cells.test.mjs |
+| 큰 PDF의 브라우저 선별 원문 수신·구조 검증 | ecr-input.js, test/pdf-selection-contract.test.mjs |
 | AI 권한·예산 | ai-access.js, ai-budget.js |
 | KST 날짜 해석 공용 | [kst-date.js](../src/kst-date.js) |
 | 범용 응답 헬퍼(JSON·HTML·리다이렉트·상수 시간 비교) | [http.js](../src/http.js) |

@@ -9,6 +9,48 @@ const part = (id, kind, name, facts, { chunk = 1, source = "", notes = [] } = {}
   id, 분류: kind, 명칭: name, 세부내용_원문: source, 기본규격: [], 산출물: [], 출처: `rfp.pdf · 구간 ${chunk}`, 불확실: notes,
   장비요약: [{ 종류: kind, 명칭: name, 출처: `rfp.pdf · 구간 ${chunk}`, 규격: facts }],
 });
+test('같은 근거에서 추출한 CPU 속도와 장착 수량을 모두 보존',()=>{
+  const evidence='CPU 2.95GHz 이상, 32core 이상, 서버당 2개 장착';
+  const values=['2.95GHz 이상, 32core 이상','서버당 2개 장착'];
+  const [result]=consolidate([part('ECR-001','서버','서버',values.map(value=>({...fact('CPU',evidence),값:value})))]);
+  assert.deepEqual(result.장비요약[0].규격.map(f=>f.값),values);
+});
+
+test('CPU 규격이 있어도 관제 PC·모니터는 서버로 내보내지 않고 PC 관리 서버는 보존',()=>{
+  const names=['관제 PC','(모니터일체형)','PC 관리 서버','모니터링 서버'];
+  const result=consolidate(names.map((name,i)=>part(`ECR-00${i}`,'서버',name,[fact('CPU','1.8GHz 이상')])));
+  assert.deepEqual(result.flatMap(x=>x.장비요약.map(d=>d.명칭)),['PC 관리 서버','모니터링 서버']);
+  assert.ok(result[0].불확실.some(x=>x.includes('PC/모니터')));
+});
+
+test("같은 줄만 인용한 서버 NIC는 별도 스위치에서 제외한다", () => {
+  const line = '(CPU) 16core (MEM) 64GB (NIC) 1G NIC 4port';
+  const [result] = consolidate([
+    part('ECR-002', '서버', 'x86 서버', [fact('CPU', line), fact('NIC/HBA', line)]),
+    part('ECR-002', '스위치', '1G NIC 4port', [fact('NIC/HBA', line)]),
+  ]);
+  assert.equal(result.장비요약.length, 1);
+  assert.equal(result.장비요약[0].종류, '서버');
+  assert.ok(result.불확실.some(note => note.includes('별도 장비에서 제외')));
+});
+test('수량 머리글을 잘못 인용했어도 한 표의 유일한 수량 셀을 복원',()=>{
+  const source='요구사항 번호 ECR-002\n요구사항 명칭 서버\n구분 규격 수량\nCPU 16core\n2식';
+  const [result]=consolidate([part('ECR-002','서버','서버',[fact('수량','구분 규격 수량'),fact('CPU','CPU 16core')],{source})]);
+  assert.equal(result.장비요약[0].규격.find(f=>f.항목==='수량').값,'2식');
+});
+test('엄격한 병합은 근거 미확인 규격과 장비를 제외하고 사유를 남긴다',()=>{
+  const [result]=consolidate([
+    part('ECR-001','서버','서버',[fact('메모리','64GB'),fact('CPU','전체','확인 필요')]),
+    part('ECR-001','스위치','스위치',[fact('포트 수','전체','확인 필요')]),
+  ],{verifiedOnly:true});
+  assert.equal(result.장비요약.length,1);
+  assert.deepEqual(result.장비요약[0].규격.map(f=>f.항목),['메모리']);
+  assert.ok(result.불확실.some(n=>n.includes('검증하지 못해')));
+});
+test('순수 SSD 규격의 전원 오분류를 고치고 실제 전력 조건은 보존',()=>{
+  const [result]=consolidate([part('ECR-001','서버','GPU서버',[fact('전원','960GB SSD * 2 이상'),fact('전원','SSD 포함 최대 전력 800W')])]);
+  assert.deepEqual(result.장비요약[0].규격.map(f=>f.항목),['로컬 디스크','전원']);
+});
 
 test("여러 구간에서 돌아온 같은 장비는 한 항목으로 합치고 규격을 모은다", () => {
   const [item, ...rest] = consolidate([

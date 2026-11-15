@@ -85,7 +85,7 @@ const { showAiAccess, refreshAiAccess, unlockAiAccess, lockAiAccess } =
 const { renderEcr } = GongEcrView.createEcrView({ $, html });
 const { loadEcr, stopEcrAnalysis, startEcrAnalysis, retryMissing } = GongEcr.createEcr({
   model, state: ecrState, $, numberOf, renderEcr, showAiAccess, html,
-  converter: GongHwp.createConverter(), attachments: GongEcrAttachments.createAttachmentSource()
+  converter: GongHwp.createConverter(), pdfReader: GongPdfText.createReader(), attachments: GongEcrAttachments.createAttachmentSource()
 });
 const { openModal, closeModal, selectTab, modalKeydown } = GongModal.createModal({
   model, $, modal, html, normalizeFiles, modalSubtitle, detailLink,

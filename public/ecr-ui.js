@@ -7,7 +7,7 @@
     $, numberOf, renderEcr, showAiAccess,
     GongHttp = scope.GongHttp, EquipmentSummary = scope.EquipmentSummary,
     EcrRetry = scope.GongEcrRetry, html = scope.GongFormat?.html,
-    converter = null, attachments = null
+    converter = null, pdfReader = null, attachments = null
   } = {}) {
     // 재분석에 다시 보낼 업로드 본문. 서버는 끝난 작업을 지우므로 이 화면이 가진 사본이 유일하다.
     // 공고를 바꾸면 쓰지 않는다(row 비교). HWP는 변환한 PDF를 들고 있어 다시 변환하지 않는다.
@@ -57,6 +57,7 @@
     function stopEcrAnalysis() {
       state.ecrRun++;
       converter?.cancel();
+      pdfReader?.cancel();
       download?.abort();
       if (!state.ecrBusy) return;
       $("#ecr-stop-btn").disabled = true;
@@ -126,7 +127,8 @@
       const run = ++state.ecrRun;
       const progress = (message) => { if (model.currentRow === row && run === state.ecrRun) $("#ecr-progress").textContent = message; };
       const live = () => model.currentRow === row && state.aiUnlocked && run === state.ecrRun;
-      if (source.file && !/\.hwpx?$/i.test(source.file.name) && source.file.size > LIMIT) { progress("파일은 8MB까지 지원합니다."); return; }
+      const fileLimit=file=>/\.pdf$/i.test(file.name)&&pdfReader?32*1024*1024:LIMIT;
+      if (source.file && !/\.hwpx?$/i.test(source.file.name) && source.file.size > fileLimit(source.file)) { progress("PDF는 32MB, Markdown·TXT는 8MB까지 지원합니다."); return; }
       begin();
       let completedParts = 0;
       try {
@@ -136,24 +138,29 @@
           download = new AbortController();
           file = await attachments.download(source.attachment, { signal: download.signal });
           if (!live()) return;
-          if (!/\.hwpx?$/i.test(file.name) && file.size > LIMIT) throw new Error("첨부가 분석 제한(8MB)을 넘습니다. 나라장터에서 내려받아 문서를 나누어 올려 주세요.");
+          if (!/\.hwpx?$/i.test(file.name) && file.size > fileLimit(file)) throw new Error("첨부가 분석 제한(PDF 32MB, Markdown·TXT 8MB)을 넘습니다. 문서를 나누어 올려 주세요.");
         }
         progress("문서를 변환하고 있습니다.");
-        let upload = file, uploadName = file.name;
+        let upload = file, uploadName = file.name, format = '';
         if (/\.hwpx?$/i.test(file.name)) {
           if (!converter) throw new Error("한글 변환기를 불러오지 못했습니다. 화면을 새로고침해 주세요.");
           const result = await converter.convert(file, { onProgress: progress });
           if (!live()) return;
           upload = result.blob; uploadName = result.name;
-          if (upload.size > LIMIT) throw new Error("변환된 PDF가 분석 제한(8MB)을 초과했습니다. PDF 변환 화면에서 내려받아 문서를 나누어 주세요.");
+          if (upload.size > (pdfReader?32*1024*1024:LIMIT)) throw new Error(`변환된 PDF가 분석 제한(${pdfReader?'32MB':'8MB'})을 초과했습니다. PDF 변환 화면에서 내려받아 문서를 나누어 주세요.`);
           progress("PDF 변환 완료. 장비 규격 분석을 요청합니다.");
         }
-        const data = await runJob({ action: "upload", notice: numberOf(row), name: uploadName }, upload, {
+        if (/\.pdf$/i.test(uploadName) && pdfReader) {
+          const result = await pdfReader.convert(upload, { onProgress: progress });
+          if (!live()) return;
+          upload = result.blob; format = result.format;
+        }
+        const data = await runJob({ action: "upload", notice: numberOf(row), name: uploadName, ...(format ? { format } : {}) }, upload, {
           row, run, progress, onStep: (count) => { completedParts = count; },
           label: (job) => job.focused ? "ECR·장비 상세 표 분석" : "장비 요구사항 우선 분석",
         });
         if (data && model.currentRow === row && run === state.ecrRun) {
-          lastUpload = { row, blob: upload, name: uploadName };
+          lastUpload = { row, blob: upload, name: uploadName, format };
           showAnalysis(data);
           progress(EcrRetry?.retryPlan(data) ? "분석이 완료되었습니다. 규격을 찾지 못한 번호는 ‘누락 번호 다시 분석’으로 그 표만 다시 물을 수 있습니다." : "분석이 완료되었습니다. 근거와 원문을 확인하세요.");
         }
@@ -172,6 +179,7 @@
       try {
         progress(`규격을 찾지 못한 ${plan.focus.length}개 번호의 표를 다시 분석합니다.`);
         const params = { action: "upload", notice: numberOf(row), name: upload.name, focus: plan.focus.join(","), matched: plan.matched.join(","), unexpected: plan.unexpected.join(",") };
+        if (upload.format) params.format = upload.format;
         const data = await runJob(params, upload.blob, { row, run, progress, onStep() {}, label: () => "누락 번호 재분석" });
         if (data && model.currentRow === row && run === state.ecrRun && model.currentAnalysis === previous) {
           const merged = EquipmentSummary.validate(EcrRetry.mergeRetry(previous, data, plan.focus));

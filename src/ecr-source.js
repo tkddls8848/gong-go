@@ -1,11 +1,12 @@
 // PDF→Markdown은 표를 평문으로 풀기도 한다. 표의 셀 경계 대신 요구사항 번호와 상세 표 머리글을 쓴다.
 // 장비 번호의 공백은 한 칸까지만 본다. \s*로 열어 두면 표 레이아웃의 빈 칸을 건너뛰어
 // "장비" 머리글과 옆 칸의 숫자가 한 ID로 붙는다("장비             1").
-const ID = /(?:\b[A-Z]{2,5}[-–][A-Z0-9]+(?:[-–][A-Z0-9]+)*|장비 ?[-–]?[A-Z]?\d+(?:[-–]\d+)*|[가-힣]{2,10}[-–]\d+(?:[-–]\d+)*)/g;
+import { inventorySections } from './ecr-inventory.js';
+const ID = /(?:\b[A-Z]{2,5}[-–][A-Z0-9]+(?:[-–][A-Z0-9]+)*|(?:[가-힣]{2,16}[-–])?장비 ?[-–]?[A-Z]?\d+(?:[-–]\d+)*|[가-힣]{2,16}[ \t]*[-–][ \t]*(?:[가-힣]{2,10}[ \t]*[-–][ \t]*)?\d+(?:[-–]\d+)*)/g;
 // 요구사항 번호의 가운데 마디는 갈래를 가리킨다(ECR-HW-01 하드웨어, ECR-NW-06 네트워크,
 // ECR-SW-04 소프트웨어, ECR-COM-08 공통). 소프트웨어와 공통은 장비 표가 아니다.
-const target = (id) => (/^ECR[-–]|^장비/i.test(id)) && !/^ECR[-–](?:SW|COM)[-–]/i.test(id);
-const detail = /세부\s*내용|상세\s*내용|요구사항\s*정의|CPU|메모리|프로세서|컨트롤러|Usable|RAID|\d+\s*(?:GB|TB|GHz)/i;
+const target = (id) => (/^(?:ECR|NIR|AIR|HWR)[-–]|^(?:[가-힣]{2,16}[-–])?장비/i.test(id)) && !/^ECR[-–](?:SW|COM)[-–]/i.test(id);
+const detail = /세\s*부\s*내\s*용|상세\s*내용|요구사항\s*정의|CPU|메모리|프로세서|컨트롤러|Usable|RAID|LTO[- ]?\d|PORT\s+BLADE|\d+\s*(?:GB|TB|GHz|Gbps)|\d+\s*[-–]?\s*Ports?/i;
 // 소프트웨어·PC·UPS 표도 "시스템 장비구성 요구사항"으로 분류되고 CPU·메모리를 적는다.
 // 분류로는 갈리지 않지만 명칭으로는 갈린다 — 같은 이름이 장비와 소프트웨어 양쪽에 있어도
 // 장비 쪽만 꼬리에 서버/스토리지/스위치를 달고 있다(NMS/SMS서버와 NMS/SMS, 백신관리서버와
@@ -18,7 +19,7 @@ const NOT_EQUIPMENT = /운영\s*체제|\bOS\b|\bPC\b|복합기|\bUPS\b|\bDBMS\b|
 const RACK_ONLY = /^(?:서버|스위치|네트워크|통신)?\s*(?:랙|RACK)\s*$/i;
 // 장비 이름 뒤의 괄호는 용도를 덧붙인 것이다("PMS서버(내부/외부)"). 꼬리 판정에서 괄호는
 // 걷어내되, 괄호 앞이 장비어일 때만 장비로 본다 — "백신(PC용/서버용)"은 백신 소프트웨어다.
-const DEVICE_TAIL = /(?:서버|스토리지|스위치|장치|장비)\s*(?:\([^)]*\))?\s*$/;
+const DEVICE_TAIL = /(?:서버|스토리지|스위치|장치|장비)\s*(?:\([^)]*\)\s*)*$/;
 // "…요건"으로 장비 표를 가려내려다 되돌렸다. 4대보험 본공고의 ECR-009 상담요약시스템 요건,
 // ECR-010 녹음시스템 요건, ECR-012 PoE 스위치 요건이 모두 실제 장비 표다 — 이름 끝의 "요건"은
 // 장비인지 아닌지를 가르지 않는다. 같은 유혹이 다시 오면 이 세 건을 먼저 보라.
@@ -45,6 +46,42 @@ function equipmentTable(text, naming = {}) {
   if (usable && LICENSE_ONLY.test(subject)) return false;
   if (usable && RACK_ONLY.test(subject)) return false;
   if (usable && SECURITY_OR_LINE.test(subject) && !TARGET_WORD.test(subject)) return false;
+  // 소프트웨어 사업명으로 묶였어도 납품할 서버의 규격·수량 표가 있으면 포함한다.
+  // 단순 서버 현황이나 소프트웨어 실행 환경만으로는 이 조건을 통과하지 않는다.
+  if (usable && /서버\s*(?:(?:증설|재배치|I\/O)\s*)?(?:최소\s*)?(?:요구\s*|제안\s*)?규격/.test(text)
+      && /도입|납품/.test(text) && /수\s*량/.test(text) && /\d+\s*(?:대|식)/.test(text)
+      && /CPU/i.test(text) && /\d[\d.]*\s*(?:GHz|GB)/i.test(text)) return true;
+  if (usable && /\bHW\b|H\s*\/\s*W|하드웨어/i.test(subject)
+      && /CPU/i.test(text) && /MEM|메모리/i.test(text) && /SSD|HDD|디스크/i.test(text)
+      && /수\s*량/.test(text) && /\d+\s*(?:대|식)/.test(text)) return true;
+  if (usable && /백업\s*증설/.test(subject) && /LTO\s*[-–]?\d+\s*드라이브/i.test(text)
+      && /\d+\s*개/.test(text)) return true;
+  if (usable && /디스크\s*증설/.test(subject) && /가용량|가용\s*용량/.test(text)
+      && /RAID/i.test(text) && /\d+\s*TB/i.test(text)) return true;
+  if (usable && /자원\s*증설/.test(subject) && /하드웨어\s*자원\s*증설/.test(text)
+      && /서버\s*\d+\s*(?:대|식)/.test(text)) return true;
+  if (usable && /도입\s*규격/.test(text) && /수\s*량/.test(text)
+      && /CPU\s*[:：]\s*\d/i.test(text) && /메모리\s*[:：]\s*\d/.test(text)
+      && /디스크\s*[:：].*(?:SAS|SATA|SSD|HDD)/i.test(text)) return true;
+  // 'L2 스위치-사용자PC/관리망용'의 PC는 연결 대상이며 납품 품목이 아니다.
+  if (usable && /^(?:L[234]|SAN|FC|백본)?\s*스위치\s*[-–]/i.test(subject)) return true;
+  // 이름에 '기안기' 같은 소프트웨어명이 있어도 도입 대상이 서버이면 장비 표다.
+  // '서버 내 S/W 증설'은 이 패턴에 해당하지 않는다.
+  if (usable && /(?:서버|스토리지|스위치|백업장비)\s*(?:\([^)]*\)\s*)?(?:신규\s*)?(?:도입|설치|증설|교체|구매)/.test(subject)) return true;
+  // DBMS 통합시스템처럼 이름이 소프트웨어여도 물리 서버 구성품을 함께 요구하는 표다.
+  if (usable && /통합\s*시스템.*도입/.test(subject)
+      && /CPU/.test(text) && /메모리/.test(text) && /FC\s*HBA/i.test(text)
+      && /전원\s*및\s*팬\s*이중화/.test(text)) return true;
+  if (usable && /서버\s*자원\s*(?:\([^)]*\)\s*)?증설/.test(subject)) return true;
+  if (usable && /H\s*\/\s*W|하드웨어/i.test(subject) && /도입|설치/.test(subject)
+      && /요구\s*규격\s*\(\s*서버\s*\)/.test(text)) return true;
+  // '서버 공통' 표에 실제 신규 장비의 수량·사양표를 넣는 문서가 있다.
+  // 공통이라는 이름만으로 제외하지 않되 단순 공통 정책은 계속 제외한다.
+  if (usable && /서버.*공통/.test(subject) && /신규\s*도입/.test(text)
+      && /수\s*량/.test(text) && /CPU\s*[:：]?\s*\d/i.test(text) && /메모리\s*[:：]?\s*\d/.test(text)) return true;
+  // 구성·데이터 이관 계획서는 새 장비 한 종류가 아니다. 실제 수량/하드웨어 수치가 있으면 유지한다.
+  if(usable&&/^정의[^\n]*(?:구성|이관|설계)\s*(?:방안\s*)?계획\s*(?:제시|수립)/m.test(text)
+    && !/\d[\d.,]*\s*(?:cores?\b|GHz\b|[GT]B\b|Gbps\b|ports?\b|(?:대|식)(?![가-힣]))/i.test(text))return false;
   // 같은 문서에 "서버보안"과 "서버보안서버"가 함께 있으면 꼬리 없는 쪽이 소프트웨어다.
   // 짝을 볼 때는 꼬리가 없는 이름만 내려놓는다 — "백본 스위치(내부망)"과 "(인터넷망)"처럼
   // 둘 다 장비인 이름끼리 서로를 떨어뜨리면 안 된다.
@@ -87,12 +124,14 @@ function widestGap(blank, enough, from, to) {
   return gap;
 }
 function unfoldPage(page) {
+  if(!NUMBER_MARK.test(page))return page;
   const lines = page.split("\n");
   const filled = lines.filter((line) => line.trim());
   if (filled.length < 5) return page;
   // 번호 칸이 찍힌 열을 본다. 왼쪽 표와 오른쪽 표는 같은 라벨을 서로 다른 열에 쓴다.
   const columns = [];
-  for (const line of lines) { const finder = new RegExp(NUMBER_MARK, "g"); let found; while ((found = finder.exec(line))) columns.push(found.index); }
+  const finder = new RegExp(NUMBER_MARK, "g");
+  for (const line of lines) { finder.lastIndex=0; let found; while ((found = finder.exec(line))) columns.push(found.index); }
   if (columns.length < 2) return page;
   const near = Math.min(...columns), far = Math.max(...columns);
   // 같은 열에만 찍혔다면 한 단 쪽이다. 열 차이가 뚜렷할 때만 두 표로 본다.
@@ -126,14 +165,20 @@ export function requirementRanges(text) {
   const lines = [...text.matchAll(/[^\n]*(?:\n|$)/g)].filter((line) => line[0]);
   const boundaries = [];
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i][0], ids = [...line.matchAll(ID)].map((match) => match[0]);
+    const line = lines[i][0];
+    // 긴 한글 본문의 모든 글자에서 복합 ID 정규식을 시도하지 않는다.
+    // 지원 ID에는 문자 뒤 대시 또는 '장비 숫자'가 반드시 있다.
+    if(!/[A-Z가-힣][ \t]*[-–]|장비 ?[A-Z]?\d/.test(line))continue;
+    const ids = [...line.matchAll(ID)].map((match) => match[0]);
     if (ids.length !== 1 || /참조|참고|연계|관련\s*요구/.test(line)) continue;
     const field = /(?:요구사항|요구|고유|식별)\s*(?:고유\s*)?(?:번호|ID|코드)/i.test(line + (i ? lines[i - 1][0] : ""));
-    const leading = /^[\s|#*]*(?:ECR[-–]|[A-Z]{2,5}[-–]|장비\s*[-–]?\s*[A-Z]?\d|[가-힣]{2,10}[-–]\d)/.test(line);
+    // LTO-8 같은 장비 규격을 새 요구사항 번호로 오인하면 테이프 표가 중간에 잘린다.
+    if (!field && /^(?:LTO|DDR|PCI|SAS|SATA|NVME|QSFP|SFP|BR|RAID)[-–]/i.test(ids[0])) continue;
+    const leading = /^[\s|#*]*(?:ECR[-–]|[A-Z]{2,5}[-–]|(?:[가-힣]{2,16}[-–])?장비\s*[-–]?\s*[A-Z]?\d|[가-힣]{2,16}[ \t]*[-–][ \t]*(?:[가-힣]{2,10}[ \t]*[-–][ \t]*)?\d)/.test(line);
     if (!field && !leading) continue;
     // '장비-029' 뒤의 '기능-001'도 표 경계다. 놓치면 이후 기능 요구사항 전체가
     // 마지막 장비 규격에 붙는다. 한글 번호는 번호 칸 또는 바로 뒤 표 머리글로 확인한다.
-    if (/^[가-힣]/.test(ids[0]) && !/^장비/.test(ids[0]) && !field
+    if (/^[가-힣]/.test(ids[0]) && !/^(?:[가-힣]{2,16}[-–])?장비/.test(ids[0]) && !field
       && !/요구사항\s*(?:분류|명\s*칭|정의)/.test(lines.slice(i + 1, i + 5).map(entry => entry[0]).join(""))) continue;
     boundaries.push({ id: ids[0], start: lines[i].index });
   }
@@ -160,14 +205,27 @@ export function requirementSections(source) {
 // 이미 편 글에서 고른다. 업로드는 문서 전체를 한 번만 펴고 그 결과를 구간·번호 대조에 함께 쓴다 —
 // 무료 Worker는 요청당 CPU가 빠듯해서 60만 자를 여러 번 훑을 여유가 없다.
 export function sectionsOf(text) {
-  const ranges = requirementRanges(text).filter((section) => target(section.id));
+  const continued = [];
+  for (const section of requirementRanges(text)) {
+    const previous = continued.at(-1);
+    // 같은 번호의 '(계속)' 쪽은 명칭이 없어도 직전 표에 속한다. 다른 표를 건너뛰어 잇지 않는다.
+    if (previous?.id === section.id && !tableName(section.text) && /\(\s*계속\s*\)/.test(section.text.slice(0,120))) {
+      previous.text += section.text;
+      previous.end = section.end;
+    } else continued.push({ ...section });
+  }
+  const ranges = continued.filter((section) => target(section.id));
   // 이름 짓는 방식은 문서마다 다르다. 한 표만 보지 말고 문서 전체의 이름을 모아 견준다.
   const naming = { devices: ranges.map((entry) => tableName(entry.text)).filter(Boolean) };
   const sections = ranges.map((section) => {
     if (detail.test(section.text)) return section;
     const body = bodyByName(text, section);
     return body ? { ...section, text: `${section.text}\n${body}` } : section;
-  }).filter((section) => detail.test(section.text) && equipmentTable(section.text, naming));
+  }).filter((section) => detail.test(section.text) && equipmentTable(section.text, naming)
+    && (!/^(?:NIR|AIR|HWR)[-–]/i.test(section.id)
+      || /서버|스토리지|스위치|디스크\s*장치|백업\s*장치|통신\s*장비/.test(tableName(section.text))));
+  sections.push(...inventorySections(text,sections));
+  sections.sort((a,b)=>a.start-b.start);
   return { sections, ids: [...new Set(ranges.map((entry) => entry.id))] };
 }
 export function priorityOrder(chunks) {

@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { gzipSync } = require("node:zlib");
+const pdfFixture = require('../test/pdf-fixture.cjs');
 // 테스트에서만 별도 수집기 파서로 실제 다운로드 형식을 교차 확인한다.
 const { parseCsv } = require("../collector/csv-record.js");
 const root = path.resolve(__dirname, "../public");
@@ -38,7 +39,7 @@ async function main() {
         // 제안요청정보 첨부(downloadRfpFile.do)도 같은 방식으로 내준다.
         if (url.hostname === "www.g2b.go.kr" && /^\/pn\/pnp\/pnpe\/UntyAtchFile\/download(?:Rfp)?File\.do$/.test(url.pathname)) {
           g2bRequests++;
-          return route.fulfill({ status: 200, headers: { "access-control-allow-origin": "*", "content-type": "application/octet-stream" }, body: Buffer.from("%PDF-1.7\n%fixture\n") });
+          return route.fulfill({ status: 200, headers: { "access-control-allow-origin": "*", "content-type": "application/octet-stream" }, body: pdfFixture() });
         }
         if (url.hostname !== "gong-go.test") { unknown.push(url.href); return route.abort(); }
         if (url.pathname === "/data/index.json") return json({ files: [{ path: "bid/2026/09.csv.gz", mode: "bid", begin: "2026-09-01", end: "2026-09-30", count: 4 }], updatedAt: "2026-09-25T00:00:00Z" });
@@ -58,14 +59,17 @@ async function main() {
         if (url.pathname === "/api/ecr") {
           if (route.request().method() === "GET") { ecrReads++; return json({ message: "POST만 지원합니다." }, 405); }
           assert.ok(unlocked, "locked screen must not send AI work");
-          if (url.searchParams.get("action") === "upload") { uploads.push(Object.fromEntries(url.searchParams)); return json({ id: "fixture-job", total: 2, order: [0, 1], focused: true }); }
+          if (url.searchParams.get("action") === "upload") {
+            if (url.searchParams.get('format') === 'text') assert.ok(route.request().postData().includes('Memory 256GB'), 'actual PDF text must reach upload');
+            uploads.push(Object.fromEntries(url.searchParams)); return json({ id: "fixture-job", total: 2, order: [0, 1], focused: true });
+          }
           stepCalls++;
           if (stepCalls === 1) await new Promise((resolve) => { release = resolve; });
           return json(url.searchParams.get("finalize") === "1" ? { analysis, completed: 2, total: 2 } : { completed: 1, total: 2 });
         }
         const file = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
-        if (!/^(?:[a-z-]+\.(?:html|js|css)|assets\/[a-z-]+\.svg)$/.test(file)) { unknown.push(url.href); return route.abort(); }
-        try { return await route.fulfill({ body: await fs.readFile(path.join(root, file)), contentType: file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : file.endsWith(".svg") ? "image/svg+xml" : "text/html" }); }
+        if (!/^(?:[a-z-]+\.(?:html|js|css)|assets\/[a-z-]+\.svg|pdf-runtime\/(?:selection\.mjs|pdf(?:\.worker)?\.mjs|(?:cmaps|standard_fonts)\/[A-Za-z0-9_.-]+))$/.test(file)) { unknown.push(url.href); return route.abort(); }
+        try { return await route.fulfill({ body: await fs.readFile(path.join(root, file)), contentType: /\.m?js$/.test(file) ? "text/javascript" : file.endsWith(".css") ? "text/css" : file.endsWith(".svg") ? "image/svg+xml" : "text/html" }); }
         catch { unknown.push(url.href); return route.abort(); }
       });
       try {
@@ -184,6 +188,7 @@ async function main() {
         await page.waitForFunction(() => document.querySelector("#ecr-progress").textContent.includes("분석이 완료"));
         assert.equal(g2bRequests, 1);
         assert.equal(uploads.at(-1).name, "사업 수행 계획.pdf");
+        assert.equal(uploads.at(-1).format, 'text');
         await page.locator("#ai-lock-btn").click();
         await page.waitForFunction(() => document.querySelector("#ai-access-status").textContent.includes("전용 비밀번호"));
         assert.equal(await page.locator("#ecr-analyze-btn").isDisabled(), true);
@@ -288,6 +293,7 @@ async function main() {
         assert.deepEqual(unknown, []);
         console.log(`PASS ${viewport.width}x${viewport.height} ${timezoneId}: gzip CSV Worker + inline search, filters, KST date, entry, lock, upload, stop, resume, coverage; no page errors`);
       } catch (error) {
+        console.error('Browser failure context', { progress: await page.locator('#ecr-progress').textContent().catch(()=>''), errors, unknown });
         // 실패 위치에서도 증거를 남기되 캡처 실패로 원래 오류를 가리지 않는다.
         try {
           await fs.mkdir(path.resolve(__dirname, "../test-results"), { recursive: true });

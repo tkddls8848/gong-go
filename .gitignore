@@ -2,6 +2,7 @@
 node_modules/
 test-results/
 .wrangler/
+/public/pdf-runtime/
 /data/
 /samples/
 __pycache__/

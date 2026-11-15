@@ -2,6 +2,7 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "gong-go",
   "main": "src/worker.js",
+  "build": { "command": "node tools/build-pdf-assets.cjs" },
   "compatibility_date": "2026-08-08",
   "workers_dev": true,
   "preview_urls": false,

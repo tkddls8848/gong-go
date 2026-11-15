@@ -89,7 +89,7 @@ async function main() {
     const cookies = `${gate}; ${access.headers.get("Set-Cookie").split(";")[0]}`;
     assert.equal((await access.json()).unlocked, true);
     const headers = { Origin: origin, Cookie: cookies };
-    const upload = await send("/api/ecr?action=upload&notice=runtime-canary&name=rfp.md", { method: "POST", headers, body: "ECR-001 업무 서버\n메모리 256GB 이상\n" });
+    const upload = await send("/api/ecr?action=upload&notice=runtime-canary&name=rfp.pdf&format=selection", { method: "POST", headers, body: JSON.stringify({schemaVersion:1,sourceChars:1100000,ids:['ECR-001','ECR-002'],sections:[{id:'ECR-001',text:"ECR-001 업무 서버\n메모리 256GB 이상\n",unnumbered:false}]}) });
     assert.equal(upload.status, 200);
     const job = await upload.json();
     const step = () => send(`/api/ecr?action=step&id=${job.id}&index=0`, { method: "POST", headers });
@@ -100,6 +100,7 @@ async function main() {
     assert.equal(analysis.ecr[0].장비요약[0].규격[0].값, "256GB 이상");
     assert.equal(analysis.ecr[0].장비요약[0].규격[0].근거, "메모리 256GB 이상");
     assert.equal(analysis.coverage.status, "matched");
+    assert.deepEqual(analysis.coverage.excludedIds,['ECR-002']);
     assert.equal(EquipmentSummary.validate(analysis), analysis);
     const summary = EquipmentSummary.render(analysis);
     assert.match(summary, /메모리 256GB 이상/);

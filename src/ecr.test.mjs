@@ -39,6 +39,19 @@ function bucket() {
 const request = (params, body, headers = {}) => new Request(`${ORIGIN}/api/ecr?${new URLSearchParams(params)}`, { method: "POST", body, headers: { Origin: ORIGIN, ...headers } });
 const source = "ECR-001 서버 도입\n서버당 메모리 256GB 이상을 제공한다.";
 const modelResult = () => ({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ items: [{ id: "ECR-001", kind: "서버", name: "서버 도입", facts: [{ field: "메모리", value: "서버당 메모리 256GB 이상", evidence: "서버당 메모리 256GB 이상을 제공한다." }] }] }) } }] });
+
+test('큰 PDF의 선별 업로드도 서버 구간 준비와 누락 대조를 수행하며 예산을 우회하지 않는다',async()=>{
+  const env={DATA:bucket(),AI:{run:async()=>{throw Error('must not call');}}};
+  const payload={schemaVersion:1,sourceChars:1100000,ids:['ECR-001','ECR-002'],sections:[{id:'ECR-001',text:source,unnumbered:false}]};
+  const response=await handleEcr(request({action:'upload',notice:'large-pdf',name:'large.pdf',format:'selection'},JSON.stringify(payload)),env);
+  assert.equal(response.status,200);
+  const job=await response.json();
+  const stored=JSON.parse(env.DATA.store.get(`_ecr/jobs/${job.id}.json`).body);
+  assert.deepEqual(stored.coverage,{expectedIds:['ECR-001'],excludedIds:['ECR-002']});
+  assert.ok(stored.chunks[0].includes('256GB'));
+  await reserveNeurons(env.DATA,8000);
+  assert.equal((await handleEcr(request({action:'step',id:job.id,index:'0'}),env)).status,429);
+});
 test("병렬 예산 예약은 일일 한도를 넘기지 않고 UTC 날짜가 바뀌면 초기화된다", async () => {
   const data = bucket(), now = Date.parse("2026-09-22T23:59:00Z");
   const results = await Promise.allSettled([reserveNeurons(data, 5000, now), reserveNeurons(data, 5000, now)]);
@@ -76,6 +89,18 @@ test("인증 전 분석 경로와 다른 사이트의 업로드는 차단한다"
   assert.equal((await worker.fetch(request({ action: "upload", notice: "test", name: "rfp.md" }, source), env)).status, 401);
   assert.equal((await handleEcr(request({ action: "upload" }, source, { Origin: "https://other.example" }), env)).status, 403);
 });
+test('브라우저에서 읽은 PDF 원문은 재변환 없이 준비하고 원래 PDF 이름을 유지한다', async () => {
+  const env={DATA:bucket(),AI:{toMarkdown:async()=>{throw new Error('unexpected conversion');}}};
+  const response=await handleEcr(request({action:'upload',notice:'local-pdf',name:'original.pdf',format:'text'},source),env);
+  assert.equal(response.status,200);
+  const job=await response.json();
+  const stored=[...env.DATA.store.values()].map(v=>JSON.parse(v.body)).find(v=>v.chunks);
+  assert.equal(stored.name,'original.pdf');
+  assert.ok(stored.chunks.join('\n').includes('256GB'));
+  assert.equal(job.total,1);
+  assert.equal((await handleEcr(request({action:'upload',notice:'bad-format',name:'rfp.pdf',format:'html'},source),env)).status,400);
+});
+
 test("PDF는 원격 toMarkdown 변환을 거치고 HWP는 명시적으로 안내한다", async () => {
   const env = { DATA: bucket(), AI: { toMarkdown: async ({ name, blob }) => { assert.equal(name, "rfp.pdf"); assert.equal(blob.type, "application/pdf", "Cloudflare 변환기는 빈 mimeType을 거부한다"); assert.equal(await blob.text(), "%PDF-test"); return { format: "markdown", data: source }; } } };
   assert.equal((await handleEcr(request({ action: "upload", notice: "test", name: "rfp.pdf" }, "%PDF-test"), env)).status, 200);
