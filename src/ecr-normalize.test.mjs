@@ -133,3 +133,18 @@ test("줄 범위로 복원한 규격만 값을 다듬고 근거와 구형 응답
   assert.equal(unchecked.정규화, undefined, "확인하지 못한 값은 정규화하지 않는다");
   assert.equal(legacy.값, "| 메모리 | 256GB", "모델이 값을 따로 적은 응답은 건드리지 않는다");
 });
+
+test('항목의 단위가 없고 다른 항목의 단위만 있는 값을 열 밀림으로 본다',async()=>{
+  const { unitMismatch } = await import('./ecr-normalize.js');
+  for(const [field,value] of [['CPU','64GB'],['메모리','2.4GHz 8core'],['메모리','4'],['포트 수','1,200,000'],['메모리','700,000이상'],['로컬 디스크','10Gbps 2Port'],['수량','16core']])
+    assert.equal(unitMismatch(field,value),true,`${field} ${value}`);
+  for(const [field,value] of [['CPU','2.4GHz 16core 이상'],['CPU','2소켓 이상'],['메모리','512GB 이상'],['메모리','DDR5 32GB x 16'],['포트 수','48 port'],['포트 수','10G SFP+ 24'],
+    ['로컬 디스크','SSD 960GB x 2'],['수량','2대'],['CPU','이중화 구성'],['포트 수','24']])
+    assert.equal(unitMismatch(field,value),false,`${field} ${value}`);
+});
+
+test('스토리지의 Gbps 인터페이스를 스위칭 용량으로 고르면 포트 속도로 바로잡는다',()=>{
+  const fact={항목:'스위칭 용량',값:'10/25/100 Gbps 이상 지원',근거:'- 인터페이스 : 10/25/100 Gbps 이상 지원',검증:'원문 확인'};
+  assert.equal(relabelFact('스토리지',fact).항목,'포트 속도');
+  assert.equal(relabelFact('스위치',{...fact,값:'3.2Tbps 이상'}).항목,'스위칭 용량');
+});

@@ -55,6 +55,7 @@ test/의 파일명 규칙은 셋입니다 — 모듈 단위는 `<모듈>.test.js
 | 자연어 스키마·규칙 파서·날짜 해석 | [ask.js](../src/ask.js) |
 | ECR 작업·추론·결과 응답(저장 없음) | [ecr.js](../src/ecr.js), ecr.test.mjs, ecr-evidence.test.mjs |
 | ECR 원문 선별·번호 없는 도입 목록·번호 대조·오류 | ecr-source.js, ecr-inventory.js, ecr-coverage.js, ecr-errors.js |
+| ECR 모델 인용을 원문 토막으로 복원(글머리표·줄 표식·칸 이음·다음 줄 값) | ecr-quote.js |
 | ECR 구간 나누기(줄 단위·표 머리 반복·반분·등급별 사양 연결) | ecr-chunks.js, ecr-grade-groups.js |
 | 원문 주석의 명시적 스토리지·SAN 포함 구성 보존 | ecr-included-equipment.js, ecr-included-equipment.test.mjs |
 | ECR 구간 결과 병합(번호별 묶기·같은 장비 합치기·원문 잇기, 모델 호출 없음) | ecr-merge.js |

@@ -165,13 +165,25 @@ test('원문에 없는 수치는 확인됨으로 표시하지 않는다',()=>{
   const [item]=parseResult({response:{items:[{id:'',kind:'서버',name:'서버',facts:[{field:'메모리',value:'128GB',evidence:'메모리 64GB'}]}]}},'서버\n메모리 64GB','rfp.pdf',0);
   assert.equal(item.장비요약[0].규격[0].검증,'확인 필요');
 });
-test('원문 줄 표식을 숫자 목록으로 바꾼 인용은 실제 지정 줄과 일치할 때만 복원',()=>{
+test('원문 줄 표식을 숫자 목록으로 바꾼 인용은 표식을 떼고 원문에 그대로 있을 때만 복원',()=>{
+  // 모델이 붙인 줄 번호는 자주 틀린다. 줄 번호가 아니라 인용한 글이 원문에 그대로 있는지로 판단한다.
   const source='요구사항 번호 ECR-002\n요구사항 명칭 DB 서버\n- CPU 3.6GHz\n- 메모리 1600GB 이상';
   const facts=[{field:'CPU',value:'3.6GHz',evidence:'3. - CPU 3.6GHz'},
     {field:'메모리',value:'1600GB 이상',evidence:'[L4] - 메모리 1600GB 이상'},
     {field:'메모리',value:'1600GB 이상',evidence:'3. - 메모리 1600GB 이상'},
     {field:'메모리',value:'800GB 이상',evidence:'4. - 메모리 800GB 이상'}];
   const [item]=parseResult({response:{items:[{id:'ECR-002',kind:'서버',name:'DB 서버',facts}]}},source,'rfp.pdf',0);
-  assert.deepEqual(item.장비요약[0].규격.map(x=>x.검증),['원문 확인','원문 확인','확인 필요','확인 필요']);
+  assert.deepEqual(item.장비요약[0].규격.map(x=>x.검증),['원문 확인','원문 확인','원문 확인','확인 필요']);
   assert.equal(item.장비요약[0].규격[0].근거,'- CPU 3.6GHz');
+});
+test('값 하나뿐인 짧은 인용은 줄 표식이 가리킨 줄이 그 글로 시작할 때만 복원',()=>{
+  // 실문서: 표 칸이 풀린 "18TB 2Port 2대" 줄에서 용량만 "[L19] 18TB"로 인용했다.
+  const source='요구사항 번호 ECR-002\nWORM스토리지\n18TB 2Port 2대';
+  const facts=[{field:'Usable 용량',value:'18TB',evidence:'[L3] 18TB'},{field:'Usable 용량',value:'18TB',evidence:'[L2] 18TB'}];
+  const [item]=parseResult({response:{items:[{id:'ECR-002',kind:'스토리지',name:'WORM스토리지',facts}]}},source,'rfp.pdf',0);
+  assert.deepEqual(item.장비요약[0].규격.map(x=>x.검증),['원문 확인','확인 필요']);
+  // 실문서: SW 업그레이드 요구사항의 "1식"을 "[L#] 1식"으로 인용해 없는 서버를 만들었다.
+  const [sw]=parseResult({response:{items:[{id:'ECR-004',kind:'서버',name:'서버',facts:[{field:'수량',value:'1식',evidence:'[L3] 1식'}]}]}},
+    '요구사항 번호 ECR-004\n형상관리시스템 업그레이드\n1식','rfp.pdf',0);
+  assert.notEqual(sw.장비요약[0]?.규격[0]?.검증,'원문 확인');
 });

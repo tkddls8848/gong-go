@@ -94,7 +94,7 @@ test("한 인용이 다른 인용을 품으면 긴 쪽을 남기되 확인된 �
     part("ECR-004", "서버", "서버", [fact("메모리", "256GB 이상")], { chunk: 2 }),
   ]);
   assert.deepEqual(promoted.장비요약[0].규격.map((entry) => entry.검증), ["원문 확인"], "같은 인용은 확인된 쪽으로 남긴다");
-  const [separate] = consolidate([part("ECR-005", "서버", "서버", [fact("CPU", "256GB"), fact("메모리", "256GB")])]);
+  const [separate] = consolidate([part("ECR-005", "서버", "서버", [fact("CPU", "2소켓 256GB"), fact("메모리", "2소켓 256GB")])]);
   assert.equal(separate.장비요약[0].규격.length, 2, "항목이 다르면 같은 줄이어도 따로 둔다");
 });
 
@@ -166,4 +166,72 @@ test("제 규격을 가진 다른 종류의 장비와 같은 종류의 장비는
   // 번호 표를 찾지 못해 구간 전체가 원문으로 온 경우. 그 수량 줄이 이 장비의 것인지 알 수 없다.
   const [loose] = consolidate([part("확인 필요 (1)", "서버", "서버", [fact("CPU", "CPU 8Core")], { source: "서버 일반 설명\n◦ 도입 수량: 5대\nCPU 8Core\n" })]);
   assert.deepEqual(loose.장비요약[0].규격.map((entry) => entry.항목), ["CPU"]);
+});
+
+test('보안·전화 장비, 라이선스 행, 서버 카드 열 머리글, 규격 조각은 장비로 내보내지 않고 사유를 남긴다',()=>{
+  const names=[['서버','IPS'],['서버','DDoS 방어장비'],['스위치','방화벽 부하분산용 L7 스위치'],['스위치','IP전화기(일반)'],
+    ['서버','데이터모델링도구 라이센스'],['스위치','스위치 N/W card'],['스위치','(1Gbps Ethernet) 포트'],['서버','core'],['서버','노후연계서버'],['서버','노후 DB서버 교체']];
+  const result=consolidate(names.map(([kind,name],i)=>part(`ECR-0${10+i}`,kind,name,[fact(kind==='서버'?'CPU':'포트 수',kind==='서버'?'2.4GHz 16core':'48 port')])));
+  assert.deepEqual(result.flatMap(x=>x.장비요약.map(d=>d.명칭)),['방화벽 부하분산용 L7 스위치','노후 DB서버 교체']);
+  const notes=result.flatMap(x=>x.불확실);
+  for(const reason of ['보안 장비','전화 장비','소프트웨어·라이선스','서버 부품 열 머리글','규격 조각','기존 장비'])assert.ok(notes.some(n=>n.includes(reason)),reason);
+});
+
+test('설치 장소만 덧붙인 같은 장비는 하나로 합치고, 망마다 규격이 다르면 그대로 둔다',()=>{
+  const [same]=consolidate([
+    part('ECR-004','서버','x86 서버',[fact('CPU','2.4GHz 16core 이상')]),
+    part('ECR-004','서버','x86 서버 (국방망)',[fact('메모리','256GB 이상')]),
+  ]);
+  assert.deepEqual(same.장비요약.map(d=>d.명칭),['x86 서버']);
+  assert.deepEqual(same.장비요약[0].규격.map(f=>f.항목).sort(),['CPU','메모리']);
+  assert.ok(same.불확실.some(n=>n.includes('설치 장소만 다른')));
+  const [split]=consolidate([
+    part('ECR-005','서버','WEB 서버',[fact('CPU','2.4GHz 16core 이상')]),
+    part('ECR-005','서버','WEB 서버 (인터넷망)',[fact('CPU','2.4GHz 8core 이상')]),
+  ]);
+  assert.equal(split.장비요약.length,2);
+});
+
+test('장비명 바로 뒤에만 적힌 수량을 그 장비의 수량으로 쓰고, 여러 값이면 쓰지 않는다',()=>{
+  const source='요구사항 고유번호 ECR-020\n요구사항 명칭 네트워크 장비\nL4스위치(6식)\n- 10G 포트 8 port 이상\nOOB 스위치 (2식)\n- 1G 24 port';
+  const [result]=consolidate([
+    part('ECR-020','스위치','L4스위치',[fact('포트 수','10G 포트 8 port 이상')],{source}),
+    part('ECR-020','스위치','OOB 스위치',[fact('포트 수','1G 24 port')],{source}),
+  ]);
+  const quantity=name=>result.장비요약.find(d=>d.명칭===name).규격.find(f=>f.항목==='수량');
+  assert.equal(quantity('L4스위치').값,'6식');
+  assert.equal(quantity('L4스위치').추출,'장비명 수량');
+  assert.equal(quantity('OOB 스위치').값,'2식');
+  const nas='요구사항 고유번호 ECR-001\n○ 품목 및 수량\n- NAS 스토리지 메인 구축/1식\n- 디스크 용량 : Usable 1.5 PB 이상';
+  const [storage]=consolidate([part('ECR-001','스토리지','NAS 스토리지',[fact('Usable 용량','Usable 1.5 PB 이상')],{source:nas})]);
+  assert.equal(storage.장비요약[0].규격.find(f=>f.항목==='수량').값,'1식');
+  const twice='요구사항 고유번호 ECR-021\nL4스위치(6식)\nL4스위치(2식)';
+  const [ambiguous]=consolidate([part('ECR-021','스위치','L4스위치',[fact('포트 수','8 port')],{source:twice})]);
+  assert.equal(ambiguous.장비요약[0].규격.some(f=>f.항목==='수량'),false);
+});
+
+test('표 열이 밀려 다른 항목의 단위만 든 값은 제외하고 사유를 남긴다',()=>{
+  const [result]=consolidate([part('ECR-015','서버','챗봇 서버',[
+    fact('CPU','64GB'),fact('메모리','2.4GHz 8core'),fact('로컬 디스크','4'),fact('메모리','128GB 이상'),fact('CPU','2.4GHz 8core'),
+  ])]);
+  assert.deepEqual(result.장비요약[0].규격.map(f=>`${f.항목}:${f.값}`).sort(),['CPU:2.4GHz 8core','메모리:128GB 이상']);
+  assert.ok(result.불확실.some(n=>n.includes('열 밀림')));
+});
+
+test('핵심 규격도 장비 이름도 없는 항목이 한 번호에 셋 이상이면 품목 목록으로 보고 제외한다',()=>{
+  const rows=['서버보안','DB 접근제어','OS 백업','통합관제'].map(name=>part('ECR-B-005-01','서버',name,[fact('수량','2식')]));
+  const [list]=consolidate([...rows,part('ECR-B-005-01','서버','관리 서버',[fact('CPU','2.4GHz 16core')])]);
+  assert.deepEqual(list.장비요약.map(d=>d.명칭),['관리 서버']);
+  assert.ok(list.불확실.some(n=>n.includes('품목 목록')));
+  // 하나둘뿐이면 규격을 따로 배포하는 실제 장비일 수 있다.
+  const [few]=consolidate([part('ECR-007','스토리지','PDS',[fact('수량','1식')]),part('ECR-007','서버','통합관제',[fact('수량','1식')])]);
+  assert.equal(few.장비요약.length,2);
+});
+
+test('표 머리나 쪽 번호를 가리킨 값은 원문에 있어도 규격으로 싣지 않는다',()=>{
+  const [result]=consolidate([part('ECR-B-004-01','서버','CMS 어플라이언스',[
+    fact('CPU','고유번호 ECR-B-004-01'),fact('용도','62 -'),fact('메모리','- 63 -'),fact('포트 수','24'),fact('CPU','2.4GHz 16core'),
+  ])]);
+  assert.deepEqual(result.장비요약[0].규격.map(f=>`${f.항목}:${f.값}`).sort(),['CPU:2.4GHz 16core','포트 수:24']);
+  assert.ok(result.불확실.some(n=>n.includes('표 머리나 쪽 번호')));
 });

@@ -233,3 +233,17 @@ test("여러 구간에 걸친 같은 장비는 결과에서 한 항목으로 합
   assert.equal(analysis.coverage.status, "matched");
 });
 
+
+test("인용의 글머리표·줄 표식만 다른 규격은 원문 줄로 확인하고, 다른 값은 여전히 확인하지 않는다", () => {
+  const text = "요구사항 고유번호 ECR-003\n요구사항 명칭 스토리지 증설\n3. 저장장치 사용공간은 RAID10 구성으로 19TB 이상, 확장을\n고려한다.\n※ 최소 수량 2개 이상";
+  const facts = [
+    { field: "Usable 용량", value: "19TB 이상", evidence: "[L3] 저장장치 사용공간은 RAID10 구성으로 19TB 이상, 확장을" },
+    { field: "기타 조건", value: "최소 수량 2개 이상", evidence: "- 최소 수량 2개 이상" },
+    { field: "Raw 용량", value: "40TB 이상", evidence: "- 저장장치 Raw 40TB 이상" },
+  ];
+  const result = { response: { items: [{ id: "ECR-003", kind: "스토리지", name: "스토리지", facts }] } };
+  const [item] = parseResult(result, text, "test", 0);
+  const checked = Object.fromEntries(item.장비요약[0].규격.map((fact) => [fact.항목, fact.검증]));
+  assert.deepEqual(checked, { "Usable 용량": "원문 확인", "기타 조건": "원문 확인", "Raw 용량": "확인 필요" });
+  assert.ok(text.includes(item.장비요약[0].규격[0].근거), "근거는 원문의 토막이다");
+});

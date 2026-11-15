@@ -160,6 +160,9 @@ export function relabelFact(kind, fact, source = '') {
   }
   if(kind==='스토리지'&&fact.항목==='스위칭 용량'&&/^\d+(?:\.\d+)?\s*[GT]B\s*(?:이상|이하)?$/i.test(value)
     &&/usable|가용|사용공간/i.test(String(fact.근거)))return {...fact,항목:'Usable 용량',모델항목:fact.항목};
+  // 스토리지에는 스위칭 용량이 없다. "인터페이스 : 10/25/100 Gbps 이상"은 호스트 포트 속도다.
+  if(kind==='스토리지'&&fact.항목==='스위칭 용량'&&/\d\s*(?:Gbps|Gb\/s|GbE|G(?![A-Za-z]))/i.test(value)&&!/Tbps|Mpps/i.test(value))
+    return {...fact,항목:'포트 속도',모델항목:fact.항목};
   // 응용 소프트웨어를 OS로 분류한 경우만 바로잡는다. Oracle Linux 등 실제 OS는 유지한다.
   if (fact.항목 === 'OS' && /\b(?:Oracle\s+(?:Database\s+)?\d+[cg]?|Oracle\s+RAC|MLOps)\b/i.test(value)
     && !/\b(?:Linux|Windows|Solaris|AIX|HP-UX|Unix)\b/i.test(value)) {
@@ -190,6 +193,37 @@ export function relabelFact(kind, fact, source = '') {
   const diskAsPower = fact.항목 === '전원' && /\b(?:SSD|HDD|NVMe)\b/i.test(first) && !/전원|전력|power|\d\s*W\b/i.test(first);
   const field = isQuantityLine(first) ? "수량" : kind === "서버" && (diskAsPower || fact.항목 === "디스크 구성" || /^(?:Raw|Usable) 용량$/.test(fact.항목) && /NVMe|SSD|HDD|디스크/i.test(first)) ? "로컬 디스크" : fact.항목;
   return field === fact.항목 ? fact : { ...fact, 항목: field, 모델항목: fact.항목 };
+}
+// 표의 열이 밀리면 옆 열의 값이 다른 항목에 붙는다. 대국민 서비스 제안요청서에서 tpmC 열을 건너뛰어
+// 메모리 값이 CPU에, 서버 수량(1,200,000 tpmC)이 포트 수에 붙었다. 값에 그 항목의 단위는 없고 다른 항목의
+// 단위만 있으면 그 항목의 값이 아니다. 고쳐 붙이지 않고 빼며 사유를 남긴다 — 어느 칸의 값인지 추측하지 않는다.
+// 단위가 없는 설명문("이중화 구성")은 판단하지 않는다.
+const OWN_UNITS = {
+  CPU: /GHz|MHz|cores?\b|코어|소켓|sockets?\b|CPU|프로세서|processor|tpm|Xeon|EPYC|Power\s*\d|SPARC|x86|ARM|vCPU|스레드|threads?\b|SPEC/i,
+  메모리: /\d\s*(?:[GTMP]i?B|[GT])(?![A-Za-z])|DIMM|DDR|기가|테라|메모리|memory/i,
+  "로컬 디스크": /\d\s*[GTP]i?B(?!ps|\/s)|SSD|HDD|NVMe|SAS|SATA|디스크|disk|M\.2|RAID/i,
+  "포트 수": /ports?\b|포트|\d\s*[pP]\b|SFP|QSFP|RJ-?45|GbE|\d\s*G\b|bps|UTP|\d\s*[xX×*]\s*\d|EA\b|개|구\b/i,
+  수량: /\d\s*(?:대|식|EA|ea|개|sets?|Set|세트|노드|nodes?|본|copies)/,
+};
+const OTHER_UNITS = {
+  CPU: /\d\s*[GTP]i?B\b|ports?\b|포트|Gbps|GbE/i,
+  메모리: /GHz|cores?\b|코어|tpmC|ports?\b|포트|Gbps|GbE/i,
+  "로컬 디스크": /GHz|cores?\b|코어|tpmC|ports?\b|포트|Gbps|GbE/i,
+  "포트 수": /tpmC|GHz|cores?\b|코어|\d\s*[GT]i?B(?!\s*[/／])\b/i,
+  수량: /GHz|cores?\b|코어|tpmC/i,
+};
+const BARE_NUMBER = /^\s*\d[\d,]*(?:\.\d+)?\s*$/;
+export function unitMismatch(field, value) {
+  const text = String(value || "");
+  if (!OWN_UNITS[field] || !/\d/.test(text)) return false;
+  // 단위 없는 수만 있는 메모리·디스크 칸, 천 단위가 넘는 포트 수는 옆 열의 수다.
+  if (BARE_NUMBER.test(text)) {
+    const number = Number(text.replace(/,/g, ""));
+    return ["메모리", "로컬 디스크"].includes(field) || field === "포트 수" && number > 1000;
+  }
+  // 메모리·디스크 칸에 그 단위가 전혀 없는 수치("700,000이상")는 옆 열(tpmC 등)의 값이다.
+  if (["메모리", "로컬 디스크"].includes(field)) return !OWN_UNITS[field].test(text);
+  return !OWN_UNITS[field].test(text) && OTHER_UNITS[field].test(text);
 }
 function cleanLine(field, line) {
   let text = String(line).replace(/\s+/g, " ").trim();

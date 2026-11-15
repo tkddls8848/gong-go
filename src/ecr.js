@@ -10,12 +10,13 @@ import { separateCells, rowFacts } from "./ecr-cells.js";
 import { inventoryRows, inventoryKind } from './ecr-inventory.js';
 import {readSelectionPayload} from './ecr-input.js';
 import {includedEquipment} from './ecr-included-equipment.js';
+import { groundQuote, groundValue, valueInQuote } from "./ecr-quote.js";
 
 export const ECR_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 // 작업 키에 들어가는 파이프라인 판. 표 선별이나 구간 나누기를 고치면 반드시 올린다.
 // 올리지 않으면 같은 파일을 다시 올려도 예전 방식으로 자른 구간을 그대로 다시 쓴다 —
 // 고친 것이 반영되지 않고 고쳐진 것처럼 보인다.
-const VERSION = "cloud-v67-명시적포함장비보존";
+const VERSION = "cloud-v68-근거복원·대상외제외·열밀림·머리글수량";
 const MAX_BYTES = 8 * 1024 * 1024;
 // 한 요청에서 다루는 텍스트와 병합 작업량을 제한한다.
 const MAX_CHARS = 120000;
@@ -229,14 +230,18 @@ export function parseResult(result, source, filename, index) {
         continue;
       }
       if (!fields.includes(fact.field) || typeof fact.value !== "string" || typeof fact.evidence !== "string") { uncertainties.push(`${fields.includes(fact.field) ? fact.field : "규격"}: 형식 오류로 제외함`); continue; }
-      let quote = fact.evidence;
-      // 모델이 [L16]을 '16.'으로 바꿔 인용 앞에 붙이는 경우가 있다.
-      // 지정된 실제 줄에서 원문이 그대로 시작할 때만 표식을 걷어낸다.
-      if (!includesEvidence(source,quote)) {
-        const marker = /^\s*(?:\[L(\d+)\]\s*|(\d+)[.)]\s+)(.+)$/s.exec(quote);
+      // 모델은 인용 앞의 목록 번호·글머리표를 바꾸거나 표의 항목명 칸과 값 칸을 이어 적는다.
+      // 인용의 조각이 모두 원문에 가깝게 있으면 원문 쪽 토막을 근거로 삼는다(src/ecr-quote.js).
+      let quote = groundQuote(source, fact.evidence, fact.value);
+      // 값 하나뿐인 짧은 인용("[L19] 18TB")은 조각 맞추기로는 위치를 정할 수 없다.
+      // 표식이 가리킨 실제 줄이 그 글로 시작할 때만 표식을 걷어낸다(cloud-v67까지의 규칙).
+      // 수량은 뺀다: "[L12] 1식"만으로는 SW 품목의 수량을 서버 수량으로 붙인 것과 구별할 수 없다.
+      if (fact.field !== '수량' && !includesEvidence(source,quote)) {
+        const marker = /^\s*(?:\[L(\d+)\]\s*|(\d+)[.)]\s+)(.+)$/s.exec(fact.evidence);
         const line = marker ? Number(marker[1] || marker[2]) : 0;
         if (line >= 1 && line <= lines.length && norm(lines.slice(line-1,line+5).join('')).startsWith(norm(marker[3]))) quote = marker[3].trim();
       }
+      const value = groundValue(quote, fact.value);
       const evidence = norm(quote);
       const owners = evidence ? ranges.filter((range) => includesEvidence(range.text,quote)) : [];
       const own = owners.some((range) => idKey(range.id) === idKey(item.id));
@@ -255,9 +260,9 @@ export function parseResult(result, source, filename, index) {
       const bareQuantity = fact.field==='수량'&&/^\s*\d[\d,]*(?:\.\d+)?\s*(?:대|식|개|EA|sets?|세트|노드)?\s*$/i.test(quote)
         &&new Set(parsed.items.filter(other=>other&&idKey(other.id||'')===idKey(modelItem.id||''))
           .map(other=>squash(other.name||''))).size>1;
-      const verified = !ordinalOnly && !virtualCount && !documentTotal && !bareQuantity && !!norm(fact.value) && !!evidence && includesEvidence(quote,fact.value) && includesEvidence(source,quote) && (!ranges.length || own);
+      const verified = !ordinalOnly && !virtualCount && !documentTotal && !bareQuantity && !!norm(fact.value) && !!evidence && valueInQuote(quote,value) && includesEvidence(source,quote) && (!ranges.length || own);
       if (!verified) uncertainties.push(`${fact.field}: 근거 확인 필요`);
-      facts.push({ 항목: fact.field, 값: fact.value, 근거: quote, 검증: verified ? "원문 확인" : "확인 필요" });
+      facts.push({ 항목: fact.field, 값: value, 근거: quote, 검증: verified ? "원문 확인" : "확인 필요" });
     }
     const location = `${filename} · 구간 ${index + 1}`;
     // 한 행만 읽은 경우 명칭도 원문 표 제목+행 구분으로 통일한다.

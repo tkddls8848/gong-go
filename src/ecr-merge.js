@@ -3,7 +3,7 @@
 // 카드가 여러 장 생기고 규격이 카드마다 흩어진다. 같은 번호 안에서 종류와 이름이 같은 것만
 // 한 장비로 합친다 — 이름이 다르면 다른 장비로 둔다. 잘못 합치는 것이 카드가 둘인 것보다 나쁘다.
 import { tableName, requirementRanges } from "./ecr-source.js";
-import { relabelFact, isQuantityLine } from "./ecr-normalize.js";
+import { relabelFact, isQuantityLine, unitMismatch } from "./ecr-normalize.js";
 
 const idKey = (id) => String(id).replace(/–/g, "-").replace(/\s/g, "").toUpperCase();
 const squash = (text) => String(text || "").replace(/\s+/g, "");
@@ -60,6 +60,56 @@ function quantityFact(source, id) {
   const standalone = /수\s*량/.test(source) ? sourceRows.filter(line => /^\d+\s*(?:대|식|EA|set)\s*$/i.test(line)) : [];
   const lines = [...new Set(labelled.length ? labelled : standalone)];
   return lines.length === 1 ? { 항목: "수량", 값: lines[0], 근거: lines[0], 검증: VERIFIED, 추출: "규칙" } : null;
+}
+
+// 수량이 장비명 바로 뒤에만 적힌 표: "L4스위치(6식)", "OOB 스위치 (2식)", "NAS 스토리지 메인 구축/1식".
+// 이 번호의 원문에서 장비명 뒤에 붙은 수량이 한 가지일 때만 쓴다 — 둘 이상이면 어느 것인지 모른다.
+// 이름 앞뒤의 괄호 구분명은 떼고 찾는다. 두 글자 이하의 이름("DB")은 다른 줄과 섞이기 쉬워 찾지 않는다.
+const reEscape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function headerQuantity(source, name) {
+  const base = squash(String(name).replace(/\s*\([^()]*\)\s*$/, "").replace(/^\s*\([^()]*\)\s*/, ""));
+  if ([...base].length < 3) return null;
+  // 이름과 수량 사이에 짧은 말("NAS 스토리지 메인 구축/1식")이 끼어도 같은 줄의 열두 글자 안이면 본다.
+  const pattern = new RegExp(`${[...base].map(reEscape).join("\\s*")}[^\\n\\d()/:：]{0,12}?\\s*(?:[(（\\[]\\s*|[/:：]\\s*)(?:(?:구축|도입|교체|증설|신규)\\s*[/:：]?\\s*)?(\\d{1,4})\\s*(대|식|EA|개|sets?|노드)\\s*[)）\\]]?`, "gi");
+  const found = [...source.matchAll(pattern)];
+  const values = new Set(found.map((match) => `${match[1]}${match[2]}`));
+  if (values.size !== 1) return null;
+  const quote = found[0][0].trim();
+  return { 항목: "수량", 값: `${found[0][1]}${found[0][2]}`, 근거: quote, 검증: VERIFIED, 추출: "장비명 수량" };
+}
+
+// 서버·스토리지·스위치가 아닌데 모델이 그중 하나로 분류해 내는 것들. 실문서 표본에서 장비 수보다 많았다.
+// 이름에 서버·스토리지·스위치가 함께 있으면 대상으로 둔다("방화벽 부하분산용 L7 스위치").
+const NOT_TARGET = [
+  { reason: "PC/모니터", test: /\bPC\b|개인용\s*컴퓨터|노트북|모니터/i, keep: /서버|스토리지|스위치|\bserver\b|\bstorage\b|\bswitch\b/i },
+  { reason: "보안 장비", test: /방화벽|firewall|\bIPS\b|\bIDS\b|DDoS|\bWAF\b|\bVPN\b|\bUTM\b|망\s*연계/i, keep: /스위치|\bswitch\b/i },
+  { reason: "전화 장비", test: /전화기|확장\s*버튼|미디어\s*게이트웨이/i, keep: /서버|스토리지|스위치|\bserver\b|\bswitch\b/i },
+  { reason: "랙·KVM", test: /^(?:system\s*)?rack$|^랙$|\bKVM\b/i, keep: /서버|스토리지|\bserver\b|\bstorage\b/i },
+  { reason: "소프트웨어·라이선스", test: /라이선스|라이센스|licen[cs]e|분리\s*발주|(?:S\/W|SW)\s*(?:증설|이관|도입)|소프트웨어/i, keep: /^$/ },
+  // "스위치 N/W card"처럼 모델이 종류 이름을 붙여도 서버 표의 카드 열이다.
+  { reason: "서버 부품 열 머리글", test: /N\/?W\s*card|네트워크\s*카드|랜\s*카드|FC\s*(?:및|카드)|어댑터|adapter|^\([^()]*\)\s*(?:포트|ports?)$/i, keep: /^$/ },
+  { reason: "기존 장비", test: /^\(?\s*기존|^노후(?!.*(?:교체|증설|신규|도입))/, keep: /^$/ },
+  { reason: "규격 조각", test: /^(?:core|cores|코어|cpu|memory|메모리|mem|disk|디스크|port|포트|ea|[*·\-–]+)$/i, keep: /^$/ },
+];
+const notTarget = (device) => NOT_TARGET.find(({ test, keep }) => test.test(device.명칭.trim()) && !keep.test(device.명칭))?.reason || "";
+
+// 설치 장소나 망 이름만 덧붙인 같은 장비("x86 서버"와 "x86 서버 (국방망)")는 한 장비다.
+// 같은 종류에 바탕 이름의 장비가 있고, 그 이름에 다른 구분을 붙인 장비가 없으며, 서로의 핵심 규격이
+// 엇갈리지 않을 때만 합친다. 망마다 규격이 다른 표는 핵심 규격이 엇갈려 그대로 남는다.
+const PLACE = /^(?:국방망|인터넷망|업무망|행정망|내부망|외부망|폐쇄망|DMZ|주\s*센터|백업\s*센터|DR\s*센터)$/i;
+function placeVariant(device, devices) {
+  const found = /^\s*\(([^()]+)\)\s*(.+)$/.exec(device.명칭) || /^(.+?)\s*\(([^()]+)\)\s*$/.exec(device.명칭);
+  if (!found) return null;
+  const [place, base] = /^\s*\(/.test(device.명칭) ? [found[1], found[2]] : [found[2], found[1]];
+  if (!PLACE.test(place.trim())) return null;
+  const target = devices.find((other) => other !== device && other.종류 === device.종류 && squash(other.명칭) === squash(base));
+  if (!target) return null;
+  const variants = devices.filter((other) => other !== device && other !== target && other.종류 === device.종류 && squash(other.명칭).includes(squash(base)));
+  if (variants.length) return null;
+  const own = OWN_FIELDS[device.종류] || [];
+  const clash = device.규격.some((fact) => own.includes(fact.항목) && target.규격.some((held) => held.항목 === fact.항목)
+    && !target.규격.some((held) => held.항목 === fact.항목 && squash(held.값) === squash(fact.값)));
+  return clash ? null : target;
 }
 
 // 같은 항목에서 한 인용이 다른 인용을 품으면 같은 규격이다(겹쳐 자른 구간, 5~6줄과 6줄).
@@ -147,7 +197,19 @@ export function consolidate(items, { fieldOrder = [], verifiedOnly = false } = {
           group.notes.push({ name: entry.명칭, device, messages: [`${fact.항목}: 원문 근거를 검증하지 못해 규격에서 제외함`] });
           continue;
         }
-        addFact(device.규격, relabelFact(entry.종류, fact, item.세부내용_원문 || ''));
+        const relabeled = relabelFact(entry.종류, fact, item.세부내용_원문 || '');
+        // 표 머리("고유번호 ECR-B-004-01", "요구사항 명칭 …")나 쪽 번호("- 62 -")는 규격 값이 아니다.
+        // 원문에 그대로 있어 근거 검증은 통과하지만 장비의 규격으로 싣지 않는다.
+        if (/^\s*(?:요구\s*사항\s*)?(?:고유\s*번호|분\s*류|명\s*칭)\s|^\s*[-–]\s*\d{1,4}\s*[-–]?\s*$|^\s*\d{1,4}\s*[-–]\s*$/.test(String(relabeled.값)) && relabeled.항목 !== "수량") {
+          group.notes.push({ name: entry.명칭, device, messages: [`${relabeled.항목}: 표 머리나 쪽 번호를 값으로 가리켜 제외함`] });
+          continue;
+        }
+        if (unitMismatch(relabeled.항목, relabeled.값)) {
+          const shown = String(relabeled.값).replace(/\s+/g, " ").slice(0, 40);
+          group.notes.push({ name: entry.명칭, device, messages: [`${relabeled.항목}: 값 "${shown}"의 단위가 항목과 맞지 않아(표 열 밀림 의심) 제외함`] });
+          continue;
+        }
+        addFact(device.규격, relabeled);
       }
     }
     const first = item.장비요약?.[0];
@@ -155,16 +217,33 @@ export function consolidate(items, { fieldOrder = [], verifiedOnly = false } = {
   }
   const rank = (fact) => { const at = fieldOrder.indexOf(fact.항목); return at < 0 ? fieldOrder.length : at; };
   return [...groups.values()].map((group) => {
-    const all = [...group.devices.values()];
-    const nonTargets=all.filter(device=>/\bPC\b|개인용\s*컴퓨터|노트북|모니터/i.test(device.명칭)
-      && !/서버|스토리지|스위치|\bserver\b|\bstorage\b|\bswitch\b/i.test(device.명칭));
+    const listed = [...group.devices.values()];
+    const merged = new Map();
+    for (const device of listed) {
+      const target = placeVariant(device, listed.filter((other) => !merged.has(other)));
+      if (!target) continue;
+      merged.set(device, target);
+      for (const fact of device.규격) addFact(target.규격, fact);
+      for (const place of device.places) if (!target.places.includes(place)) target.places.push(place);
+    }
+    const all = listed.filter((device) => !merged.has(device));
+    // 소프트웨어·솔루션 목록 표("서버보안 2식", "DB 접근제어 1식", "OS 백업 25식")를 모델이 행마다 서버로 낸다.
+    // 제 종류의 핵심 규격도, 장비임을 뜻하는 이름도 없는 항목이 한 번호에 셋 이상 몰려 있으면 품목 목록으로 본다.
+    // 하나둘뿐이면 규격을 별도 배포하는 실제 장비일 수 있어 그대로 둔다.
+    const bare = all.filter((device) => !device.규격.some((fact) => (OWN_FIELDS[device.종류] || []).includes(fact.항목))
+      // 장비 이름은 끝말이 장비다("관리 서버", "WORM스토리지"). "서버보안", "서버 접근제어"는 소프트웨어다.
+      && !/(?:서버|스토리지|스위치|server|storage|switch)\s*(?:\([^()]*\))?\s*(?:#?\d+)?$|HCI|NAS|SAN|VTL|L[2-7]\b|어플라이언스|appliance|라이브러리/i.test(device.명칭.trim()));
+    const listRows = new Set(bare.length >= 3 ? bare : []);
+    const notTargetOf = (device) => notTarget(device) || (listRows.has(device) ? "규격 없는 품목 목록(소프트웨어·솔루션 추정)" : "");
+    const nonTargets=all.filter(device=>notTargetOf(device));
     const eligible=all.filter(device=>!nonTargets.includes(device));
     const hosts = new Map(eligible.map((device) => [device, hostOf(device, eligible)]));
     const unsupportedParts = all.filter(device => !device.규격.length && (verifiedOnly || device.종류 === '스위치' && /\b(?:NIC|HBA)\b|\bFC\b/i.test(device.명칭) && !/스위치|switch/i.test(device.명칭)));
     const devices = all.filter((device) => !hosts.get(device) && !unsupportedParts.includes(device) && !nonTargets.includes(device));
     const many = devices.length > 1;
     const notes = [];
-    for(const device of nonTargets)notes.push(`장비 "${device.명칭}": 서버·스토리지·스위치가 아닌 PC/모니터 항목이므로 장비 요약에서 제외함`);
+    for(const device of nonTargets)notes.push(`장비 "${device.명칭}": 서버·스토리지·스위치가 아닌 ${notTargetOf(device)} 항목이므로 장비 요약에서 제외함`);
+    for (const [device, target] of merged) notes.push(`장비 "${device.명칭}": 설치 장소만 다른 "${target.명칭}"과 같은 장비로 합침`);
     for (const device of unsupportedParts) notes.push(`장비 "${device.명칭}": 유효한 원문 규격이 없어 장비 요약에서 제외함`);
     for (const { name, device, messages } of group.notes) for (const message of messages) {
       const shared = message === ID_NOTE || OVERFLOW_NOTE.test(message);
@@ -184,6 +263,11 @@ export function consolidate(items, { fieldOrder = [], verifiedOnly = false } = {
         devices[0].규격 = devices[0].규격.filter(fact => fact.항목 !== '수량');
         devices[0].규격.push(quantity);
       }
+    }
+    for (const device of devices) {
+      if (device.규격.some((fact) => fact.항목 === "수량" && /\d\s*(?:대|식|EA|set|개|노드)/i.test(fact.값))) continue;
+      const quantity = headerQuantity(source, device.명칭);
+      if (quantity) device.규격 = [...device.규격.filter((fact) => fact.항목 !== "수량"), quantity];
     }
     // 요구사항 이름은 원문 표의 명칭 칸에서 읽는다. 못 읽으면 장비 이름으로 대신한다.
     const name = tableName(source) || (many ? `${devices[0].명칭} 외 ${devices.length - 1}종` : devices[0]?.명칭 || group.name);
