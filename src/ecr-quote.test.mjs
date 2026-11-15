@@ -55,3 +55,27 @@ test("모델이 값 앞에 덧붙인 괄호 문구는 떼고, 인용 사이의 �
   // 괄호 문구를 떼어도 원문에 없으면 그대로 둔다.
   assert.equal(groundValue(quote, "(참고) 3년 무상 유지보수"), "(참고) 3년 무상 유지보수");
 });
+
+test("괄호 없는 줄 표식, 앞뒤 대시, 항목 이름을 감싼 괄호를 뗀 인용도 원문에 그대로 있으면 확인한다", async () => {
+  const { groundValue } = await import("./ecr-quote.js");
+  // 국방획득: 놓쳤던 PTL 드라이브의 규격이 모두 이 모양이었다.
+  const ptl = "◦ 수량\n구분 1센터 2센터\nPTL 드라이브 15EA -\n◦ 요구규격\n* 인터페이스 : 8/16Gbps FC 지원\n* 슬롯 수량 : 최대 10,000 Slot 이상 확장 지원";
+  assert.ok(verified(ptl, "L7 PTL 드라이브 15EA -", "15EA"));
+  assert.ok(verified(ptl, "L14 * 인터페이스 : 8/16Gbps FC 지원", "인터페이스 : 8/16Gbps FC 지원"));
+  // VTL: 원문 "14. RAID 6 …"을 "-RAID 6 … 제공-"으로 적었다.
+  const vtl = "솔루션 제공\n14. RAID 6 구성 및 자동 오류 복구 기능 제공\n기능";
+  const value = "-RAID 6 구성 및 자동 오류 복구 기능 제공-";
+  const quote = groundQuote(vtl, value, value);
+  assert.ok(includesEvidence(vtl, quote));
+  assert.equal(groundValue(quote, value), "RAID 6 구성 및 자동 오류 복구 기능 제공");
+  // UNIX 서버: 원문 "B형(DB) : …"의 형 이름을 괄호로 감쌌다.
+  const unix = "3. Clock\n요구용량 B형(DB) : 2.66GHz*16Core 이상\nSpeed\nC형(개발) : 2.66GHz*8Core 이상";
+  const b = groundQuote(unix, "(B형(DB)) : 2.66GHz*16Core 이상", "(B형(DB)) : 2.66GHz*16Core 이상");
+  assert.ok(includesEvidence(unix, b));
+  assert.equal(groundValue(b, "(B형(DB)) : 2.66GHz*16Core 이상"), "B형(DB) : 2.66GHz*16Core 이상");
+  assert.equal(groundValue("- 원활한 유지보수 및 기술지원을 위한 OEM 제품 제외", "(OEM 제품 제외)"), "OEM 제품 제외");
+  // 대시를 떼어 숫자만 남는 값은 쪽 번호다. 떼지 않는다.
+  assert.equal(groundValue("- 20 -", "-20-"), "-20-");
+  // 값 안의 L3은 줄 표식이 아니다: 원문에 "L3"이 없으면 확인하지 않는다.
+  assert.equal(verified("48Port 스위치", "L3 48Port 스위치", "L3 48Port 스위치"), null);
+});

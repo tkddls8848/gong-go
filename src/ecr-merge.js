@@ -90,18 +90,25 @@ const NOT_TARGET = [
   { reason: "서버 부품 열 머리글", test: /N\/?W\s*card|네트워크\s*카드|랜\s*카드|FC\s*(?:및|카드)|어댑터|adapter|^\([^()]*\)\s*(?:포트|ports?)$/i, keep: /^$/ },
   { reason: "기존 장비", test: /^\(?\s*기존|^노후(?!.*(?:교체|증설|신규|도입))/, keep: /^$/ },
   { reason: "규격 조각", test: /^(?:core|cores|코어|cpu|memory|메모리|mem|disk|디스크|port|포트|ea|[*·\-–]+)$/i, keep: /^$/ },
+  // 스위치 성능 표의 행 머리("◦ L4/L7 처리량")를 모델이 괄호로 감싸 장비로 낸다.
+  { reason: "규격 조각", test: /^\(?[^()]*(?:처리량|성능|대역폭)\s*\)?$/, keep: /서버|스토리지|스위치|\bserver\b|\bstorage\b|\bswitch\b/i },
 ];
+// HCI 표 아래의 가상 서버 배분("WEB 4core 32GB 2식")은 HCI 위에 만드는 VM이다. 같은 번호에 HCI·가상화 장비가 있을 때만 뺀다.
+const VM_ROW = /^\(?\s*(?:WEB|WAS|DB|AP|APP|API|UI)\s*\)?$/i;
+const HCI_HOST = /HCI|가상화/i;
 const notTarget = (device) => NOT_TARGET.find(({ test, keep }) => test.test(device.명칭.trim()) && !keep.test(device.명칭))?.reason || "";
 
 // 설치 장소나 망 이름만 덧붙인 같은 장비("x86 서버"와 "x86 서버 (국방망)")는 한 장비다.
 // 같은 종류에 바탕 이름의 장비가 있고, 그 이름에 다른 구분을 붙인 장비가 없으며, 서로의 핵심 규격이
 // 엇갈리지 않을 때만 합친다. 망마다 규격이 다른 표는 핵심 규격이 엇갈려 그대로 남는다.
 const PLACE = /^(?:국방망|인터넷망|업무망|행정망|내부망|외부망|폐쇄망|DMZ|주\s*센터|백업\s*센터|DR\s*센터)$/i;
+// 이름 전체를 괄호로 감싼 장비("(Leaf 스위치)")는 감싸지 않은 같은 이름의 장비와 같은 장비다.
 function placeVariant(device, devices) {
-  const found = /^\s*\(([^()]+)\)\s*(.+)$/.exec(device.명칭) || /^(.+?)\s*\(([^()]+)\)\s*$/.exec(device.명칭);
-  if (!found) return null;
-  const [place, base] = /^\s*\(/.test(device.명칭) ? [found[1], found[2]] : [found[2], found[1]];
-  if (!PLACE.test(place.trim())) return null;
+  const wrapped = /^\s*\(([^()]+)\)\s*$/.exec(device.명칭);
+  const found = wrapped ? null : /^\s*\(([^()]+)\)\s*(.+)$/.exec(device.명칭) || /^(.+?)\s*\(([^()]+)\)\s*$/.exec(device.명칭);
+  if (!wrapped && !found) return null;
+  const [place, base] = wrapped ? ["", wrapped[1]] : /^\s*\(/.test(device.명칭) ? [found[1], found[2]] : [found[2], found[1]];
+  if (!wrapped && !PLACE.test(place.trim())) return null;
   const target = devices.find((other) => other !== device && other.종류 === device.종류 && squash(other.명칭) === squash(base));
   if (!target) return null;
   const variants = devices.filter((other) => other !== device && other !== target && other.종류 === device.종류 && squash(other.명칭).includes(squash(base)));
@@ -109,7 +116,8 @@ function placeVariant(device, devices) {
   const own = OWN_FIELDS[device.종류] || [];
   const clash = device.규격.some((fact) => own.includes(fact.항목) && target.규격.some((held) => held.항목 === fact.항목)
     && !target.규격.some((held) => held.항목 === fact.항목 && squash(held.값) === squash(fact.값)));
-  return clash ? null : target;
+  // 괄호만 다른 이름은 같은 이름이다. 같은 이름의 장비는 규격이 달라도 합치는 병합 규칙과 맞춘다.
+  return clash && !wrapped ? null : target;
 }
 
 // 같은 항목에서 한 인용이 다른 인용을 품으면 같은 규격이다(겹쳐 자른 구간, 5~6줄과 6줄).
@@ -234,7 +242,9 @@ export function consolidate(items, { fieldOrder = [], verifiedOnly = false } = {
       // 장비 이름은 끝말이 장비다("관리 서버", "WORM스토리지"). "서버보안", "서버 접근제어"는 소프트웨어다.
       && !/(?:서버|스토리지|스위치|server|storage|switch)\s*(?:\([^()]*\))?\s*(?:#?\d+)?$|HCI|NAS|SAN|VTL|L[2-7]\b|어플라이언스|appliance|라이브러리/i.test(device.명칭.trim()));
     const listRows = new Set(bare.length >= 3 ? bare : []);
-    const notTargetOf = (device) => notTarget(device) || (listRows.has(device) ? "규격 없는 품목 목록(소프트웨어·솔루션 추정)" : "");
+    const hciHost = all.some((device) => HCI_HOST.test(device.명칭));
+    const notTargetOf = (device) => notTarget(device) || (listRows.has(device) ? "규격 없는 품목 목록(소프트웨어·솔루션 추정)" : "")
+      || (hciHost && VM_ROW.test(device.명칭.trim()) ? "HCI 위 가상 서버 배분" : "");
     const nonTargets=all.filter(device=>notTargetOf(device));
     const eligible=all.filter(device=>!nonTargets.includes(device));
     const hosts = new Map(eligible.map((device) => [device, hostOf(device, eligible)]));
@@ -243,7 +253,7 @@ export function consolidate(items, { fieldOrder = [], verifiedOnly = false } = {
     const many = devices.length > 1;
     const notes = [];
     for(const device of nonTargets)notes.push(`장비 "${device.명칭}": 서버·스토리지·스위치가 아닌 ${notTargetOf(device)} 항목이므로 장비 요약에서 제외함`);
-    for (const [device, target] of merged) notes.push(`장비 "${device.명칭}": 설치 장소만 다른 "${target.명칭}"과 같은 장비로 합침`);
+    for (const [device, target] of merged) notes.push(`장비 "${device.명칭}": ${/^\s*\([^()]+\)\s*$/.test(device.명칭) ? "괄호만 다른" : "설치 장소만 다른"} "${target.명칭}"과 같은 장비로 합침`);
     for (const device of unsupportedParts) notes.push(`장비 "${device.명칭}": 유효한 원문 규격이 없어 장비 요약에서 제외함`);
     for (const { name, device, messages } of group.notes) for (const message of messages) {
       const shared = message === ID_NOTE || OVERFLOW_NOTE.test(message);

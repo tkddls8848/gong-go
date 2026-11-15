@@ -16,8 +16,28 @@ export const includesEvidence = (source, quote) => norm(source).includes(norm(qu
 // 인용 앞에 붙은 원문 위치 표식([L12], "12.")과 글머리표. 여러 겹이면 모두 뗀다.
 const LEAD = /^\s*(?:\[L\d+\]\s*|\d{1,3}[.)]\s+|[-–—•·○●◦▪■□◆◇※*§ㅇ]\s*)+/;
 const strip = (text) => String(text || "").replace(LEAD, "").trim();
+// 인용에만 쓰는 정리: 괄호 없는 줄 표식("L14 * 인터페이스 …")과 앞뒤에 덧붙인 대시("-RAID 6 구성 … 제공-")를 뗀다.
+// 값에는 쓰지 않는다 — "L3 스위치"의 L3은 값의 일부다.
+const QUOTE_LEAD = /^\s*(?:(?:\[L\d+\]|L\d{1,3}(?=\s))\s*|\d{1,3}[.)]\s+|[-–—•·○●◦▪■□◆◇※*§ㅇ]\s*)+/;
+const trimDash = (text) => String(text || "").replace(/^\s*[-–—]+\s*|\s*[-–—]+\s*$/g, "").trim();
+const stripQuote = (text) => trimDash(String(text || "").replace(QUOTE_LEAD, ""));
+// 맨 앞 괄호 묶음을 나눈다: "(B형(DB)) : 2.66GHz…" → { inner: "B형(DB)", rest: " : 2.66GHz…" }. 없거나 맞지 않으면 null.
+function leadGroup(text) {
+  text = String(text || "").trim();
+  if (!text.startsWith("(")) return null;
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "(") depth++;
+    else if (text[i] === ")" && --depth === 0) return { inner: text.slice(1, i), rest: text.slice(i + 1) };
+  }
+  return null;
+}
+// 괄호만 벗긴다: "(B형(DB)) : 2.66GHz…" → "B형(DB) : 2.66GHz…", "(OEM 제품 제외)" → "OEM 제품 제외".
+const unwrap = (text) => { const group = leadGroup(text); return group ? (group.inner + group.rest).trim() : String(text || "").trim(); };
+// 괄호 묶음과 뒤따르는 ":"를 통째로 뗀다: "(B형(DB)) : 2.66GHz…" → "2.66GHz…".
+const dropLeadGroup = (text) => { const group = leadGroup(text); return group ? group.rest.replace(/^\s*[:：]?\s*/, "") : String(text || "").trim(); };
 // 표의 항목명 칸과 값 칸을 이은 자리(" - ", " : ")와 줄바꿈에서 인용을 조각낸다.
-const pieces = (quote) => String(quote || "").split(/\n|\s[-–—]\s|\s[:：]\s/).map(strip).filter((piece) => piece.length >= 2);
+const pieces = (quote) => String(quote || "").split(/\n|\s[-–—]\s|\s[:：]\s/).map((piece) => unwrap(stripQuote(piece))).filter((piece) => piece.length >= 2);
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // 공백의 모양만 다른 것은 같은 글이다. 한글 단어 중간의 줄바꿈도 허용한다(evidenceText와 같은 기준).
 const pattern = (piece) => new RegExp(escape(norm(piece)).replace(/ /g, "\\s*").replace(/([가-힣])(?=[가-힣])/g, "$1\\s*"), "g");
@@ -61,41 +81,52 @@ function locate(source, parts) {
 }
 
 // 인용이 끝난 자리에서 원문 줄을 하나씩 더 붙여 값이 들어오는지 본다. 세 줄까지만이다.
-function extend(source, span, value) {
+function extend(source, span, fits) {
   let end = span.end;
   for (let step = 0; step < 3; step++) {
     const next = source.indexOf("\n", end + 1);
     end = next < 0 ? source.length : next;
     const text = source.slice(span.start, end);
-    if (valueInQuote(text, value)) return text.trim();
+    if (fits(text)) return text.trim();
     if (next < 0) break;
   }
   return null;
 }
 
-// 모델이 값 앞에 덧붙인 괄호 문구("(공사 기준에 따름) 설치에 필요한 …", "(RAC포함) Oracle …")는 원문 값이 아니다.
-// 값이 근거에 그대로 있으면 그대로, 괄호 문구를 뗀 값만 근거에 있으면 뗀 값을 돌려준다. 그 밖에는 손대지 않는다.
+// 모델이 값에 덧붙인 겉모양은 원문 값이 아니다.
+//   · 앞의 괄호 문구: "(공사 기준에 따름) 설치에 필요한 …", "(RAC포함) Oracle …"
+//   · 값 전체나 앞 구분자를 감싼 괄호: "(OEM 제품 제외)", "(B형(DB)) : 2.66GHz*16Core 이상"
+//   · 앞뒤 대시: "-RAID 6 구성 … 제공-"
+// 값이 근거에 그대로 있으면 그대로, 겉모양을 뗀 값만 근거에 있으면 처음으로 맞는 것을 돌려준다. 그 밖에는 손대지 않는다.
 const QUALIFIER = /^\s*\([^()]{1,30}\)\s*/;
+function valueCandidates(value) {
+  value = String(value || "");
+  const list = [value, value.replace(QUALIFIER, ""), unwrap(value), trimDash(value), trimDash(unwrap(value)), dropLeadGroup(value)];
+  // 겉모양을 떼고 숫자만 남으면 쓰지 않는다: "- 20 -"은 쪽 번호이고, 떼면 쪽 번호 거르기를 빠져나간다.
+  return [...new Set(list.map((item) => item.trim()).filter((item, i) => item && (i === 0 || /[A-Za-z가-힣]/.test(item))))];
+}
 export function groundValue(quote, value) {
   if (valueInQuote(quote, value)) return value;
-  const bare = String(value || "").replace(QUALIFIER, "");
-  return bare !== value && bare.trim() && valueInQuote(quote, bare) ? bare : value;
+  return valueCandidates(value).find((candidate) => valueInQuote(quote, candidate)) || value;
 }
 
 // 원문에서 확인할 수 있는 근거를 돌려준다. 확인하지 못하면 모델의 인용을 그대로 돌려준다 — 검증은 호출하는 쪽이 한다.
 export function groundQuote(source, quote, value) {
   quote = String(quote || "");
-  value = String(value || "").replace(QUALIFIER, "") || value;
-  if (includesEvidence(source, quote) && valueInQuote(quote, value)) return quote;
+  const values = valueCandidates(value);
+  const fits = (text) => values.some((candidate) => valueInQuote(text, candidate));
+  if (includesEvidence(source, quote) && fits(quote)) return quote;
   let span = null;
   if (includesEvidence(source, quote)) span = locate(source, [norm(quote)]);
   else {
-    const stripped = strip(quote);
-    if (stripped && includesEvidence(source, stripped)) span = locate(source, [norm(stripped)]);
+    for (const variant of new Set([strip(quote), stripQuote(quote), unwrap(stripQuote(quote))])) {
+      if (variant && includesEvidence(source, variant)) span = locate(source, [norm(variant)]);
+      if (span) break;
+    }
     if (!span) span = locate(source, pieces(quote));
   }
   if (!span) return quote;
   const text = source.slice(span.start, span.end).trim();
-  if (valueInQuote(text, value)) return text;
-  return extend(source, span, value) || text;
+  if (fits(text)) return text;
+  return extend(source, span, fits) || text;
 }

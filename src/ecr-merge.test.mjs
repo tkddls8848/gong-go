@@ -185,6 +185,13 @@ test('설치 장소만 덧붙인 같은 장비는 하나로 합치고, 망마다
   assert.deepEqual(same.장비요약.map(d=>d.명칭),['x86 서버']);
   assert.deepEqual(same.장비요약[0].규격.map(f=>f.항목).sort(),['CPU','메모리']);
   assert.ok(same.불확실.some(n=>n.includes('설치 장소만 다른')));
+  // 실문서: 모델이 같은 Leaf 스위치를 한 구간에서는 괄호로 감싸 냈다.
+  const [leaf]=consolidate([
+    part('ECR-006','스위치','Leaf 스위치',[fact('포트 수','1/10/25GE : 48포트이상')]),
+    part('ECR-006','스위치','(Leaf 스위치)',[fact('성능','4Tbps Switch capacity 이상 지원'),fact('포트 수','1/10/25GE 48포트 이상')]),
+  ]);
+  assert.deepEqual(leaf.장비요약.map(d=>d.명칭),['Leaf 스위치']);
+  assert.ok(leaf.불확실.some(n=>n.includes('괄호만 다른')));
   const [split]=consolidate([
     part('ECR-005','서버','WEB 서버',[fact('CPU','2.4GHz 16core 이상')]),
     part('ECR-005','서버','WEB 서버 (인터넷망)',[fact('CPU','2.4GHz 8core 이상')]),
@@ -226,6 +233,19 @@ test('핵심 규격도 장비 이름도 없는 항목이 한 번호에 셋 이�
   // 하나둘뿐이면 규격을 따로 배포하는 실제 장비일 수 있다.
   const [few]=consolidate([part('ECR-007','스토리지','PDS',[fact('수량','1식')]),part('ECR-007','서버','통합관제',[fact('수량','1식')])]);
   assert.equal(few.장비요약.length,2);
+});
+
+test('HCI 아래 가상 서버 배분 행과 괄호로 감싼 성능 행 머리는 장비로 내보내지 않는다',()=>{
+  // 실문서: "WEB 4core 32GB 2식"은 HCI 위에 만들 VM이고, "◦ L4/L7 처리량"은 L4 스위치 성능 표의 행 머리다.
+  const vms=['(WEB)','(WAS)','(DB)'].map(name=>part('ECR-B-001-01','서버',name,[fact('CPU','8core'),fact('메모리','128GB')]));
+  const [hci]=consolidate([part('ECR-B-001-01','서버','가상화 서버(HCI)',[fact('CPU','16core x 2CPU 이상')]),...vms]);
+  assert.deepEqual(hci.장비요약.map(d=>d.명칭),['가상화 서버(HCI)']);
+  assert.ok(hci.불확실.some(n=>n.includes('가상 서버 배분')));
+  // HCI가 없는 번호의 WEB·WAS 서버는 실제 장비다.
+  const [plain]=consolidate([part('ECR-009','서버','(WEB)',[fact('CPU','8core')]),part('ECR-009','서버','DB 서버',[fact('CPU','16core')])]);
+  assert.equal(plain.장비요약.length,2);
+  const [l4]=consolidate([part('ECR-006','스위치','L4스위치',[fact('포트 수','10G 8 port')]),part('ECR-006','스위치','(L4/L7 처리량)',[fact('용도','L4/L7 처리량')])]);
+  assert.deepEqual(l4.장비요약.map(d=>d.명칭),['L4스위치']);
 });
 
 test('표 머리나 쪽 번호를 가리킨 값은 원문에 있어도 규격으로 싣지 않는다',()=>{
