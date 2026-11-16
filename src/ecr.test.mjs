@@ -247,3 +247,26 @@ test("인용의 글머리표·줄 표식만 다른 규격은 원문 줄로 확�
   assert.deepEqual(checked, { "Usable 용량": "원문 확인", "기타 조건": "원문 확인", "Raw 용량": "확인 필요" });
   assert.ok(text.includes(item.장비요약[0].규격[0].근거), "근거는 원문의 토막이다");
 });
+
+test('복원한 표 행의 자원 칸은 모델이 용도만 돌려줘도 그 행의 장비에 싣는다', () => {
+  // 실문서: 9열짜리 행 여섯 개를 받은 모델이 행마다 용도 하나만 돌려주었다.
+  const source = '요구사항 고유번호 ECR-011\n요구사항 명칭 통합연계 시스템 증설\n'
+    + '구분: 연계통합 서버#1 | 용도: 심평원IF(교체) | CPU (core): 2 | Mem (GB): 30 | 디스크 (GB): 300*6 | tpmC: 619,115 | FC (Port): 4\n'
+    + '구분: 연계통합 서버#2 | 용도: 보건소IF(교체) | CPU (core): 4 | Mem (GB): 40 | 디스크 (GB): 300*6 | tpmC: 1,238,230 | FC (Port): 4\n'
+    + '구분: 증설 | 서버명: 중계서버 | 기존 CPU: 4 core | 기존 MEM: 8GB | 증설 CPU: 4 Core | 증설 MEM: 16GB';
+  const items = [
+    { id: 'ECR-011', kind: '서버', name: '연계통합 서버#1', facts: [{ field: '용도', value: '심평원IF(교체)', evidence: '용도: 심평원IF(교체)' }] },
+    // 이름이 이름 칸과 다르면 확인된 인용이 한 행에만 있을 때 그 행이다.
+    { id: 'ECR-011', kind: '서버', name: '보건소 연계 서버', facts: [{ field: '용도', value: '보건소IF(교체)', evidence: '용도: 보건소IF(교체)' }] },
+    { id: 'ECR-011', kind: '서버', name: '중계서버', facts: [] },
+    // 이름도 인용도 행을 가리키지 않으면 싣지 않는다. "FC (Port): 4"는 두 행에 있다.
+    { id: 'ECR-011', kind: '서버', name: '다른 서버', facts: [{ field: 'NIC/HBA', value: '4', evidence: 'FC (Port): 4' }] },
+  ];
+  const result = parseResult({ response: { items } }, source, 'rfp.pdf', 0);
+  const facts = (index) => result[index].장비요약[0].규격.filter((fact) => fact.추출 === '표 칸').map((fact) => `${fact.항목}:${fact.값}`);
+  assert.deepEqual(facts(0), ['CPU:2 (core)', '메모리:30 (GB)', '로컬 디스크:300*6 (GB)', 'CPU:tpmC: 619,115', 'NIC/HBA:FC (Port): 4']);
+  assert.deepEqual(facts(1), ['CPU:4 (core)', '메모리:40 (GB)', '로컬 디스크:300*6 (GB)', 'CPU:tpmC: 1,238,230', 'NIC/HBA:FC (Port): 4']);
+  // 기존 사양 칸은 싣지 않는다.
+  assert.deepEqual(facts(2), ['CPU:4 Core', '메모리:16GB']);
+  assert.deepEqual(facts(3), []);
+});

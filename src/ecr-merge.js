@@ -4,6 +4,7 @@
 // 한 장비로 합친다 — 이름이 다르면 다른 장비로 둔다. 잘못 합치는 것이 카드가 둘인 것보다 나쁘다.
 import { tableName, requirementRanges } from "./ecr-source.js";
 import { relabelFact, isQuantityLine, unitMismatch } from "./ecr-normalize.js";
+import { cellField, existingRow } from "./ecr-cells.js";
 
 const idKey = (id) => String(id).replace(/–/g, "-").replace(/\s/g, "").toUpperCase();
 const squash = (text) => String(text || "").replace(/\s+/g, "");
@@ -22,12 +23,18 @@ const quoteOf = (fact) => squash(fact.근거 || fact.값);
 // 같은 번호의 다른 종류 장비가 이미 가리킨 줄이다. 그런 장비는 싣지 않고, 뺐다는 것을 남긴다.
 // 제 종류의 규격(스위치의 포트 수 등)을 갖고 이름도 원문에 있으면 실제 장비일 수 있어 그대로 둔다.
 // 같은 종류끼리는 건드리지 않는다 — 운영·개발 서버가 규격 줄을 함께 쓰는 표가 있다.
-function hostOf(device, devices) {
+function hostOf(device, devices, source) {
   // 원문 주석이 납품 포함을 명시한 SAN 스위치는 단순 연결 기능과 구분한다.
   if(device.종류==='스위치'&&device.규격.some(fact=>fact.추출==='원문 포함 구성'
     &&fact.항목==='종류'&&/^SAN\s*스위치$/i.test(fact.값)&&fact.검증===VERIFIED))return null;
   const quotes = device.규격.map(quoteOf).filter(Boolean);
   if (!quotes.length) return null;
+  // 제 이름과 포트 수가 한 줄에 적힌 스위치("SAN 스위치 이중화 구성, 32Port(32Gb/s) 이상")는 스토리지 표 안에 있어도 납품 장비다.
+  // 모델은 그 줄의 앞부분만 인용하기도 하므로 인용이 든 원문 줄 전체를 본다.
+  if (device.종류 === "스위치" && /스위치|switch/i.test(device.명칭)) {
+    const lines = String(source || "").split("\n").filter((line) => /스위치|switch/i.test(line) && /\d\s*(?:port|포트)/i.test(line)).map(squash);
+    if (device.규격.some((fact) => quoteOf(fact).length >= 6 && lines.some((line) => line.includes(quoteOf(fact))))) return null;
+  }
   // NIC/HBA 부품을 독립 스위치로 생성한 경우, 같은 표의 서버가 그 인용을
   // 포함하면 제외한다. 서버와 부품이 같은 한 줄을 인용해도 판정할 수 있다.
   if (device.종류 === "스위치" && /\b(?:NIC|HBA)\b|\bFC\s*\d+\s*port/i.test(device.명칭)
@@ -85,17 +92,21 @@ const NOT_TARGET = [
   { reason: "보안 장비", test: /방화벽|firewall|\bIPS\b|\bIDS\b|DDoS|\bWAF\b|\bVPN\b|\bUTM\b|망\s*연계/i, keep: /스위치|\bswitch\b/i },
   { reason: "전화 장비", test: /전화기|확장\s*버튼|미디어\s*게이트웨이/i, keep: /서버|스토리지|스위치|\bserver\b|\bswitch\b/i },
   { reason: "랙·KVM", test: /^(?:system\s*)?rack$|^랙$|\bKVM\b/i, keep: /서버|스토리지|\bserver\b|\bstorage\b/i },
-  { reason: "소프트웨어·라이선스", test: /라이선스|라이센스|licen[cs]e|분리\s*발주|(?:S\/W|SW)\s*(?:증설|이관|도입)|소프트웨어/i, keep: /^$/ },
+  { reason: "소프트웨어·라이선스", test: /라이선스|라이센스|licen[cs]e|분리\s*발주|(?:S\/W|SW)\s*(?:증설|이관|도입)|소프트웨어|S\/W$|^OS\s*\d+\s*식$/i, keep: /^$/ },
   // "스위치 N/W card"처럼 모델이 종류 이름을 붙여도 서버 표의 카드 열이다.
   { reason: "서버 부품 열 머리글", test: /N\/?W\s*card|네트워크\s*카드|랜\s*카드|FC\s*(?:및|카드)|어댑터|adapter|^\([^()]*\)\s*(?:포트|ports?)$/i, keep: /^$/ },
   { reason: "기존 장비", test: /^\(?\s*기존|^노후(?!.*(?:교체|증설|신규|도입))/, keep: /^$/ },
-  { reason: "규격 조각", test: /^(?:core|cores|코어|cpu|memory|메모리|mem|disk|디스크|port|포트|ea|[*·\-–]+)$/i, keep: /^$/ },
+  { reason: "규격 조각", test: /^\(?(?:core|cores|코어|cpu|memory|메모리|mem|disk|디스크|port|포트|ea|mgmt|[*·\-–]+)\)?$/i, keep: /^$/ },
   // 스위치 성능 표의 행 머리("◦ L4/L7 처리량")를 모델이 괄호로 감싸 장비로 낸다.
   { reason: "규격 조각", test: /^\(?[^()]*(?:처리량|성능|대역폭)\s*\)?$/, keep: /서버|스토리지|스위치|\bserver\b|\bstorage\b|\bswitch\b/i },
 ];
 // HCI 표 아래의 가상 서버 배분("WEB 4core 32GB 2식")은 HCI 위에 만드는 VM이다. 같은 번호에 HCI·가상화 장비가 있을 때만 뺀다.
 const VM_ROW = /^\(?\s*(?:WEB|WAS|DB|AP|APP|API|UI)\s*\)?$/i;
 const HCI_HOST = /HCI|가상화/i;
+// 장비 이름이 아니라 규격 문장이다: "(IPv6 비정상 프로토콜 방어 기능 제공)", "(L4, L7 Switching 지원, … 동시 지원)".
+NOT_TARGET.push({ reason: "규격 문장", test: /(?:지원|제공|가능|포함|보장|제출|구성|하여야\s*함|할\s*것)\s*\)?$/, keep: /(?:서버|스토리지|스위치|server|storage|switch)\s*\)?$/i });
+// 괄호로 감싼 부품 번호: "(SFP-10G-SR-S=)", "(C9K-PWR-650WAC-R/2)". 본체 행 아래의 GBIC·전원·라이선스 품번이다.
+NOT_TARGET.push({ reason: "부품 번호", test: /^\([A-Z0-9][A-Z0-9\-=\/.+]*[\-=\/][A-Z0-9\-=\/.+]*\)$/, keep: /^$/ });
 const notTarget = (device) => NOT_TARGET.find(({ test, keep }) => test.test(device.명칭.trim()) && !keep.test(device.명칭))?.reason || "";
 
 // 설치 장소나 망 이름만 덧붙인 같은 장비("x86 서버"와 "x86 서버 (국방망)")는 한 장비다.
@@ -212,6 +223,28 @@ export function consolidate(items, { fieldOrder = [], verifiedOnly = false } = {
           group.notes.push({ name: entry.명칭, device, messages: [`${relabeled.항목}: 표 머리나 쪽 번호를 값으로 가리켜 제외함`] });
           continue;
         }
+        // 수량에 세는 수가 없으면 수량이 아니다: "#1, #2"는 서버 이름의 번호다.
+        if (relabeled.항목 === "수량" && !/\d/.test(String(relabeled.값).replace(/#\s*\d+/g, ""))) {
+          group.notes.push({ name: entry.명칭, device, messages: [`수량: 값 "${String(relabeled.값).slice(0, 20)}"에 세는 수가 없어 제외함`] });
+          continue;
+        }
+        // 기존 장비를 그대로 쓰겠다는 줄("SAN스위치 : 기존장비 여유포트 활용(부족 시 신규도입)")은 도입 규격이 아니다.
+        if (/기존\s*장비[^\n]{0,20}활용/.test(String(relabeled.근거 || ""))) {
+          group.notes.push({ name: entry.명칭, device, messages: [`${relabeled.항목}: 기존 장비를 활용한다는 줄이라 도입 규격에서 제외함`] });
+          continue;
+        }
+        // 복원한 표 칸의 머리글이 항목을 정한다. 모델이 메모리 칸의 값을 CPU에 붙여도 머리글대로 싣고,
+        // 단위가 머리글에만 있는 값("MEM (GB)" 아래 "64이상")을 열 밀림으로 보지 않는다. "기존 CPU" 칸은 도입 규격이 아니다.
+        const cell = cellField(item.세부내용_원문 || "", relabeled, entry.종류);
+        if (cell?.existing) {
+          group.notes.push({ name: entry.명칭, device, messages: [`${relabeled.항목}: 표의 "${cell.label}" 칸은 기존 사양이라 도입 규격에서 제외함`] });
+          continue;
+        }
+        if (cell) {
+          const placed = { ...relabeled, 값: cell.value, 근거: cell.quote };
+          addFact(device.규격, cell.field === relabeled.항목 ? placed : { ...placed, 항목: cell.field, 모델항목: relabeled.모델항목 || relabeled.항목 });
+          continue;
+        }
         if (unitMismatch(relabeled.항목, relabeled.값)) {
           const shown = String(relabeled.값).replace(/\s+/g, " ").slice(0, 40);
           group.notes.push({ name: entry.명칭, device, messages: [`${relabeled.항목}: 값 "${shown}"의 단위가 항목과 맞지 않아(표 열 밀림 의심) 제외함`] });
@@ -238,16 +271,19 @@ export function consolidate(items, { fieldOrder = [], verifiedOnly = false } = {
     // 소프트웨어·솔루션 목록 표("서버보안 2식", "DB 접근제어 1식", "OS 백업 25식")를 모델이 행마다 서버로 낸다.
     // 제 종류의 핵심 규격도, 장비임을 뜻하는 이름도 없는 항목이 한 번호에 셋 이상 몰려 있으면 품목 목록으로 본다.
     // 하나둘뿐이면 규격을 별도 배포하는 실제 장비일 수 있어 그대로 둔다.
-    const bare = all.filter((device) => !device.규격.some((fact) => (OWN_FIELDS[device.종류] || []).includes(fact.항목))
+    // 부품 번호 행("(SFP-10G-SR-S=)")은 본체에 딸린 품번이라 세지 않는다. 세면 그 위의 본체("C9500-24Y4C-A")까지 목록 행으로 빠진다.
+    const bare = all.filter((device) => notTarget(device) !== "부품 번호" && !device.규격.some((fact) => (OWN_FIELDS[device.종류] || []).includes(fact.항목))
       // 장비 이름은 끝말이 장비다("관리 서버", "WORM스토리지"). "서버보안", "서버 접근제어"는 소프트웨어다.
       && !/(?:서버|스토리지|스위치|server|storage|switch)\s*(?:\([^()]*\))?\s*(?:#?\d+)?$|HCI|NAS|SAN|VTL|L[2-7]\b|어플라이언스|appliance|라이브러리/i.test(device.명칭.trim()));
     const listRows = new Set(bare.length >= 3 ? bare : []);
     const hciHost = all.some((device) => HCI_HOST.test(device.명칭));
+    const groupSource = stitch(group.sources);
     const notTargetOf = (device) => notTarget(device) || (listRows.has(device) ? "규격 없는 품목 목록(소프트웨어·솔루션 추정)" : "")
+      || (existingRow(groupSource, device.명칭) ? "기존 장비" : "")
       || (hciHost && VM_ROW.test(device.명칭.trim()) ? "HCI 위 가상 서버 배분" : "");
     const nonTargets=all.filter(device=>notTargetOf(device));
     const eligible=all.filter(device=>!nonTargets.includes(device));
-    const hosts = new Map(eligible.map((device) => [device, hostOf(device, eligible)]));
+    const hosts = new Map(eligible.map((device) => [device, hostOf(device, eligible, groupSource)]));
     const unsupportedParts = all.filter(device => !device.규격.length && (verifiedOnly || device.종류 === '스위치' && /\b(?:NIC|HBA)\b|\bFC\b/i.test(device.명칭) && !/스위치|switch/i.test(device.명칭)));
     const devices = all.filter((device) => !hosts.get(device) && !unsupportedParts.includes(device) && !nonTargets.includes(device));
     const many = devices.length > 1;

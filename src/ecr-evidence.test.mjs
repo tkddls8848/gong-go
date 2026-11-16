@@ -187,3 +187,23 @@ test('값 하나뿐인 짧은 인용은 줄 표식이 가리킨 줄이 그 글�
     '요구사항 번호 ECR-004\n형상관리시스템 업그레이드\n1식','rfp.pdf',0);
   assert.notEqual(sw.장비요약[0]?.규격[0]?.검증,'원문 확인');
 });
+test('두 요구사항이 든 구간에서 번호를 비우거나 옆 표 번호를 적으면 인용이 모두 든 요구사항으로 바로잡는다',()=>{
+  // 실문서: 모델이 두 스위치의 규격을 모두 맞게 읽고 번호만 비워, 전부 "다른 요구사항의 근거"로 빠지고 장비가 사라졌다.
+  const source=['고유번호 ECR-B-001-05','정의 포털망 DMZ L3 스위치 교체 요구사항','○ 도입 수량 : 4식','- 스위칭 용량 : 최대 9.6Tbps 이상 지원','· 1/10G SFP+ 288포트 이상 제공','- 제어부 및 전원 이중화 제공',
+    '고유번호 ECR-B-001-06','정의 WEB DB L7 스위치 교체 요구사항','○ 도입 수량 : 2식','- L7 처리량 : 125Gbps 이상 지원','· 10G SFP+ 16포트 이상 제공','- 제어부 및 전원 이중화 제공'].join('\n');
+  const f=(field,value,evidence=value)=>({field,value,evidence});
+  const items=[
+    {id:'',kind:'스위치',name:'L3 스위치',facts:[f('스위칭 용량','최대 9.6Tbps 이상 지원','- 스위칭 용량 : 최대 9.6Tbps 이상 지원'),f('포트 수','1/10G SFP+ 288포트 이상 제공'),f('전원','제어부 및 전원 이중화 제공')]},
+    {id:'ECR-B-001-05',kind:'스위치',name:'L7 스위치',facts:[f('성능','L7 처리량 : 125Gbps 이상 지원'),f('포트 수','10G SFP+ 16포트 이상 제공')]},
+    // 인용이 두 표에 걸치면 어느 쪽인지 정하지 않는다.
+    {id:'',kind:'스위치',name:'스위치',facts:[f('포트 수','1/10G SFP+ 288포트 이상 제공'),f('포트 수','10G SFP+ 16포트 이상 제공')]},
+    // 한 표에만 있는 인용이 하나뿐이면 정하지 않는다.
+    {id:'',kind:'스위치',name:'스위치',facts:[f('포트 수','10G SFP+ 16포트 이상 제공'),f('전원','제어부 및 전원 이중화 제공')]},
+  ];
+  const result=parseResult({response:{items}},source,'rfp.pdf',0);
+  assert.equal(result[0].id,'ECR-B-001-05');
+  assert.deepEqual(result[0].장비요약[0].규격.map(x=>x.검증),['원문 확인','원문 확인','원문 확인']);
+  assert.equal(result[1].id,'ECR-B-001-06');
+  assert.deepEqual(result[1].장비요약[0].규격.map(x=>x.검증),['원문 확인','원문 확인']);
+  assert.ok(!/^ECR-B/.test(result[2].id)&&!/^ECR-B/.test(result[3].id));
+});

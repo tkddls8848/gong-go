@@ -6,7 +6,7 @@ import { sectionsOf, requirementRanges, priorityOrder, sourceLines, numberedSour
 import { sliceSection, splitHalves, packPairs, packSparsePairs, equipmentRows } from "./ecr-chunks.js";
 import { consolidate } from "./ecr-merge.js";
 import { normalizeItems } from "./ecr-normalize.js";
-import { separateCells, rowFacts } from "./ecr-cells.js";
+import { separateCells, rowFacts, gridRowFacts } from "./ecr-cells.js";
 import { inventoryRows, inventoryKind } from './ecr-inventory.js';
 import {readSelectionPayload} from './ecr-input.js';
 import {includedEquipment} from './ecr-included-equipment.js';
@@ -16,7 +16,7 @@ export const ECR_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 // 작업 키에 들어가는 파이프라인 판. 표 선별이나 구간 나누기를 고치면 반드시 올린다.
 // 올리지 않으면 같은 파일을 다시 올려도 예전 방식으로 자른 구간을 그대로 다시 쓴다 —
 // 고친 것이 반영되지 않고 고쳐진 것처럼 보인다.
-const VERSION = "cloud-v68-근거복원·대상외제외·열밀림·머리글수량";
+const VERSION = "cloud-v69-번호복원·자원표행복원·표사이분할";
 const MAX_BYTES = 8 * 1024 * 1024;
 // 한 요청에서 다루는 텍스트와 병합 작업량을 제한한다.
 const MAX_CHARS = 120000;
@@ -188,6 +188,21 @@ export function parseResult(result, source, filename, index) {
         &&norm(fact.evidence).length>=12&&norm(fact.value)&&includesEvidence(fact.evidence,fact.value)&&includesEvidence(ranges[0].text,fact.evidence));
       if(named||grounded)item={...item,id:ranges[0].id};
     }
+    // 요구사항이 둘 이상 든 구간에서 번호를 비우거나 옆 표의 번호를 적은 응답은, 규격의 인용이 모두 한 요구사항 안에
+    // 있을 때만 그 번호로 바로잡는다. 한 요구사항에만 있는 인용이 둘 이상이고 서로 엇갈리지 않아야 한다.
+    // 두 표에 똑같이 있는 줄("전원 이중화")은 세지 않는다. 바로잡지 않으면 맞게 읽은 규격이 "다른 요구사항의 근거"로 모두 빠진다.
+    if (ranges.length > 1) {
+      const votes = new Map();
+      for (const fact of item.facts.slice(0, MAX_MODEL_FACTS)) {
+        if (!fact || !fields.includes(fact.field) || typeof fact.value !== 'string' || typeof fact.evidence !== 'string') continue;
+        const quote = groundQuote(source, fact.evidence, fact.value);
+        if (norm(quote).length < 8 || !includesEvidence(source, quote)) continue;
+        const owners = ranges.filter((range) => includesEvidence(range.text, quote));
+        if (owners.length === 1) votes.set(owners[0].id, (votes.get(owners[0].id) || 0) + 1);
+      }
+      const [owner, count] = votes.size === 1 ? [...votes.entries()][0] : [];
+      if (count >= 2 && idKey(owner) !== idKey(item.id)) item = { ...item, id: owner };
+    }
     // 모델이 번호의 대시·공백을 바꿔 적으면("ECR–001", "ECR- 001") 원문에 없는 번호가 되어 대조에서
     // 빠진다. 같은 번호가 원문 구간 경계에 있으면 원문 표기로 되돌린다. 새 번호를 만들지는 않는다.
     if (item.id && !source.includes(item.id)) {
@@ -263,6 +278,11 @@ export function parseResult(result, source, filename, index) {
       const verified = !ordinalOnly && !virtualCount && !documentTotal && !bareQuantity && !!norm(fact.value) && !!evidence && valueInQuote(quote,value) && includesEvidence(source,quote) && (!ranges.length || own);
       if (!verified) uncertainties.push(`${fact.field}: 근거 확인 필요`);
       facts.push({ 항목: fact.field, 값: value, 근거: quote, 검증: verified ? "원문 확인" : "확인 필요" });
+    }
+    // 복원한 표 행의 자원 칸은 모델이 빠뜨려도 그 행의 장비에 싣는다(src/ecr-cells.js).
+    const ownText = ranges.filter((range) => idKey(range.id) === idKey(item.id)).map((range) => range.text).join("") || (ranges.length ? "" : source);
+    for (const rowFact of gridRowFacts(ownText, sourceName, facts, item.kind)) {
+      if (!facts.some((fact) => fact.항목 === rowFact.항목 && fact.근거 === rowFact.근거)) facts.push(rowFact);
     }
     const location = `${filename} · 구간 ${index + 1}`;
     // 한 행만 읽은 경우 명칭도 원문 표 제목+행 구분으로 통일한다.

@@ -182,9 +182,109 @@
           :inventory?'번호 품명 규격 및 사양 수량\n'+rows.map(row=>`번호: ${row[0]}\n품명: ${row[1]}\n규격: ${row[2]}\n수량: ${row[3]}`).join('\n\n')
           :rows.map(row=>`구분: ${row[0]}\n규격: ${row[1]}\n수량: ${row[2]}`).join('\n\n')});
     }
+    return output.concat(gridTables(items,lines,new Set(output.flatMap(table=>table.members))));
+  }
+  // 선으로 그린 자원 표를 행마다 "머리글: 값" 한 줄로 복원한다. 값은 옮기기만 하고 만들지 않는다.
+  // 칸 안 글이 두 줄이면("1,200,000"/"이상") 평문에서는 옆 칸의 가운데 줄과 섞여 값이 한 열씩 밀린다.
+  // 대상은 두 가지뿐이다: 열 머리에 CPU·메모리·디스크가 둘 이상 있는 표와, 구분·규격·수량 머리를 가진 표.
+  // 머리글이 값처럼 보이거나, 기존 장비 현황 표이거나, 글이 열 경계를 넘거나, 이름 칸이 비면 손대지 않는다.
+  const RESOURCE=/^(?:(?:기존|증설|변경)\s*)?(?:CPU|MEM|Memory|메모리|RAM|Disk|디스크|HDD|SSD|tpmC)(?![가-힣A-Za-z])/i;
+  const STATUS=/도입\s*년도|도입\s*연도|사용량|여유|현황/;
+  // 칸마다 따로 그린 선분을 한 줄로 잇는다. 머리글 아래 선을 칸별로 그리는 문서가 있다.
+  function joined(lines) {
+    const output=[];
+    for(const axis of ['h','v']) {
+      const list=lines.filter(l=>l.axis===axis).sort((a,b)=>a.at-b.at||a.start-b.start);
+      let group=[];
+      const flush=()=>{
+        let run=null;
+        for(const part of group.sort((a,b)=>a.start-b.start)) {
+          if(run&&part.start-run.end<=1.5)run.end=Math.max(run.end,part.end);
+          else {if(run)output.push(run);run={axis,at:group[0].at,start:part.start,end:part.end};}
+        }
+        if(run)output.push(run);
+      };
+      for(const line of list) {
+        if(group.length&&Math.abs(group[0].at-line.at)>.3){flush();group=[];}
+        group.push(line);
+      }
+      if(group.length)flush();
+    }
     return output;
   }
-  const api={segments,tables};
+  function gridTables(items,rawLines,used=new Set()) {
+    if(!items.some(i=>RESOURCE.test(i.str.trim()))&&!items.some(i=>/^(?:규격|사양|세부규격)$/.test(i.str.replace(/\s/g,''))))return [];
+    const lines=joined(rawLines),H=lines.filter(l=>l.axis==='h'),V=lines.filter(l=>l.axis==='v');
+    const unique=(values,gap=.5)=>values.sort((a,b)=>a-b).filter((v,i,a)=>!i||v-a[i-1]>gap);
+    const join=cell=>[...cell].sort((a,b)=>Math.abs(a.y-b.y)>1?a.y-b.y:a.x-b.x).map(i=>i.str.trim()).join(' ').replace(/\s+/g,' ').trim();
+    const cx=i=>i.x+i.width/2,cy=i=>i.y-i.height*.3;
+    const spans=[],output=[],taken=[];
+    for(const line of H) {
+      let span=spans.find(s=>Math.abs(s.start-line.start)<=1&&Math.abs(s.end-line.end)<=1);
+      if(!span)spans.push(span={start:line.start,end:line.end,ats:[]});
+      span.ats.push(line.at);
+    }
+    for(const span of spans.sort((a,b)=>(b.end-b.start)-(a.end-a.start))) {
+      // 머리글 아래 겹선(0.7 간격)은 한 줄이다.
+      const ys=unique(span.ats,2);
+      if(ys.length<3)continue;
+      const left=span.start,right=span.end,top=ys[0],bottom=ys.at(-1);
+      if(taken.some(t=>left<t.right&&right>t.left&&top<t.bottom&&bottom>t.top))continue;
+      const columnsAt=y=>unique([left,...V.filter(l=>l.at>left+1&&l.at<right-1&&l.start<y&&l.end>y).map(l=>l.at),right]);
+      const bounds=columnsAt((ys[1]+ys[2])/2);
+      if(bounds.length<4)continue;
+      const members=items.filter(i=>cx(i)>left&&cx(i)<right&&cy(i)>top&&cy(i)<bottom);
+      if(members.some(i=>used.has(i)))continue;
+      const heads=members.filter(i=>cy(i)<ys[1]);
+      if(!heads.length)continue;
+      // 여러 열에 걸친 윗머리("기존", "증설")는 그 아래 열마다 붙인다.
+      const labels=bounds.slice(0,-1).map((x,c)=>join(heads.filter(i=>{
+        const active=columnsAt(cy(i)),k=active.findIndex((v,n)=>cx(i)>v&&cx(i)<active[n+1]);
+        return k>=0&&x>=active[k]-.5&&bounds[c+1]<=active[k+1]+.5;
+      })));
+      const plain=labels.map(label=>label.replace(/\s/g,''));
+      if(heads.some(i=>!labels.some(label=>label.includes(i.str.trim()))))continue;
+      const resource=labels.filter(label=>RESOURCE.test(label)).length>=2;
+      // 구분·규격·수량 순서의 표는 위의 복원기가 맡는다(거절한 표도 건드리지 않는다). 여기서는 수량이 규격 앞에 오는 표만 다룬다.
+      const specAt=plain.findIndex(label=>/^(?:규격|사양|세부규격|규격및사양)$/.test(label)),countAt=plain.findIndex(label=>/^(?:수량|대수)$/.test(label));
+      const specList=countAt>0&&specAt>countAt&&/^(?:구분|품명|장비명|품목|항목|장비)$/.test(plain[0]);
+      if(!resource&&!specList)continue;
+      if(labels.some(label=>!label||label.length>28||/[:：]|이상|이하/.test(label)||STATUS.test(label))||new Set(plain).size!==plain.length)continue;
+      const rowYs=unique([ys[1],...H.filter(l=>l.at>ys[1]+.5&&l.at<bottom-.5&&l.start<right-1&&l.end>=right-1).map(l=>l.at),bottom],2);
+      const rows=[],placed=new Set();
+      let end=bottom,unsafe=false;
+      for(let r=0;r<rowYs.length-1&&!unsafe;r++) {
+        const middle=(rowYs[r]+rowYs[r+1])/2,active=columnsAt(middle);
+        // 열 구성이 달라지는 행(전체를 가로지르는 주석 등)부터는 표 밖으로 둔다.
+        if(active.length!==bounds.length||active.some((v,n)=>Math.abs(v-bounds[n])>.5)){end=rowYs[r];break;}
+        const values=bounds.slice(0,-1).map((x,c)=>{
+          // 세로로 합쳐진 칸의 글은 걸친 행마다 싣는다.
+          const edges=H.filter(l=>l.start<=x+1&&l.end>=bounds[c+1]-1);
+          const lo=Math.max(ys[1],...edges.filter(l=>l.at<middle).map(l=>l.at));
+          const hi=Math.min(bottom,...edges.filter(l=>l.at>middle).map(l=>l.at));
+          const cell=members.filter(i=>cy(i)>lo&&cy(i)<hi&&cx(i)>x&&cx(i)<bounds[c+1]);
+          if(cell.some(i=>i.x<x-1||i.x+i.width>bounds[c+1]+1))unsafe=true;
+          for(const i of cell)placed.add(i);
+          return join(cell);
+        });
+        if(!values[0]||specList&&!resource&&!/^\d+\s*(?:대|식|개|EA|sets?)?$/i.test(values[countAt]))unsafe=true;
+        rows.push(values);
+      }
+      // 어느 칸에도 들지 못한 글(열 경계 위에 걸친 글)이 있으면 그 글이 사라지므로 손대지 않는다.
+      if(unsafe||!rows.length||members.some(i=>cy(i)>ys[1]&&cy(i)<end&&!placed.has(i)))continue;
+      taken.push({left,right,top,bottom:end});
+      output.push({x:left,y:top,width:right-left,height:1,members:members.filter(i=>cy(i)<end),rows,labels,
+        str:rows.map(values=>values.map((value,c)=>`${labels[c]}: ${value||'-'}`).join(' | ')).join('\n')});
+    }
+    return output;
+  }
+  // 표 선을 읽을 쪽인지. 그리기 목록을 읽는 것은 느리므로 표 머리 낱말이 있는 쪽에서만 읽는다.
+  function needsLines(items) {
+    const plain=items.map(i=>i.str.replace(/\s/g,''));
+    return plain.some(s=>s==='구분'||s==='번호')&&(plain.some(s=>['수량','대수','가상서버','세부규격'].includes(s))||items.some(i=>/예상\s*(?:Core|tpmC)/i.test(i.str)))
+      ||items.filter(i=>RESOURCE.test(i.str.trim())).length>=2;
+  }
+  const api={segments,tables,needsLines};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   scope.GongPdfGeometry=api;
 })(typeof self==='undefined'?globalThis:self);

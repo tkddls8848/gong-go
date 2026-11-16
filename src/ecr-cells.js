@@ -64,3 +64,70 @@ export function rowFacts(specification, kind) {
   }
   return facts;
 }
+
+// 브라우저가 선으로 그린 표를 복원한 행("업무명: 개발서버 | CPU (tpmC): 1,200,000 이상 | MEM (GB): 64이상")의 칸을 읽는다.
+// 머리글이 항목을 정한다. 값은 칸의 글이고, 머리글 괄호의 단위("(GB)")만 값 뒤에 붙인다.
+const CELL_FIELDS = [
+  [/^(?:CPU|tpmC|Core|코어)(?![가-힣A-Za-z])/i, "CPU"],
+  [/^(?:MEM|Memory|메모리|RAM)(?![가-힣A-Za-z])/i, "메모리"],
+  [/^(?:Disk|디스크|HDD|SSD)(?![A-Za-z])/i, "디스크"],
+  [/^(?:FC|NIC|N\/W|Network|네트워크)(?![가-힣A-Za-z])/i, "NIC/HBA"],
+  [/(?:^|\s)(?:수\s*량|대\s*수)$/, "수량"],
+];
+const tight = (text) => String(text || "").replace(/\s+/g, "");
+function gridRows(source) {
+  const rows = [];
+  for (const line of String(source || "").split("\n")) {
+    if (!line.includes(" | ")) continue;
+    const cells = line.split(" | ").map((part) => { const at = part.indexOf(": "); return at > 0 ? { label: part.slice(0, at).trim(), value: part.slice(at + 2).trim(), text: part.trim() } : null; });
+    if (cells.length >= 3 && cells.every(Boolean)) rows.push({ line: tight(line), cells });
+  }
+  return rows;
+}
+function readCell(cell, kind) {
+  const existing = /^기존\s*/.test(cell.label);
+  const label = cell.label.replace(/^(?:기존|증설|변경)\s*/, "");
+  let field = CELL_FIELDS.find(([pattern]) => pattern.test(label))?.[1] || "";
+  if (field === "디스크") field = kind === "서버" ? "로컬 디스크" : /usable|가용|사용\s*공간/i.test(cell.value) ? "Usable 용량" : /\braw\b|물리/i.test(cell.value) ? "Raw 용량" : "디스크 구성";
+  const unit = /^(?:CPU|MEM|Memory|메모리|RAM|Disk|디스크|HDD|SSD)\s*\(([^()]+)\)$/i.exec(label)?.[1];
+  const plain = /^(?:CPU|MEM|Memory|메모리|RAM|Disk|디스크|HDD|SSD|수\s*량|대\s*수|서버\s*수량)$/i.test(label);
+  return { field, existing, label: cell.label, quote: cell.text, value: unit ? `${cell.value} (${unit})` : plain ? cell.value : `${label}: ${cell.value}` };
+}
+// 규격의 인용이 가리키는 칸. 인용이 칸 하나면 그 칸, 아니면 인용이 든 행에서 값이 같은 칸이다.
+// 같은 값이 서로 다른 항목의 칸에 있으면 정하지 않는다.
+export function cellField(source, fact, kind) {
+  const value = tight(fact?.값), quote = tight(fact?.근거);
+  if (!value) return null;
+  const cells = gridRows(source).flatMap((row) => row.cells.map((cell) => ({ ...cell, row: row.line })));
+  let found = cells.filter((cell) => tight(cell.text) === quote);
+  if (!found.length) found = cells.filter((cell) => tight(cell.value) === value && (cell.row.includes(quote) || quote.includes(tight(cell.text))));
+  if (!found.length) return null;
+  // 띄어쓰기만 다른 같은 값("64이상", "64 이상")은 같은 칸으로 보고 먼저 찾은 쪽을 쓴다.
+  const kinds = [...new Map(found.map((cell) => readCell(cell, kind)).reverse().map((entry) => [`${entry.field}|${entry.existing}|${tight(entry.value)}`, entry])).values()];
+  return kinds.length === 1 && kinds[0].field ? kinds[0] : null;
+}
+// 모델은 복원한 행에서 용도 하나만 돌려주기도 한다. 장비의 행이 정해지면 그 행의 자원 칸을 규격으로 싣는다.
+// 행은 장비 이름이 이름 칸과 같거나, 확인된 규격의 인용이 그 행에만 있을 때 그 장비의 것이다.
+export function gridRowFacts(source, name, facts, kind) {
+  const rows = gridRows(source);
+  if (!rows.length) return [];
+  const title = tight(String(name || "").replace(/^\(([^]*)\)$/, "$1"));
+  const quotes = facts.filter((fact) => fact.검증 === "원문 확인").map((fact) => tight(fact.근거)).filter((quote) => quote.length >= 4);
+  const owned = rows.filter((row) => title && row.cells.slice(0, 2).some((cell) => tight(cell.value) === title)
+    || quotes.some((quote) => row.line.includes(quote) && rows.filter((other) => other.line.includes(quote)).length === 1));
+  const output = [];
+  for (const row of owned) for (const cell of row.cells) {
+    const read = readCell(cell, kind);
+    if (!read.field || read.existing || !/[0-9A-Za-z가-힣]/.test(cell.value)) continue;
+    if (!output.some((fact) => fact.항목 === read.field && fact.근거 === read.quote)) output.push({ 항목: read.field, 값: read.value, 근거: read.quote, 검증: "원문 확인", 추출: "표 칸" });
+  }
+  return output;
+}
+
+// 복원한 행의 비고 칸이 기존 장비라고 적은 장비("비고: 가상화서버 (자체보유) ※ 상수도사업본부 기존 장비 사용")인지.
+export function existingRow(source, name) {
+  const title = tight(String(name || "").replace(/^\(([^]*)\)$/, "$1"));
+  if (!title) return false;
+  const rows = gridRows(source).filter((row) => row.cells.slice(0, 2).some((cell) => tight(cell.value) === title));
+  return rows.length > 0 && rows.every((row) => row.cells.some((cell) => /기존\s*장비\s*사용|자체\s*보유/.test(cell.value)));
+}

@@ -143,6 +143,17 @@ test("잘리는 구간은 줄 단위로 둘로 가르고 뒤쪽에도 표 머리
   for (const line of whole) assert.ok(covered.has(line), "가르면서 줄을 빠뜨리지 않는다");
 });
 
+test("두 표를 묶은 구간이 잘리면 표 사이에서 가르고 앞 표의 머리를 뒤쪽에 싣지 않는다", () => {
+  // 실문서: 가운데 줄에서 가른 뒤쪽 절반이 "고유번호 ECR-B-001-03" 머리 아래 ECR-B-001-04 표를 통째로 가져,
+  // 모델이 뒤 표의 규격을 앞 표 번호로 돌려주었고 장비가 통째로 빠졌다.
+  const table = (id, name, count) => `고유번호 ${id}\n요구사항 명칭 통신 및 부대장비 교체\n정의 ${name} 교체 요구사항\n` + rows(count).join("\n") + "\n";
+  const chunk = table("ECR-B-001-03", "포털망 외부 L7 스위치", 14) + table("ECR-B-001-04", "포털망 DMZ L7 스위치", 10);
+  const [front, back] = splitHalves(chunk);
+  assert.equal(front + back, chunk);
+  assert.ok(back.startsWith("고유번호 ECR-B-001-04\n"));
+  assert.ok(!back.includes("ECR-B-001-03") && !front.includes("ECR-B-001-04"));
+});
+
 test("글자 수로 자르던 때보다 구간이 늘지 않는다", () => {
   // 구간 상한 33은 그대로다. 줄 단위로 바꾸면서 같은 문서가 구간을 더 쓰면 전에 되던 문서가 거절된다.
   const before = (length, size) => (length <= size ? 1 : 1 + Math.ceil((length - size) / (size - 600)));

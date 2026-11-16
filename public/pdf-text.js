@@ -93,7 +93,7 @@
               return {...i,x:t[4],y:t[5]};
             });
             let lines=[];
-            if(geometry&&items.some(i=>['구분','번호'].includes(i.str.replace(/\s/g,'')))&&items.some(i=>['수량','대수','가상서버','세부규격'].includes(i.str.replace(/\s/g,''))||/예상\s*(?:Core|tpmC)/i.test(i.str))) {
+            if(geometry?.needsLines(items)) {
               lines=geometry.segments(await page.getOperatorList(),pdf.OPS,viewport.transform);check();
             }
             const text=pageText(items,{...viewport,lines});

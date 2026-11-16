@@ -148,3 +148,39 @@ test('스토리지의 Gbps 인터페이스를 스위칭 용량으로 고르면 �
   assert.equal(relabelFact('스토리지',fact).항목,'포트 속도');
   assert.equal(relabelFact('스위치',{...fact,값:'3.2Tbps 이상'}).항목,'스위칭 용량');
 });
+
+test('복원한 표 칸의 머리글로 값의 항목을 정하고, 같은 값이 다른 항목 칸에도 있으면 정하지 않는다', async () => {
+  const { cellField } = await import('./ecr-cells.js');
+  const source = '업무명: 개발서버 | CPU (tpmC): 1,200,000 이상 | MEM (GB): 64이상 | Disk: 1TB | N/W card TX 1G (4port): 2 | 서버 수량: 1\n'
+    + '구분: 증설 | 서버명: 중계서버 | 기존 CPU: 4 core | 기존 MEM: 8GB | 증설 CPU: 4 Core | 증설 MEM: 16GB';
+  const fact = (값, 근거 = 값) => ({ 항목: 'CPU', 값, 근거 });
+  // 인용이 칸 하나면 그 칸의 머리글.
+  assert.equal(cellField(source, fact('64이상', 'MEM (GB): 64이상'), '서버').field, '메모리');
+  // 인용이 행 전체면 값이 같은 칸.
+  assert.equal(cellField(source, fact('1TB', source.split('\n')[0]), '서버').field, '로컬 디스크');
+  assert.equal(cellField(source, fact('1TB', source.split('\n')[0]), '스토리지').field, '디스크 구성');
+  assert.equal(cellField(source, fact('1', '서버 수량: 1'), '서버').field, '수량');
+  // 기존 사양 칸은 기존이라고 알려 준다.
+  assert.deepEqual(cellField(source, fact('8GB', '기존 MEM: 8GB'), '서버'), { field: '메모리', existing: true, label: '기존 MEM', quote: '기존 MEM: 8GB', value: '8GB' });
+  assert.equal(cellField(source, fact('16GB', '증설 MEM: 16GB'), '서버').existing, false);
+  // 이름·비고 칸처럼 항목을 뜻하지 않는 머리글, 표가 아닌 원문, 표에 없는 값은 정하지 않는다.
+  assert.equal(cellField(source, fact('개발서버', '업무명: 개발서버'), '서버'), null);
+  assert.equal(cellField('CPU 2.4GHz 16core', fact('2.4GHz'), '서버'), null);
+  assert.equal(cellField(source, fact('128이상'), '서버'), null);
+  // 띄어쓰기만 다른 같은 값이 여러 행에 있어도 같은 칸이다("64이상"과 "64 이상").
+  const twice = source + '\n업무명: 모바일WAS서버 | CPU (tpmC): 1,200,000 이상 | MEM (GB): 64 이상 | Disk: 600GB | 서버 수량: 1';
+  assert.equal(cellField(twice, fact('64이상', 'MEM (GB): 64이상'), '서버').value, '64이상 (GB)');
+});
+
+test('도입구분에 넣은 규격 줄은 값의 내용으로 항목을 다시 정하고, 도입구분 말은 그대로 둔다', () => {
+  const f = (값, 근거 = 값) => ({ 항목: '도입구분', 값, 근거, 검증: '원문 확인' });
+  assert.equal(relabelFact('스위치', f('9.6Tbps 이상 지원', '- 스위칭 용량 : 최대 9.6Tbps 이상 지원')).항목, '스위칭 용량');
+  assert.equal(relabelFact('스위치', f('3Bpps 이상(IPv4/IPv6 동일성능) 지원')).항목, '성능');
+  assert.equal(relabelFact('스위치', f('L7 처리량 : 125Gbps 이상 지원')).항목, '성능');
+  assert.equal(relabelFact('스위치', f('10G SFP+ 16포트 이상 제공 (10G GBIC 포함)')).항목, '포트 수');
+  assert.equal(relabelFact('서버', f('10G SFP+ 2포트 이상')).항목, 'NIC/HBA');
+  assert.equal(relabelFact('스위치', f('IEEE 802.1d, 802.1w, 802.1Q, 802.3ad 지원')).항목, '기타 조건');
+  for (const word of ['교체', '신규도입', '증설', '신규도입 (조건부)']) assert.equal(relabelFact('스위치', f(word)).항목, '도입구분');
+  // 수량 줄은 수량 교정이 맡는다.
+  assert.equal(relabelFact('스위치', f('공공망 6식, 금융망 6식', '○ 도입 수량 : 공공망 6식, 금융망 6식')).항목, '수량');
+});

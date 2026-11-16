@@ -255,3 +255,76 @@ test('표 머리나 쪽 번호를 가리킨 값은 원문에 있어도 규격으
   assert.deepEqual(result.장비요약[0].규격.map(f=>`${f.항목}:${f.값}`).sort(),['CPU:2.4GHz 16core','포트 수:24']);
   assert.ok(result.불확실.some(n=>n.includes('표 머리나 쪽 번호')));
 });
+
+test('규격 문장과 괄호로 감싼 부품 번호는 장비로 내보내지 않고, 부품 번호 옆의 본체는 품목 목록으로 빼지 않는다',()=>{
+  // 실문서: 모델 번호가 이름인 스위치 아래에 GBIC·전원 품번 행이 딸려 있었다.
+  const [cisco]=consolidate([
+    part('ECR-B-002','스위치','C9500-24Y4C-A',[fact('종류','Catalyst 9500 24x1/10/25G'),fact('수량','4대')]),
+    part('ECR-B-002','스위치','(SFP-10G-SR-S=)',[fact('수량','96개')]),
+    part('ECR-B-002','스위치','(GLC-TE=)',[fact('수량','16개')]),
+    part('ECR-B-002','스위치','(C9K-PWR-650WAC-R/2)',[fact('수량','4개')]),
+  ]);
+  assert.deepEqual(cisco.장비요약.map(d=>d.명칭),['C9500-24Y4C-A']);
+  assert.ok(cisco.불확실.some(n=>n.includes('부품 번호')));
+  const [ddos]=consolidate([
+    part('ECR-B-011-16','스위치','(IPv6 비정상 프로토콜 방어 기능 제공)',[fact('기타 조건','IPv6 비정상 프로토콜 방어 기능 제공')]),
+    part('ECR-B-011-16','스위치','L4 스위치',[fact('포트 수','10G 8 port')]),
+    part('ECR-B-011-16','서버','백업 지원 서버',[fact('CPU','2.4GHz 16core')]),
+  ]);
+  assert.deepEqual(ddos.장비요약.map(d=>d.명칭).sort(),['L4 스위치','백업 지원 서버']);
+  assert.ok(ddos.불확실.some(n=>n.includes('규격 문장')));
+});
+
+test('제 이름과 포트 수가 한 줄에 적힌 스위치는 스토리지와 같은 줄을 가리켜도 남긴다',()=>{
+  // 실문서: 스토리지 표 안의 "SAN 스위치 이중화 구성, 32Port(32Gb/s) 이상" 줄. 모델은 앞부분만 인용했다.
+  const line='SAN 스위치 이중화 구성, 32Port(32Gb/s) 이상(16G, 8G 호환)';
+  const source=`고유번호 ECR-B-003-03\n스토리지(1식) 및 SAN 스위치 2식 도입\nUsable 50TB 이상\n${line}\nSAN 스위치 연결 기능 제공`;
+  const storage=(extra)=>part('ECR-B-003-03','스토리지','서비스용 스토리지',[fact('Usable 용량','Usable 50TB 이상'),...extra],{source});
+  const [kept]=consolidate([storage([fact('기타 조건',line)]),part('ECR-B-003-03','스위치','SAN 스위치',[fact('이중화','SAN 스위치 이중화 구성')],{source})]);
+  assert.deepEqual(kept.장비요약.map(d=>d.명칭).sort(),['SAN 스위치','서비스용 스토리지']);
+  // 포트 수 없이 연결 기능만 적힌 줄로 만든 스위치는 지금처럼 뺀다.
+  const [dropped]=consolidate([storage([fact('기타 조건','SAN 스위치 연결 기능 제공')]),part('ECR-B-003-03','스위치','SAN 스위치',[fact('기타 조건','SAN 스위치 연결 기능 제공')],{source})]);
+  assert.deepEqual(dropped.장비요약.map(d=>d.명칭),['서비스용 스토리지']);
+});
+
+test('세는 수가 없는 수량과 기존 장비를 활용한다는 줄은 규격으로 싣지 않는다',()=>{
+  // 실문서: "행정망 정보연계 #1, #2로 통합 구성"에서 수량 "#1, #2"를, "SAN스위치 : 기존장비 여유포트 활용(부족 시 신규도입)"에서 스위치를 만들었다.
+  const reuse='◦ SAN스위치 : 기존장비 여유포트 활용(부족 시 신규도입)';
+  const [result]=consolidate([
+    part('ECR-008','스토리지','디스크어레이',[fact('Usable 용량','Usable 20TB')]),
+    part('ECR-008','스위치','SAN스위치',[{항목:'용도',값:'신규도입',근거:reuse,검증:'원문 확인'},{항목:'포트 수',값:'여유포트 활용(부족 시 신규도입)',근거:reuse,검증:'원문 확인'}]),
+    part('ECR-008','서버','연계 서버',[{항목:'수량',값:'#1, #2',근거:'행정망 정보연계 #1, #2로 통합 구성',검증:'원문 확인'}]),
+    part('ECR-008','서버','WEB 서버',[fact('수량','2식'),fact('CPU','2.4GHz 8core')]),
+  ],{verifiedOnly:true});
+  assert.deepEqual(result.장비요약.map(d=>d.명칭).sort(),['WEB 서버','디스크어레이']);
+  assert.ok(result.불확실.some(n=>n.includes('기존 장비를 활용')));
+  assert.ok(result.불확실.some(n=>n.includes('세는 수가 없어')));
+});
+
+test('복원한 표 칸의 머리글대로 항목을 싣고 기존 사양 칸의 값은 싣지 않는다',()=>{
+  // 실문서: 모델이 메모리 칸의 "64이상"을 CPU에, 디스크 칸의 "1TB"를 메모리에 붙였다.
+  const source='요구사항 고유번호 ECR-015\n업무명: 개발서버 | CPU (tpmC): 1,200,000 이상 | MEM (GB): 64이상 | Disk: 1TB | 서버 수량: 1\n'
+    +'구분: 증설 | 서버명: 중계서버 | 기존 MEM: 8GB | 증설 MEM: 16GB';
+  const at=(항목,값,근거)=>({항목,값,근거,검증:'원문 확인'});
+  const [result]=consolidate([
+    part('ECR-015','서버','개발서버',[at('CPU','64이상','MEM (GB): 64이상'),at('메모리','1TB','Disk: 1TB'),at('CPU','1,200,000 이상','CPU (tpmC): 1,200,000 이상'),at('수량','1','서버 수량: 1')],{source}),
+    part('ECR-015','서버','중계서버',[at('메모리','8GB','기존 MEM: 8GB'),at('메모리','16GB','증설 MEM: 16GB')],{source}),
+  ]);
+  const facts=name=>result.장비요약.find(d=>d.명칭===name).규격.map(f=>`${f.항목}:${f.값}`).sort();
+  // 머리글 괄호의 단위는 값 뒤에 붙인다.
+  assert.deepEqual(facts('개발서버'),['CPU:1,200,000 이상 (tpmC)','로컬 디스크:1TB','메모리:64이상 (GB)','수량:1']);
+  assert.deepEqual(facts('중계서버'),['메모리:16GB']);
+  assert.ok(result.불확실.some(n=>n.includes('기존 사양')));
+});
+
+test('복원한 행의 비고가 기존 장비라고 적은 장비, 이름이 S/W로 끝나는 항목, OS 수량 행은 장비로 내보내지 않는다',()=>{
+  const source='요구사항번호 ECR-004\n구분: 관리자서버 | 수량: 3 | 규격: ․ CPU : 2.8GHz, 4~8Core | 비고: 가상화서버 (자체보유) ※ 상수도사업본부 기존 장비 사용\n구분: GPU서버 | 수량: 2 | 규격: ․ CPU : 3.0GHz, 16Core 이상 | 비고: 신규도입';
+  const [result]=consolidate([
+    part('ECR-004','서버','관리자서버',[fact('CPU','2.8GHz, 4~8Core')],{source}),
+    part('ECR-004','서버','GPU서버',[fact('CPU','3.0GHz, 16Core 이상')],{source}),
+    part('ECR-004','서버','통화품질측정 S/W',[fact('CPU','2.4GHz 8core')],{source}),
+    part('ECR-004','서버','OS 2 식',[fact('수량','2 식')],{source}),
+  ]);
+  assert.deepEqual(result.장비요약.map(d=>d.명칭),['GPU서버']);
+  assert.ok(result.불확실.some(n=>n.includes('관리자서버')&&n.includes('기존 장비')));
+});

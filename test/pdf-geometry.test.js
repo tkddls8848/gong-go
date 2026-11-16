@@ -143,3 +143,62 @@ test('곡선·대각선·채움은 표 경계로 추측하지 않는다',()=>{
     [22,[[0,0,0,1,20,0]],[0,0,20,0]]]};
   assert.deepEqual(segments(list,OPS),[{axis:'h',at:10,start:20,end:30}]);
 });
+// 선으로 그린 자원 표: 열 머리 CPU·MEM·Disk, 칸 안 두 줄 값, 칸마다 따로 그린 머리 아래 겹선.
+function gridFixture() {
+  const item=(str,x,y,width=str.length*3)=>({str,x:x-width/2,y,width,height:4});
+  const columns=[0,40,80,110,140,170],centers=[20,60,95,125,155];
+  const items=[item('업무명',20,10),item('CPU',60,7),item('(tpmC)',60,12),item('MEM',95,7),item('(GB)',95,12),item('Disk',125,10),item('수량',155,10),
+    // 가운데 줄에 다른 칸의 값이 있고 CPU 칸만 두 줄이다. 평문으로 읽으면 "개발서버 64이상 1TB 1"이 되어 값이 한 열씩 밀린다.
+    item('1,200,000',60,22),item('개발서버',20,25),item('64이상',95,25),item('1TB',125,25),item('1',155,25),item('이상',60,28),
+    item('5,000,000',60,37),item('챗봇/',20,37),item('128이상',95,40),item('1.6TB',125,40),item('1',155,40),item('챗봇관리서버',20,43),item('이상',60,43)];
+  const lines=[...[0,30,45].map(at=>({axis:'h',at,start:0,end:170})),
+    // 머리 아래 선은 칸마다 따로, 0.7 간격 겹선으로 그린다.
+    ...[15,15.7].flatMap(at=>columns.slice(0,-1).map((start,c)=>({axis:'h',at,start,end:columns[c+1]}))),
+    ...columns.slice(1,-1).map(at=>({axis:'v',at,start:0,end:45}))];
+  return {items,lines,item,centers};
+}
+test('선으로 그린 자원 표는 두 줄짜리 칸을 제 열에 묶어 행마다 "머리글: 값"으로 복원한다',()=>{
+  const {tables}=require('../public/pdf-geometry.js'),{pageText}=require('../public/pdf-text.js');
+  const {items,lines}=gridFixture();
+  const [table]=tables(items,lines);
+  assert.deepEqual(table.labels,['업무명','CPU (tpmC)','MEM (GB)','Disk','수량']);
+  assert.deepEqual(table.rows,[['개발서버','1,200,000 이상','64이상','1TB','1'],['챗봇/ 챗봇관리서버','5,000,000 이상','128이상','1.6TB','1']]);
+  assert.match(pageText(items,{width:595,height:841,lines}),/^업무명: 개발서버 \| CPU \(tpmC\): 1,200,000 이상 \| MEM \(GB\): 64이상 \| Disk: 1TB \| 수량: 1$/m);
+});
+test('여러 열에 걸친 윗머리는 아래 열마다 붙이고 세로로 합쳐진 이름 칸은 걸친 행마다 싣는다',()=>{
+  const {tables}=require('../public/pdf-geometry.js');
+  const item=(str,x,y,width=str.length*3)=>({str,x:x-width/2,y,width,height:4});
+  const items=[item('구분',15,10),item('기존',60,6),item('증설',120,6),item('CPU',45,13),item('MEM',75,13),item('CPU',105,13),item('MEM',135,13),
+    item('증설',15,32),item('4 core',45,25),item('8GB',75,25),item('4 Core',105,25),item('16GB',135,25),
+    item('12 core',45,40),item('16GB',75,40),item('-',105,40,2),item('32GB',135,40)];
+  const lines=[...[0,16,46].map(at=>({axis:'h',at,start:0,end:150})),{axis:'h',at:8,start:30,end:150},{axis:'h',at:31,start:30,end:150},
+    ...[30,90].map(at=>({axis:'v',at,start:0,end:46})),...[60,120].map(at=>({axis:'v',at,start:8,end:46}))];
+  const [table]=tables(items,lines);
+  assert.deepEqual(table.labels,['구분','기존 CPU','기존 MEM','증설 CPU','증설 MEM']);
+  assert.deepEqual(table.rows,[['증설','4 core','8GB','4 Core','16GB'],['증설','12 core','16GB','-','32GB']]);
+});
+test('수량이 규격 앞에 오는 구분·수량·규격 표를 행으로 복원하고 열 구성이 바뀌는 주석 행은 표 밖에 둔다',()=>{
+  const {tables}=require('../public/pdf-geometry.js');
+  const item=(str,x,y,width=str.length*3)=>({str,x:x-width/2,y,width,height:4});
+  const items=[item('구분',15,10),item('수량',40,10),item('규격',100,10),item('비고',165,10),
+    item('․ CPU : 3.8GHz, 16Core 이상',100,22,80),item('SDD서버',15,26),item('2',40,26,2),item('신규도입',165,26),item('․ 메모리 : 128GB 이상',100,30,60),
+    item('스위치',15,42),item('1',40,42,2),item('․ 백플레인 : 128Gbps',100,42,60),item('(조건부)',165,42),
+    item('※ 장비의 사양 및 수량은 조정하여 제안할 수 있음',90,56,150)];
+  const lines=[...[0,16,34,50,62].map(at=>({axis:'h',at,start:0,end:180})),...[30,50,150].map(at=>({axis:'v',at,start:0,end:50}))];
+  const [table]=tables(items,lines);
+  assert.equal(table.str,'구분: SDD서버 | 수량: 2 | 규격: ․ CPU : 3.8GHz, 16Core 이상 ․ 메모리 : 128GB 이상 | 비고: 신규도입\n구분: 스위치 | 수량: 1 | 규격: ․ 백플레인 : 128Gbps | 비고: (조건부)');
+  assert.equal(table.members.some(i=>i.str.startsWith('※')),false);
+  // 수량 칸이 수가 아니면 손대지 않는다.
+  assert.deepEqual(tables(items.map(i=>i.str==='2'?{...i,str:'별도 협의'}:i),lines),[]);
+});
+test('기존 장비 현황 표, 머리글이 값인 표, 글이 열을 넘는 표, 이름 칸이 빈 표는 복원하지 않는다',()=>{
+  const {tables}=require('../public/pdf-geometry.js');
+  const {items,lines,item}=gridFixture();
+  assert.equal(tables(items,lines).length,1);
+  assert.deepEqual(tables(items.map(i=>i.str==='수량'?{...i,str:'도입년도'}:i),lines),[]);
+  assert.deepEqual(tables(items.map(i=>i.str==='MEM'?{...i,str:'32GB 이상 제공'}:i),lines),[]);
+  assert.deepEqual(tables([...items,item('열을 넘는 긴 글',110,25,60)],lines),[]);
+  assert.deepEqual(tables(items.filter(i=>i.str!=='개발서버'),lines),[]);
+  // 자원 머리(CPU·MEM·Disk)가 하나뿐이면 자원 표가 아니다.
+  assert.deepEqual(tables(items.map(i=>['MEM','Disk'].includes(i.str)?{...i,str:'비고'+i.str.length}:i),lines),[]);
+});

@@ -1,6 +1,6 @@
 // 모델에 보낼 구간을 만든다. 줄을 통째로 싣는다 — 글자 수로 자르면 줄과 숫자가 중간에서 끊겨,
 // 다음 구간이 "6GB 이상"처럼 앞자리가 잘린 값으로 시작한다. 긴 줄은 공백 단위 조각으로 다룬다.
-import { sourceLines, hasRequirementId, NAME_MARK } from "./ecr-source.js";
+import { sourceLines, hasRequirementId, requirementRanges, NAME_MARK } from "./ecr-source.js";
 import {gradeGroups} from './ecr-grade-groups.js';
 
 // 표 머리는 번호 줄에서 명칭 줄까지다. 이어지는 구간에도 실어야 모델이 어느 표의 어느 장비를
@@ -100,6 +100,13 @@ export function sliceSection(section, { size, overlap, head: repeatHead }) {
 export function splitHalves(source) {
   const pieces = sourceLines(source);
   if (pieces.length < 2) return null;
+  // 두 표를 묶은 구간은 표 사이에서 가른다. 가운데 줄에서 가르면 뒤쪽 절반이 앞 표의 머리와 뒤 표의 본문을
+  // 함께 갖게 되어, 모델이 뒤 표의 규격을 앞 표의 번호로 돌려준다.
+  const tables = requirementRanges(source).filter((range, index, all) => range.start > 0 && range.id !== all[0].id);
+  if (tables.length) {
+    const cut = tables.reduce((best, range) => (Math.abs(range.start - source.length / 2) < Math.abs(best.start - source.length / 2) ? range : best)).start;
+    return [source.slice(0, cut), source.slice(cut)];
+  }
   const half = source.length / 2;
   let middle = 0;
   for (let length = 0; middle < pieces.length - 1 && length < half;) length += pieces[middle++].length;

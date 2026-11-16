@@ -141,6 +141,16 @@ export function relabelFact(kind, fact, source = '') {
   // OS를 주어로 삼은 단독 조건을 CPU·메모리 등 여러 하드웨어 항목에 복제한 응답.
   // 하드웨어 조건도 함께 언급한 인용은 단일 항목으로 재분류하지 않는다.
   const quote=String(fact?.근거||'').trim();
+  // 도입구분은 신규·교체·증설 같은 말이다. 모델이 규격 줄을 통째로 도입구분에 넣으면(L3·L7 스위치 표에서 실제로 그랬다)
+  // 값의 내용으로 항목을 다시 정한다. 정할 수 없으면 기타 조건이다.
+  // 수량 줄("○ 도입 수량 : 공공망 6식, 금융망 6식")은 아래의 수량 교정이 맡는다.
+  if(fact.항목==='도입구분'&&value.trim()&&!/신규|도입|교체|증설|임차|렌탈|재사용|재활용|구매|이관|추가|대체|조건부|기존/.test(value)
+    &&!/수\s*량/.test(first)&&!/\d\s*(?:식|대|EA|sets?|세트)(?![가-힣A-Za-z])/i.test(value)) {
+    const field=kind==='스위치'&&/스위칭\s*용량|switch(?:ing)?\s*capacity|백플레인|\d\s*Tbps/i.test(value+' '+quote)&&/\d\s*[TGM]bps/i.test(value)?'스위칭 용량'
+      :kind==='스위치'&&/\d\s*(?:[TGMB]pps|[TGM]bps)|처리량|동시\s*세션|CPS|RPS/i.test(value)?'성능'
+      :/\d\s*(?:ports?|포트)|SFP|GBIC|Base-?T/i.test(value)?(kind==='스위치'?'포트 수':'NIC/HBA'):'기타 조건';
+    return {...fact,항목:field,모델항목:fact.항목};
+  }
   if(fact.항목==='수량'&&/^(?:신규|증설|교체|재사용|재활용)$/.test(value.trim()))
     return {...fact,항목:'도입구분',모델항목:fact.항목};
   // '제공'은 개수가 아니며, 발주기관 제공 여부는 주체까지 보존해야 한다.
