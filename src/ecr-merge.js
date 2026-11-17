@@ -107,6 +107,11 @@ const HCI_HOST = /HCI|가상화/i;
 NOT_TARGET.push({ reason: "규격 문장", test: /(?:지원|제공|가능|포함|보장|제출|구성|하여야\s*함|할\s*것)\s*\)?$/, keep: /(?:서버|스토리지|스위치|server|storage|switch)\s*\)?$/i });
 // 괄호로 감싼 부품 번호: "(SFP-10G-SR-S=)", "(C9K-PWR-650WAC-R/2)". 본체 행 아래의 GBIC·전원·라이선스 품번이다.
 NOT_TARGET.push({ reason: "부품 번호", test: /^\([A-Z0-9][A-Z0-9\-=\/.+]*[\-=\/][A-Z0-9\-=\/.+]*\)$/, keep: /^$/ });
+// 괄호 없이 낸 전원 품번("C9K-PWR-650WAC-R/2")도 본체에 딸린 부품이다.
+NOT_TARGET.push({ reason: "부품 번호", test: /^[A-Z0-9]+-PWR-[A-Z0-9\-=\/.+]+$/i, keep: /^$/ });
+// 제조사 유지보수 계약 품목("SNTC-8X5XNBD Catalyst 9500 24-port …", "CON-SNT-C95024YA")은 장비가 아니다.
+// 이름에 본체 모델과 포트 수가 들어 있어 스위치로 세면 본체 대신 계약 품목이 그 번호의 장비가 된다.
+NOT_TARGET.push({ reason: "유지보수 품목", test: /^\(?\s*(?:SNTC-|CON-)[A-Z0-9]/i, keep: /^$/ });
 const notTarget = (device) => NOT_TARGET.find(({ test, keep }) => test.test(device.명칭.trim()) && !keep.test(device.명칭))?.reason || "";
 
 // 설치 장소나 망 이름만 덧붙인 같은 장비("x86 서버"와 "x86 서버 (국방망)")는 한 장비다.

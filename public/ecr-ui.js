@@ -162,7 +162,7 @@
         if (data && model.currentRow === row && run === state.ecrRun) {
           lastUpload = { row, blob: upload, name: uploadName, format };
           showAnalysis(data);
-          // 큰 문서는 실행마다 모델이 빠뜨리는 요구사항이 다르다. 빠진 번호의 표만 번호를 못박아 한 번 더 묻는다.
+          // 큰 문서는 실행마다 모델이 빠뜨리는 요구사항이 다르다. 빠진 번호와 핵심 규격이 빈 번호의 표만 번호를 못박아 한 번 더 묻는다.
           // 그 표만 다시 읽으므로 전체 분석보다 훨씬 적게 든다(노후 인프라 144쪽: 9개 번호, 300 뉴런).
           const plan = EcrRetry?.retryPlan(data);
           if (plan) {
@@ -187,8 +187,9 @@
         if (upload.format) params.format = upload.format;
         const data = await runJob(params, upload.blob, { row, run, progress, onStep() {}, label: () => "누락 번호 재분석" });
         if (!data || model.currentRow !== row || run !== state.ecrRun || model.currentAnalysis !== previous) return null;
-        showAnalysis(EquipmentSummary.validate(EcrRetry.mergeRetry(previous, data, plan.focus)));
-        return { found: data.retry?.recovered?.length || 0 };
+        const merged = EcrRetry.mergeRetry(previous, data, plan.focus, plan.thin);
+        showAnalysis(EquipmentSummary.validate(merged));
+        return { found: merged.retry.recovered.length };
       } catch (error) { return { error: error.message }; }
     }
     async function retryMissing() {

@@ -41,6 +41,27 @@ test('스위칭 용량의 MAC·SFP 오분류를 수정하고 실제 대역폭은
     assert.equal(result.항목,field);assert.equal(result.값,value);
   }
 });
+test('스위치의 기타 조건에 넘어온 성능 지표와 포트 개수를 제 항목으로 옮긴다',()=>{
+  for(const [field,value,expected] of [
+    ['기타 조건','L7 처리량 : 125Gbps 이상 지원','성능'],['기타 조건','동시세션수 : 145,000,000 이상 지원','성능'],
+    ['기타 조건','L4 Connetions(CPS) : 1,900,000 이상 지원','성능'],['기타 조건','L7 HTTP transaction(RPS) : 4,500,000 이상 지원','성능'],
+    ['기타 조건','10G SFP+ 16포트 이상 제공 (10G GBIC 포함)','포트 수'],
+    // 숫자 없는 기능 설명, 유지보수 품목, 성능 이름 없는 대역폭, 포트 구성을 담은 제품 종류는 그대로 둔다.
+    ['종류','Catalyst 9500 24x1/10/25G and 4-port 40/100G','종류'],
+    ['기타 조건','관리 포트 및 콘솔포트를 제공하여야 함','기타 조건'],['기타 조건','SNTC-8X5XNBD Catalyst 9500 24-port 25/100G o','기타 조건'],
+    ['기타 조건','주메모리 : 256Gbps 이상 지원','기타 조건'],['기타 조건','19인치 표준랙 마운트 가능 타입 지원','기타 조건'],
+    ['종류','L3 스위치','종류'],
+  ]) {
+    const result=relabelFact('스위치',{항목:field,값:value,근거:value});
+    assert.equal(result.항목,expected,value);assert.equal(result.값,value);
+  }
+  // 전원 공급 장치 줄은 전원이다. 포트가 함께 적힌 줄은 두고 본다.
+  assert.equal(relabelFact('스위치',{항목:'포트 수',값:'650W AC config 4 Power Supply front to backco',근거:'- 650W AC config 4 Power Supply front to backco'}).항목,'전원');
+  assert.equal(relabelFact('스위치',{항목:'기타 조건',값:'이중화 전원 공급 장치 제공',근거:'이중화 전원 공급 장치 제공'}).항목,'전원');
+  assert.equal(relabelFact('스위치',{항목:'포트 수',값:'48포트, Power Supply 2개',근거:'48포트, Power Supply 2개'}).항목,'포트 수');
+  // 서버의 기타 조건은 옮기지 않는다.
+  assert.equal(relabelFact('서버',{항목:'기타 조건',값:'10G 4포트',근거:'10G 4포트'}).항목,'기타 조건');
+});
 test('응용 소프트웨어와 CPU 소켓 오분류를 고치되 실제 OS와 프로토콜은 유지',()=>{
   for(const [field,value,expected] of [
     ['OS','Oracle 19C','기타 조건'],['OS','Oracle RAC','기타 조건'],

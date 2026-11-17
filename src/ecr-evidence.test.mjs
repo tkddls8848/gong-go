@@ -187,6 +187,22 @@ test('값 하나뿐인 짧은 인용은 줄 표식이 가리킨 줄이 그 글�
     '요구사항 번호 ECR-004\n형상관리시스템 업그레이드\n1식','rfp.pdf',0);
   assert.notEqual(sw.장비요약[0]?.규격[0]?.검증,'원문 확인');
 });
+test('인용 없이 줄 표식만 준 규격은 값이 그 줄에 있을 때만 그 줄을 근거로 삼는다',()=>{
+  // 실문서: 노후 인프라 IBM S1024 표를 다시 물었더니 "evidence": "L6"만 와서 CPU·메모리가 모두 빠졌다.
+  const source='고유번호 ECR-B-009\n요구사항 명칭 분석 개발서버 자원 증설\n구분 AS-IS TO-BE\nCore 4Core 8Core(4Core↑)\nM/M 256GB 448GB(192GB↑)\nL6 스위치 연동\n수량 1식';
+  const facts=[
+    {field:'CPU',value:'8Core(4Core↑)',evidence:'L4'},{field:'메모리',value:'256GB',evidence:'[L5]'},
+    // 값이 가리킨 줄에 없으면 확인하지 않는다. "L6"은 원문의 "L6 스위치"처럼 글로도 있다.
+    {field:'메모리',value:'512GB',evidence:'L5'},{field:'성능',value:'연동',evidence:'L6'},{field:'메모리',value:'448GB',evidence:'L99'},
+    // 수량은 줄 표식만으로 장비의 수량인지 알 수 없다.
+    {field:'수량',value:'1식',evidence:'L7'},
+  ];
+  const [item]=parseResult({response:{items:[{id:'ECR-B-009',kind:'서버',name:'분석 개발서버',facts}]}},source,'rfp.pdf',0);
+  assert.deepEqual(item.장비요약[0].규격.map(x=>[x.항목,x.값,x.근거,x.검증]),[
+    ['CPU','8Core(4Core↑)','Core 4Core 8Core(4Core↑)','원문 확인'],['메모리','256GB','M/M 256GB 448GB(192GB↑)','원문 확인'],
+    ['메모리','512GB','L5','확인 필요'],['성능','연동','L6 스위치 연동','원문 확인'],['메모리','448GB','L99','확인 필요'],['수량','1식','L7','확인 필요'],
+  ]);
+});
 test('두 요구사항이 든 구간에서 번호를 비우거나 옆 표 번호를 적으면 인용이 모두 든 요구사항으로 바로잡는다',()=>{
   // 실문서: 모델이 두 스위치의 규격을 모두 맞게 읽고 번호만 비워, 전부 "다른 요구사항의 근거"로 빠지고 장비가 사라졌다.
   const source=['고유번호 ECR-B-001-05','정의 포털망 DMZ L3 스위치 교체 요구사항','○ 도입 수량 : 4식','- 스위칭 용량 : 최대 9.6Tbps 이상 지원','· 1/10G SFP+ 288포트 이상 제공','- 제어부 및 전원 이중화 제공',

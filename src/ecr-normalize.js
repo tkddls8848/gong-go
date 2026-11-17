@@ -151,6 +151,18 @@ export function relabelFact(kind, fact, source = '') {
       :/\d\s*(?:ports?|포트)|SFP|GBIC|Base-?T/i.test(value)?(kind==='스위치'?'포트 수':'NIC/HBA'):'기타 조건';
     return {...fact,항목:field,모델항목:fact.항목};
   }
+  // 스위치 규격 줄을 기타 조건으로 넘기는 응답이 실행마다 갈린다(노후 인프라 L7 스위치의 "L7 처리량 : 125Gbps 이상",
+  // "10G SFP+ 16포트 이상"). 성능 지표 이름이나 포트 개수가 값에 적혀 있을 때만 옮긴다.
+  // 종류는 옮기지 않는다: "Catalyst 9500 24x1/10/25G and 4-port 40/100G"는 포트 구성이기도 하지만 제품 종류라 옮기면 종류를 잃는다.
+  // 유지보수 품목 줄("SNTC-8X5XNBD Catalyst 9500 24-port …")은 포트 규격이 아니다.
+  if(kind==='스위치'&&fact.항목==='기타 조건'&&/\d/.test(value)&&!/SNTC|CON-|NBD|support|유지\s*보수|\d\s*Years?\b/i.test(value)) {
+    const field=/처리량|throughput|동시\s*세션|세션\s*수|\bCPS\b|\bRPS\b|\bTPS\b|\d\s*[KMG]?pps\b/i.test(value)?'성능'
+      :/\d\s*-?\s*(?:ports?\b|포트)|\d\s*[xX×]\s*\d+(?:\/\d+)*\s*G/i.test(value)?'포트 수':null;
+    if(field) return {...fact,항목:field,모델항목:fact.항목};
+  }
+  // 전원 공급 장치 줄은 포트·성능이 아니라 전원이다(노후 인프라 L3 스위치의 "650W AC config 4 Power Supply"를 포트 수로 냈다).
+  if(['포트 수','포트 속도','스위칭 용량','성능','기타 조건'].includes(fact.항목)&&/power\s*suppl|전원\s*공급|파워\s*서플라이/i.test(value)&&!/ports?\b|포트/i.test(value))
+    return {...fact,항목:'전원',모델항목:fact.항목};
   if(fact.항목==='수량'&&/^(?:신규|증설|교체|재사용|재활용)$/.test(value.trim()))
     return {...fact,항목:'도입구분',모델항목:fact.항목};
   // '제공'은 개수가 아니며, 발주기관 제공 여부는 주체까지 보존해야 한다.

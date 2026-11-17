@@ -266,6 +266,15 @@ test('규격 문장과 괄호로 감싼 부품 번호는 장비로 내보내지 
   ]);
   assert.deepEqual(cisco.장비요약.map(d=>d.명칭),['C9500-24Y4C-A']);
   assert.ok(cisco.불확실.some(n=>n.includes('부품 번호')));
+  // 실문서: 같은 표를 다시 물었더니 괄호 없는 전원 품번과 유지보수 계약 품목을 장비로 냈다.
+  const [again]=consolidate([
+    part('ECR-B-002','스위치','C9500-24Y4C-A',[fact('수량','4대'),fact('포트 수','24x1/10/25G and 4-port 40/100G')]),
+    part('ECR-B-002','스위치','C9K-PWR-650WAC-R/2',[fact('전원','650W AC config 4 Power Supply')]),
+    part('ECR-B-002','스위치','SNTC-8X5XNBD Catalyst 9500 24-port 25/100G o',[fact('포트 수','24-port 25/100G')]),
+    part('ECR-B-002','스위치','CON-SNT-C95024YA',[fact('기타 조건','8X5XNBD')]),
+  ]);
+  assert.deepEqual(again.장비요약.map(d=>d.명칭),['C9500-24Y4C-A']);
+  assert.ok(again.불확실.some(n=>n.includes('유지보수 품목')));
   const [ddos]=consolidate([
     part('ECR-B-011-16','스위치','(IPv6 비정상 프로토콜 방어 기능 제공)',[fact('기타 조건','IPv6 비정상 프로토콜 방어 기능 제공')]),
     part('ECR-B-011-16','스위치','L4 스위치',[fact('포트 수','10G 8 port')]),

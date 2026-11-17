@@ -16,7 +16,7 @@ export const ECR_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 // 작업 키에 들어가는 파이프라인 판. 표 선별이나 구간 나누기를 고치면 반드시 올린다.
 // 올리지 않으면 같은 파일을 다시 올려도 예전 방식으로 자른 구간을 그대로 다시 쓴다 —
 // 고친 것이 반영되지 않고 고쳐진 것처럼 보인다.
-const VERSION = "cloud-v69-번호복원·자원표행복원·표사이분할";
+const VERSION = "cloud-v70-줄표식인용·스위치항목교정";
 const MAX_BYTES = 8 * 1024 * 1024;
 // 한 요청에서 다루는 텍스트와 병합 작업량을 제한한다.
 const MAX_CHARS = 120000;
@@ -251,7 +251,13 @@ export function parseResult(result, source, filename, index) {
       // 값 하나뿐인 짧은 인용("[L19] 18TB")은 조각 맞추기로는 위치를 정할 수 없다.
       // 표식이 가리킨 실제 줄이 그 글로 시작할 때만 표식을 걷어낸다(cloud-v67까지의 규칙).
       // 수량은 뺀다: "[L12] 1식"만으로는 SW 품목의 수량을 서버 수량으로 붙인 것과 구별할 수 없다.
-      if (fact.field !== '수량' && !includesEvidence(source,quote)) {
+      // 인용 없이 줄 표식만 준 응답("evidence": "L6")은 그 줄을 근거로 삼는다. 값이 그 줄에 그대로 있을 때만이다.
+      // 노후 인프라 IBM S1024 표에서 같은 표를 다시 물었을 때 이렇게 와서 CPU·메모리가 모두 빠졌다.
+      // "L7"은 "L7 스위치"처럼 원문에도 있으므로 원문 포함 여부와 상관없이 먼저 본다. 수량은 아래와 같은 이유로 뺀다.
+      const bare = fact.field !== '수량' && /^\s*\[?L(\d+)\]?\s*$/.exec(fact.evidence);
+      const marked = bare ? String(lines[Number(bare[1]) - 1] || '').trim() : '';
+      if (marked && valueInQuote(marked, groundValue(marked, fact.value))) quote = marked;
+      else if (fact.field !== '수량' && !includesEvidence(source,quote)) {
         const marker = /^\s*(?:\[L(\d+)\]\s*|(\d+)[.)]\s+)(.+)$/s.exec(fact.evidence);
         const line = marker ? Number(marker[1] || marker[2]) : 0;
         if (line >= 1 && line <= lines.length && norm(lines.slice(line-1,line+5).join('')).startsWith(norm(marker[3]))) quote = marker[3].trim();
