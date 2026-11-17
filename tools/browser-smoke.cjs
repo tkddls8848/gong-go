@@ -171,15 +171,15 @@ async function main() {
         await page.waitForFunction(() => !document.querySelector("#ecr-analyze-btn").disabled);
         assert.equal(stepCalls, 1);
         assert.match(await page.locator("#ecr-progress").textContent(), /추가 분석을 중지/);
+        const before = uploads.length;
         await page.locator("#ecr-analyze-btn").click();
+        // 누락 번호 재분석: 분석이 끝나면 같은 본문으로 빠진 번호만 한 번 자동으로 다시 묻고, 찾지 못하면 다시 권하지 않는다.
         await page.waitForFunction(() => document.querySelector("#ecr-progress").textContent.includes("분석이 완료"));
+        assert.match(await page.locator("#ecr-progress").textContent(), /번호 1개를 다시 물어 0개를 찾았습니다/);
         assert.match(await page.locator("#ecr-content").textContent(), /미추출 1개/);
         assert.equal(g2bRequests, 0, "직접 고른 파일이 있으면 첨부를 받지 않는다");
-        // 누락 번호 재분석: 같은 본문으로 대상 번호만 보내고, 찾지 못하면 다시 권하지 않는다.
-        assert.equal(await page.locator("#ecr-retry-btn").innerText(), "누락 번호 다시 분석 (1개)");
-        stepCalls = 2;
-        await page.locator("#ecr-retry-btn").click();
-        await page.waitForFunction(() => document.querySelector("#ecr-progress").textContent.includes("다시 분석해도 규격을 찾지 못했습니다"));
+        assert.equal(uploads.length, before + 2);
+        assert.equal(uploads.at(-2).focus, undefined);
         assert.equal(uploads.at(-1).focus, "ECR-001");
         assert.equal(await page.locator("#ecr-retry-btn").isHidden(), true);
         // 파일을 비우면 고른 공고 첨부를 나라장터에서 받아 같은 분석 경로에 넣는다.
@@ -187,8 +187,11 @@ async function main() {
         await page.locator("#ecr-analyze-btn").click();
         await page.waitForFunction(() => document.querySelector("#ecr-progress").textContent.includes("분석이 완료"));
         assert.equal(g2bRequests, 1);
-        assert.equal(uploads.at(-1).name, "사업 수행 계획.pdf");
-        assert.equal(uploads.at(-1).format, 'text');
+        for (const upload of uploads.slice(-2)) {
+          assert.equal(upload.name, "사업 수행 계획.pdf");
+          assert.equal(upload.format, 'text');
+        }
+        assert.equal(uploads.at(-1).focus, "ECR-001");
         await page.locator("#ai-lock-btn").click();
         await page.waitForFunction(() => document.querySelector("#ai-access-status").textContent.includes("전용 비밀번호"));
         assert.equal(await page.locator("#ecr-analyze-btn").isDisabled(), true);

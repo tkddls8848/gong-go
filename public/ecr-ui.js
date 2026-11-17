@@ -162,12 +162,35 @@
         if (data && model.currentRow === row && run === state.ecrRun) {
           lastUpload = { row, blob: upload, name: uploadName, format };
           showAnalysis(data);
-          progress(EcrRetry?.retryPlan(data) ? "분석이 완료되었습니다. 규격을 찾지 못한 번호는 ‘누락 번호 다시 분석’으로 그 표만 다시 물을 수 있습니다." : "분석이 완료되었습니다. 근거와 원문을 확인하세요.");
+          // 큰 문서는 실행마다 모델이 빠뜨리는 요구사항이 다르다. 빠진 번호의 표만 번호를 못박아 한 번 더 묻는다.
+          // 그 표만 다시 읽으므로 전체 분석보다 훨씬 적게 든다(노후 인프라 144쪽: 9개 번호, 300 뉴런).
+          const plan = EcrRetry?.retryPlan(data);
+          if (plan) {
+            const outcome = await retryOnce({ row, run, previous: data, upload: lastUpload, plan, progress });
+            if (outcome === null) return;
+            if (outcome.error) { progress(`분석이 완료되었습니다. 빠진 번호를 다시 묻다가 실패했습니다: ${outcome.error} ‘누락 번호 다시 분석’으로 다시 시도할 수 있습니다.`); return; }
+            const left = EcrRetry.retryPlan(model.currentAnalysis);
+            progress(`분석이 완료되었습니다. 규격을 찾지 못한 번호 ${plan.focus.length}개를 다시 물어 ${outcome.found}개를 찾았습니다.${left || outcome.found < plan.focus.length ? " 나머지는 원문을 직접 확인하세요." : " 근거와 원문을 확인하세요."}`);
+            return;
+          }
+          progress("분석이 완료되었습니다. 근거와 원문을 확인하세요.");
         }
       } catch (error) { progress(`${error.message}${completedParts > 0 ? ` 완료된 ${completedParts}개 구간은 저장되었습니다. 같은 파일로 다시 시작할 수 있습니다.` : ""}`); }
       finally { finish(); }
     }
-    // 누락 번호의 표만 대상 번호를 못박아 다시 묻는다. 끝나면 직전 결과에 합친다.
+    // 누락 번호의 표만 대상 번호를 못박아 다시 묻고 직전 결과에 합친다. 분석 직후 자동으로 한 번, 그 뒤에는 버튼으로 쓴다.
+    // 중지·공고 이동이면 null, 실패하면 { error }(직전 결과는 그대로), 끝나면 { found }를 돌려준다.
+    async function retryOnce({ row, run, previous, upload, plan, progress }) {
+      try {
+        progress(`규격을 찾지 못한 ${plan.focus.length}개 번호의 표를 다시 분석합니다.`);
+        const params = { action: "upload", notice: numberOf(row), name: upload.name, focus: plan.focus.join(","), matched: plan.matched.join(","), unexpected: plan.unexpected.join(",") };
+        if (upload.format) params.format = upload.format;
+        const data = await runJob(params, upload.blob, { row, run, progress, onStep() {}, label: () => "누락 번호 재분석" });
+        if (!data || model.currentRow !== row || run !== state.ecrRun || model.currentAnalysis !== previous) return null;
+        showAnalysis(EquipmentSummary.validate(EcrRetry.mergeRetry(previous, data, plan.focus)));
+        return { found: data.retry?.recovered?.length || 0 };
+      } catch (error) { return { error: error.message }; }
+    }
     async function retryMissing() {
       if (state.ecrBusy || !state.aiUnlocked) return;
       const row = model.currentRow, previous = model.currentAnalysis, upload = lastUpload;
@@ -177,18 +200,10 @@
       const progress = (message) => { if (model.currentRow === row && run === state.ecrRun) $("#ecr-progress").textContent = message; };
       begin();
       try {
-        progress(`규격을 찾지 못한 ${plan.focus.length}개 번호의 표를 다시 분석합니다.`);
-        const params = { action: "upload", notice: numberOf(row), name: upload.name, focus: plan.focus.join(","), matched: plan.matched.join(","), unexpected: plan.unexpected.join(",") };
-        if (upload.format) params.format = upload.format;
-        const data = await runJob(params, upload.blob, { row, run, progress, onStep() {}, label: () => "누락 번호 재분석" });
-        if (data && model.currentRow === row && run === state.ecrRun && model.currentAnalysis === previous) {
-          const merged = EquipmentSummary.validate(EcrRetry.mergeRetry(previous, data, plan.focus));
-          showAnalysis(merged);
-          const found = data.retry?.recovered?.length || 0;
-          progress(found ? `누락 번호 ${plan.focus.length}개 중 ${found}개의 규격을 찾아 합쳤습니다. 근거와 원문을 확인하세요.` : "다시 분석해도 규격을 찾지 못했습니다. 해당 번호는 원문을 직접 확인하세요.");
-        }
-      } catch (error) { progress(`${error.message} 직전 분석 결과는 그대로 둡니다.`); }
-      finally { finish(); }
+        const outcome = await retryOnce({ row, run, previous, upload, plan, progress });
+        if (outcome?.error) progress(`${outcome.error} 직전 분석 결과는 그대로 둡니다.`);
+        else if (outcome) progress(outcome.found ? `누락 번호 ${plan.focus.length}개 중 ${outcome.found}개의 규격을 찾아 합쳤습니다. 근거와 원문을 확인하세요.` : "다시 분석해도 규격을 찾지 못했습니다. 해당 번호는 원문을 직접 확인하세요.");
+      } finally { finish(); }
     }
     return { loadEcr, stopEcrAnalysis, startEcrAnalysis, retryMissing };
   }
