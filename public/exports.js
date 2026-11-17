@@ -18,6 +18,7 @@
       try {
         EquipmentSummary.validate(data);
         const items = data.ecr, check = EquipmentSummary.isVerified(data) ? "" : "원문 확인 필요";
+        const gaps = EquipmentSummary.unextracted(data);
         // 0건 분석도 행을 남긴다. 빈 파일을 '요구사항 없음'으로 오인하지 않게 한다.
         if (!items.length) rows.push(["", "추출된 ECR 없음", "", "추출 결과 없음 — 원문 확인 필요", ""]);
         for (const item of items) {
@@ -30,7 +31,8 @@
             }).join("\n\n")
             : (item.기본규격 || []).map((entry) => `${entry.항목 || entry.구분 || "항목 미기재"}: ${entry.요구사항 || "미기재"}${entry.수량 !== undefined && entry.수량 !== "" ? ` (수량 ${entry.수량})` : ""}`).join("\n");
           const numbers = equipment.flatMap((entry) => entry.규격.map((fact) => [fact.항목, EquipmentSummary.normalized(fact)]).filter(([, text]) => text).map(([field, text]) => `${equipment.length > 1 ? `[${entry.명칭 || entry.종류 || "명칭 확인 필요"}] ` : ""}${field || "항목 확인 필요"}: ${text}`));
-          rows.push([item.id || "", item.명칭 || item.분류 || "", spec, [check, ...(item.불확실 || [])].filter(Boolean).join("\n"), numbers.join("\n")]);
+          const missed = gaps.filter((gap) => gap.id === item.id).map(EquipmentSummary.gapText);
+          rows.push([item.id || "", item.명칭 || item.분류 || "", spec, [check, ...missed, ...(item.불확실 || [])].filter(Boolean).join("\n"), numbers.join("\n")]);
         }
         // 원문에는 있는데 뽑지 못한 번호도 행으로 남겨 빠진 줄을 표에서 바로 보이게 한다.
         for (const id of new Set([...(data.누락 || []), ...(data.coverage?.missingIds || [])])) rows.push([id, "", "", "미추출 — 원문 확인 필요", ""]);
@@ -69,6 +71,8 @@
         }
         // 장비 요약이 없는 구형 항목과 뽑지 못한 번호도 줄로 남긴다. 빠진 줄이 표에서 보여야 한다.
         for (const item of data.ecr) if (!Array.isArray(item.장비요약) || !item.장비요약.length) rows.push(blank(item.id || "", "장비 요약 없음 — 원문 확인 필요").map((cell, index) => (index === 1 ? item.명칭 || "" : cell)));
+        // 원문에 종류와 규격이 함께 나오는데 그 번호에서 그 종류를 못 뽑은 장비도 줄로 남긴다.
+        for (const gap of EquipmentSummary.unextracted(data)) rows.push(blank(gap.id, EquipmentSummary.gapText(gap)).map((cell, index) => (index === 2 ? gap.kind : cell)));
         for (const id of new Set([...(data.누락 || []), ...(data.coverage?.missingIds || [])])) rows.push(blank(id, "미추출 — 원문 확인 필요"));
       } catch (error) { window.alert(`ECR 내보내기 실패: ${error.message}`); return; }
       downloadRows(rows, `gong-go-ecr-devices-${numberOf(row)}`);

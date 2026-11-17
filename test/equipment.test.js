@@ -105,3 +105,34 @@ test("총괄표는 긴 값을 줄이고 저장된 문자열을 그대로 믿지 
   assert.equal(overviewOf({ schemaVersion: 2, ecr: [] }), "", "장비가 없으면 빈 표를 그리지 않는다");
   assert.deepEqual(devices(null), []);
 });
+
+test("원문에 장비 종류와 규격이 함께 나오는데 그 번호에서 그 종류를 못 뽑았으면 짚는다", () => {
+  const { unextracted, isVerified } = require("../public/equipment");
+  const 원문 = [
+    "정의 수진자 자격조회(1망) 서버 교체 관련 세부규격",
+    " 공단 보안정책에 따라 WEB/WAS/DB서버는 분리하여 구성하여야 함",
+    " DB 이중화용 스위치(10G 이상 속도, 24port 이상) 도입",
+    "Core당 L3 4MB 이상",
+    "KVM 스위치 1식",
+  ].join("\n");
+  const data = { schemaVersion: 2, verified: true, 누락: [], coverage: { status: "matched", expectedIds: ["ECR-B-003-02", "ECR-B-011-05", "ECR-B-005-01"], matchedIds: [], missingIds: [] }, ecr: [
+    { id: "ECR-B-003-02", 세부내용_원문: 원문, 장비요약: [{ 종류: "서버", 명칭: "WEB#1", 규격: [spec("CPU", "2 (CORE)")] }] },
+    { id: "ECR-B-011-05", 세부내용_원문: "L3 · 10Gb SFP+ * 4Port 이상 3식", 장비요약: [] },
+    { id: "ECR-B-005-01", 세부내용_원문: "서버 계정관리 3식 2식\n서버보안 3식", 장비요약: [{ 종류: "스토리지", 명칭: "증설", 규격: [] }] },
+    { id: "확인 필요 (3)", 세부내용_원문: "SAN 스위치 32Port 이상", 장비요약: [] },
+    { id: "ECR-X-999", 세부내용_원문: "L4 스위치 2대", 장비요약: [] },
+  ] };
+  const gaps = unextracted(data);
+  assert.deepEqual(gaps.map(({ id, kind, line }) => [id, kind, line]), [
+    ["ECR-B-003-02", "스위치", "DB 이중화용 스위치(10G 이상 속도, 24port 이상) 도입"],
+    ["ECR-B-011-05", "스위치", "L3 · 10Gb SFP+ * 4Port 이상 3식"],
+  ], "L3 캐시·KVM·서버보안 같은 줄과, 번호가 확인되지 않거나 대상 밖인 항목은 짚지 않는다");
+  const output = render(data);
+  assert.match(output, /원문에 있으나 추출되지 않은 장비 2건/);
+  assert.match(output, /추출됐지만 원문에 언급된 장비 종류가 빠진 번호 2개/);
+  assert.equal(isVerified(data), false);
+  const clean = { ...data, ecr: [data.ecr[0]].map((item) => ({ ...item, 장비요약: [...item.장비요약, { 종류: "스위치", 명칭: "DB 이중화용 스위치", 규격: [] }] })) };
+  assert.deepEqual(unextracted(clean), []);
+  assert.ok(!render(clean).includes("원문에 있으나 추출되지 않은 장비"));
+  assert.deepEqual(unextracted({ ...data, coverage: { ...data.coverage, missingIds: ["ECR-B-011-05"] } }).map((gap) => gap.id), ["ECR-B-003-02"], "미추출 번호는 이미 따로 알린다");
+});

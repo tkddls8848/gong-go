@@ -124,3 +124,20 @@ test("장비별 규격표 CSV는 장비 한 종이 한 줄이고 규격 항목�
   assert.equal(JSON.stringify(data), before);
 });
 
+
+test("원문에 종류와 규격이 나오는데 못 뽑은 장비도 두 CSV에 줄과 비고로 남긴다", () => {
+  const data = { schemaVersion: 2, verified: false, ecr: [{ id: "ECR-B-003-02", 명칭: "장비 교체", 불확실: [], 세부내용_원문: "DB 이중화용 스위치(10G 이상 속도, 24port 이상) 도입", 장비요약: [
+    { 종류: "서버", 명칭: "WEB#1", 규격: [{ 항목: "CPU", 값: "2 (CORE)", 근거: "2 (CORE)", 검증: "원문 확인" }] },
+  ] }] };
+  const { rows } = runEquipmentExport(data);
+  const gap = rows.find((row) => row[2] === "스위치");
+  assert.ok(gap, "빠진 종류가 장비 종류 칸에 든 줄이 있어야 한다");
+  assert.equal(gap[0], "ECR-B-003-02");
+  assert.match(gap[rows[0].indexOf("비고")], /원문에 스위치 언급이 있으나 이 번호에서 추출된 스위치가 없습니다 — 원문 확인 필요: "DB 이중화용 스위치/);
+  const captured = { rows: null };
+  createExports({
+    model: { currentRow: { announcementNumber: "R26-7" }, currentAnalysis: data }, numberOf: (item) => item.announcementNumber,
+    downloadRows: (rows) => { captured.rows = rows; }, window: { alert: () => {} }, EquipmentSummary,
+  }).downloadEcr();
+  assert.match(captured.rows[1][3], /원문에 스위치 언급이 있으나/);
+});

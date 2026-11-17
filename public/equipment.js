@@ -53,7 +53,8 @@
       && !(data.누락 || []).length && !(data.verification?.errors || []).length
       && !(data.coverage?.missingIds || []).length
       && (!data.coverage || data.coverage.status === "matched")
-      && data.ecr.every((item) => !(item.불확실 || []).length);
+      && data.ecr.every((item) => !(item.불확실 || []).length)
+      && !unextracted(data).length;
   }
   // HTML 이스케이프는 format.js 하나를 쓴다. index.html에서 format.js가 이 파일보다 늦게 로드되므로 그리는 시점에 찾는다.
   const format = typeof module !== "undefined" && module.exports ? require("./format.js") : null;
@@ -102,6 +103,36 @@
     const rank = (device) => { const at = kinds.indexOf(device.entry.종류); return at < 0 ? kinds.length : at; };
     return list.map((device, index) => ({ device, index })).sort((a, b) => rank(a.device) - rank(b.device) || a.index - b.index).map(({ device }) => device);
   }
+  // 원문 한 줄에 장비 종류와 규격(포트·용량·코어·수량·도입)이 함께 나오는데 그 번호에서 그 종류의
+  // 장비를 하나도 뽑지 못했으면 짚는다. 값을 추측해 채우지 않는다 — 사람이 원문을 직접 볼 자리만 알린다.
+  // 모델이 큰 표의 다른 장비만 뽑고 같은 번호의 스위치 한 줄을 흘리면 카드만으로는 빠진 줄 모른다.
+  const COUNT = /\d\s*(?:대|식)(?![가-힣])/;
+  const MENTION = {
+    서버: { name: /(?:서버|server)(?!\s*(?:보안|접근|인증|계정))/i, spec: [/\d\s*(?:core|코어)|ghz|tpmc|\d\s*gb\b/i, COUNT, /도입/] },
+    스토리지: { name: /스토리지|storage/i, spec: [/\d\s*[tp]b\b/i, COUNT, /도입/] },
+    스위치: { name: /스위치|switch|(?<![A-Za-z0-9])L[2-7](?![A-Za-z0-9])(?!\s*(?:캐시|cache|\d+\s*MB))/i, spec: [/\d\s*(?:ports?|포트)|\d\s*g(?:bps|b)?\b/i, COUNT, /도입/] },
+  };
+  const NOT_DEVICE = /KVM|콘솔|PDU|전원\s*스위치/i;
+  // 번호가 확인되지 않은 항목("확인 필요 (n)")의 원문은 구간 토막이라 다른 번호의 장비 줄까지 담는다.
+  // 그런 항목과 대상 번호 목록 밖의 번호는 짚지 않는다. 미추출 번호는 이미 따로 알린다.
+  function unextracted(data) {
+    const key = (id) => String(id || "").replace(/–/g, "-").replace(/\s/g, "").toUpperCase();
+    const missing = new Set([...(data?.누락 || []), ...(data?.coverage?.missingIds || [])].map(key));
+    const expected = Array.isArray(data?.coverage?.expectedIds) && data.coverage.expectedIds.length ? new Set(data.coverage.expectedIds.map(key)) : null;
+    const items = Array.isArray(data?.ecr) ? data.ecr : [];
+    return items.filter((item) => item.id && !/^확인 필요/.test(item.id) && !missing.has(key(item.id)) && (!expected || expected.has(key(item.id)))).flatMap((item) => {
+      const have = new Set((item.장비요약 || []).map((entry) => entry?.종류));
+      const lines = String(item.세부내용_원문 || "").split("\n").map((line) => line.trim()).filter((line) => line && !NOT_DEVICE.test(line));
+      return kinds.filter((kind) => !have.has(kind))
+        .map((kind) => ({ id: item.id, kind, line: lines.find((line) => MENTION[kind].name.test(line) && MENTION[kind].spec.some((pattern) => pattern.test(line))) }))
+        .filter((gap) => gap.line);
+    });
+  }
+  const gapText = (gap) => `원문에 ${gap.kind} 언급이 있으나 이 번호에서 추출된 ${gap.kind}가 없습니다 — 원문 확인 필요: "${clip(gap.line, 120)}"`;
+  function gapsBlock(gaps) {
+    if (!gaps.length) return "";
+    return `<section class="excluded-specs"><h3>원문에 있으나 추출되지 않은 장비 ${gaps.length}건</h3><ul>${gaps.map((gap) => `<li><strong>${escape(gap.id)}</strong> ${escape(gap.kind)}: “${escape(clip(gap.line, 120))}”</li>`).join("")}</ul><p class="excluded-note">원문 한 줄에 장비 종류와 규격(포트·용량·코어·수량·도입)이 함께 나오지만 이 번호에서 그 종류의 장비를 뽑지 못했습니다. 다른 장비를 설명하는 줄일 수도 있으니 아래 ECR 원문으로 직접 확인하세요.</p></section>`;
+  }
   const oneLine = (facts) => facts.map((fact) => fact.값.trim().replace(/\s*\n\s*/g, " / ")).join(" / ");
   const clip = (text, limit) => (text.length > limit ? `${text.slice(0, limit - 1)}…` : text);
   // 장비를 한 줄씩 늘어놓은 표. 카드를 하나씩 펴 보지 않고도 무엇을 몇 대 사는지 훑을 수 있게 한다.
@@ -127,9 +158,12 @@
     const items = Array.isArray(data.ecr) ? data.ecr : [];
     // 제외 사유는 요약을 못 그리는 구형 결과에서도 보여야 한다. 그래야 app.js가 경고 묶음에서 빼도 안전하다.
     const dropped = droppedBlock(items);
+    const gaps = unextracted(data);
+    const gapIds = new Set(gaps.map((gap) => gap.id)).size;
     const coverage = data.coverage;
+    // 번호 대조는 번호마다 규격 하나만 있어도 추출로 센다. 같은 번호의 다른 장비가 빠진 것은 따로 센다.
     const coverageText = coverage && Array.isArray(coverage.expectedIds) && coverage.expectedIds.length
-      ? `분석 대상 번호 ${coverage.expectedIds.length}개 중 유효 규격 추출 ${(coverage.matchedIds || []).length}개 · 미추출 ${(coverage.missingIds || []).length}개. 번호 대조이며 규격 전체의 완전성을 보증하지 않습니다.`
+      ? `분석 대상 번호 ${coverage.expectedIds.length}개 중 유효 규격 추출 ${(coverage.matchedIds || []).length}개 · 미추출 ${(coverage.missingIds || []).length}개${gapIds ? ` · 추출됐지만 원문에 언급된 장비 종류가 빠진 번호 ${gapIds}개` : ""}. 번호 대조이며 규격 전체의 완전성을 보증하지 않습니다.`
       : "분석 대상 번호의 누락 여부는 확인되지 않았습니다. 추출 0건은 장비 요구사항이 없다는 뜻이 아닙니다.";
     const legacyItems = items.filter((item) => !Array.isArray(item.장비요약));
     const legacyWarning = legacyItems.length ? `<section class="excluded-specs"><h3>장비 요약 형식이 없는 요구사항 ${legacyItems.length}건</h3><p>아래 장비 건수는 요약 가능한 항목만 집계합니다. 다음 항목은 장비 없음으로 판단하지 말고 아래 ECR 상세의 원문·기본규격을 확인하세요.</p><ul>${legacyItems.map((item) => `<li>${escape(item.id || "ID 없음")} · ${escape(item.명칭 || "명칭 없음")}</li>`).join("")}</ul></section>` : "";
@@ -160,9 +194,9 @@
         }).join("")}</tbody></table></div><details><summary>ECR 원문 보기 · ${escape(item.id)}</summary><div class="detail-text">${escape(item.세부내용_원문 || "원문 없음")}</div></details></article>`;
       }).join("")}</section>`;
     });
-    return `<div class="equipment-summaries">${legacyWarning}${countsBlock(groups)}<p class="hint">${escape(coverageText)}</p><p class="hint">원문 표현과 조건을 그대로 표시합니다. 미기재는 추출값이 없다는 뜻이며, 근거 대조는 규격 해석의 정확성을 보증하지 않습니다.</p>${dropped}${(data.verification?.warnings || []).map((warning) => `<p class="warning-text">${escape(warning)}</p>`).join("")}${overviewBlock(data)}${sections.join("")}</div>`;
+    return `<div class="equipment-summaries">${legacyWarning}${countsBlock(groups)}<p class="hint">${escape(coverageText)}</p><p class="hint">원문 표현과 조건을 그대로 표시합니다. 미기재는 추출값이 없다는 뜻이며, 근거 대조는 규격 해석의 정확성을 보증하지 않습니다.</p>${gapsBlock(gaps)}${dropped}${(data.verification?.warnings || []).map((warning) => `<p class="warning-text">${escape(warning)}</p>`).join("")}${overviewBlock(data)}${sections.join("")}</div>`;
   }
-  const api = { render, validate, isVerified, normalized, devices, fields };
+  const api = { render, validate, isVerified, normalized, devices, fields, unextracted, gapText };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.EquipmentSummary = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
