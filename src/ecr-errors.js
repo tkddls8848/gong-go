@@ -21,5 +21,9 @@ export function ecrError(error, stage, reference) {
   else if (error?.ecrPublic) { status = error.status; message = error.message; }
   else if (stage === "budget" && [409, 429].includes(error?.status)) { status = error.status; message = error.message; }
   else if (stage === "convert" && /is not a function/.test(raw)) message = "현재 Worker에서 PDF 변환 기능을 사용할 수 없습니다. Markdown 또는 TXT로 올려 주세요.";
-  return { status, body: { message: `${message} [${label} · ${reference}]`, stage, reference, ...(code ? { code } : {}) }, log: { event: "ecr_failure", stage, reference, code, status } };
+  // 표에 없는 공급자 오류는 원인을 찾을 단서가 없었다. 본문은 남기지 않고, 공급자가 붙인
+  // 번호(맨 앞 "5021:" 또는 "error code: 1031" 꼴)와 오류 종류 이름만 로그에 둔다.
+  const numbered = Number.isInteger(candidate) && candidate > 0 && candidate < 100000 ? candidate : Number(raw.match(/^\s*(\d{4,5}):|\berror code:? ?(\d{3,5})\b/i)?.slice(1).find(Boolean)) || null;
+  const errorName = /^[A-Za-z]{1,40}$/.test(error?.name || "") ? error.name : null;
+  return { status, body: { message: `${message} [${label} · ${reference}]`, stage, reference, ...(code ? { code } : {}) }, log: { event: "ecr_failure", stage, reference, code, status, providerCode: numbered, errorName } };
 }
