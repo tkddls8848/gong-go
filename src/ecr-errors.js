@@ -8,12 +8,14 @@ const codes = {
   5007: [502, "설정된 Cloudflare 모델을 찾을 수 없습니다."],
   3042: [502, "Cloudflare 모델 이름이 올바르지 않습니다."],
   3023: [503, "Cloudflare 계정의 AI 사용이 제한되어 있습니다."],
+  5028: [502, "설정된 Cloudflare 모델의 지원이 종료되었습니다. 운영자에게 알려 주세요."],
+  3046: [504, "Cloudflare 모델 응답 시간이 초과되었습니다. 잠시 후 다시 시도하세요."],
   5035: [403, "모델이 유료 플랜을 요구하여 분석을 중단했습니다. 유료 모델로 전환하지 않습니다."],
 };
 export function ecrError(error, stage, reference) {
   const raw = String(error?.message || "");
   const candidate = Number(error?.code ?? error?.cause?.code);
-  const code = codes[candidate] ? candidate : Number(raw.match(/\b(3036|3040|3007|3008|3006|5007|3042|3023|5035)\b/)?.[1]) || null;
+  const code = codes[candidate] ? candidate : Number(raw.match(/\b(3036|3040|3007|3008|3006|5007|3042|3023|5035|5028|3046)\b/)?.[1]) || null;
   const label = stages[stage] || stages.request;
   let status = 502, message = `${label}에 실패했습니다. 오류 번호를 운영자에게 알려 주세요.`;
   if (stage === "inference" && codes[code]) [status, message] = codes[code];

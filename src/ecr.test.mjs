@@ -149,7 +149,7 @@ test("실제 사용량이 보고되면 예약해 둔 차액을 장부에서 되�
   await runBudgeted(env, ECR_MODEL, { messages: [], max_tokens: 2048 });
   const 장부 = await (await store.get(예산키)).json();
   assert.ok(장부.reserved > 0, "쓴 만큼은 남는다");
-  assert.ok(장부.reserved < 20, `출력 한도로 잡은 예약이 실제 사용량으로 줄어든다(현재 ${장부.reserved})`);
+  assert.ok(장부.reserved < 40, `출력 한도로 잡은 예약이 실제 사용량으로 줄어든다(현재 ${장부.reserved})`);
 });
 
 test("사용량이 없거나 이상하면 예약을 그대로 둔다", async () => {

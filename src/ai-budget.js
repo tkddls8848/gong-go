@@ -1,7 +1,7 @@
 // 이 Worker의 AI 호출은 동일한 UTC 일일 예산을 공유한다. 다른 Worker의 사용량은 포함되지 않는다.
-// 공식 단가(2026-09-22): https://developers.cloudflare.com/workers-ai/platform/pricing/
+// 공식 단가(2026-11-21 확인): https://developers.cloudflare.com/workers-ai/platform/pricing/
 const RATES = {
-  "@cf/qwen/qwen3-30b-a3b-fp8": [4625, 30475],
+  "@cf/openai/gpt-oss-20b": [18182, 27273],
   "@cf/meta/llama-3.3-70b-instruct-fp8-fast": [26668, 204805],
 };
 export const DAILY_NEURONS = 8000;
