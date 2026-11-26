@@ -264,9 +264,10 @@
       const current = item.result?.current;
       if (current?.state === "failed") return current.reason || "-";
       if (current?.state !== "opened") return "-";
-      const first = [...(current.bidders || [])].sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity))[0];
+      const order = rank => Number.isInteger(rank) && rank > 0 ? rank : Infinity;
+      const first = [...(current.bidders || [])].sort((a, b) => order(a.rank) - order(b.rank))[0];
       if (!first) return winnerText(current.winners) || "-";
-      const rank = finite(first.rank) && first.rank > 0 ? `${first.rank}위` : "순위 미기재";
+      const rank = Number.isInteger(first.rank) && first.rank > 0 ? `${first.rank}위` : "순위 미기재";
       const score = finite(first.totalScore) ? ` ${first.totalScore}점` : finite(first.rate) ? `(${first.rate}%)` : "";
       return `${rank} ${first.name}${score}${finite(current.participants) ? ` · ${current.participants}개사` : ""}`;
     }

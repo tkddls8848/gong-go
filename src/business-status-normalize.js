@@ -100,9 +100,10 @@ export function chainNotices(rows, max = 8) {
 }
 
 export function bidders(rows) {
+  const order = rank => Number.isInteger(rank) && rank > 0 ? rank : Infinity;
   return rows.map((row) => ({
     rank: num(row.opengRank), name: text(row.prcbdrNm), bizno: text(row.prcbdrBizno),
     amount: num(row.bidprcAmt), rate: num(row.bidprcrt), remark: text(row.rmrk),
     techScore: num(row.techEvlVal), priceScore: num(row.bidPrceEvlVal), totalScore: num(row.totalEvlAmtVal),
-  })).sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
+  })).sort((a, b) => order(a.rank) - order(b.rank));
 }

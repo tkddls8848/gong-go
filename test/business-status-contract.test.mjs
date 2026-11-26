@@ -2,9 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { handleBusinessStatus } from "../src/business-status.js";
+import { bidders } from "../src/business-status-normalize.js";
 const require = createRequire(import.meta.url);
 const { createTracked } = require("../public/tracked.js");
 const { html } = require("../public/format.js");
+
+test("미기재 순위보다 실제 순위 업체를 표와 요약에 먼저 표시한다", () => {
+  const rows = [0, -1, 1.5, null, 2, 1].map(rank => ({ opengRank: rank, prcbdrNm: `업체${rank}` }));
+  const normalized = bidders(rows);
+  assert.deepEqual(normalized.slice(0, 2).map(row => row.rank), [1, 2]);
+  const tracked = createTracked({ storage: { getItem: () => null, setItem() {} }, html });
+  const unordered = rows.map(row => ({ rank: row.opengRank, name: row.prcbdrNm }));
+  assert.equal(tracked.resultSummary({ result: { current: { state: "opened", bidders: unordered } } }), "1위 업체1");
+  assert.equal(tracked.resultSummary({ result: { current: { state: "opened", bidders: unordered.slice(0, 4) } } }), "순위 미기재 업체0");
+});
 
 test("사전공고 저장 → Worker 공고 연결·점수 → 브라우저 결과 보존 계약", async (t) => {
   const original = globalThis.fetch;
