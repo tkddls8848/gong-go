@@ -35,7 +35,7 @@ export function readItems(json) {
   return rows;
 }
 
-export async function readUpstream(response) {
+export async function readUpstreamPage(response) {
   let body;
   try { body = await response.text(); } catch { throw new UpstreamError(); }
   if (!response.ok) throw new UpstreamError(response.status === 401 || response.status === 403 || AUTH_TEXT.test(body) ? "not_authorized" : "upstream");
@@ -43,8 +43,15 @@ export async function readUpstream(response) {
   try { json = JSON.parse(body); } catch {
     throw new UpstreamError(AUTH_TEXT.test(body) ? "not_authorized" : "upstream");
   }
-  return readItems(json);
+  const rows = readItems(json);
+  const rawTotal = json.response.body.totalCount;
+  const totalCount = num(rawTotal);
+  if (rawTotal !== undefined && rawTotal !== null && rawTotal !== "" && totalCount === null) throw new UpstreamError();
+  if (totalCount !== null && (!Number.isInteger(totalCount) || totalCount < rows.length || (!rows.length && totalCount > 0))) throw new UpstreamError();
+  return { rows, totalCount };
 }
+
+export async function readUpstream(response) { return (await readUpstreamPage(response)).rows; }
 
 export function num(value) {
   if ((typeof value !== "string" && typeof value !== "number") || value === "" || (typeof value === "string" && !value.trim())) return null;

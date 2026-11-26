@@ -1,8 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readItems, readUpstream, UpstreamError, num, noticeState, chainNotices, parseWinners, bidders } from "./business-status-normalize.js";
+import { readItems, readUpstream, readUpstreamPage, UpstreamError, num, noticeState, chainNotices, parseWinners, bidders } from "./business-status-normalize.js";
 
 const wrap = (items, resultCode = "00") => ({ response: { header: { resultCode, resultMsg: "정상" }, body: { items, totalCount: 1 } } });
+
+test("페이지 메타데이터는 전체 건수와 빈 응답의 불일치를 검사한다", async () => {
+  const json = wrap([{ bidNtceNo: "R26BK01832601" }]);
+  json.response.body.totalCount = "469";
+  assert.deepEqual(await readUpstreamPage(Response.json(json)), { rows: json.response.body.items, totalCount: 469 });
+  for (const invalid of [-1, 1.5, "oops", {}]) {
+    json.response.body.totalCount = invalid;
+    await assert.rejects(readUpstreamPage(Response.json(json)), error => error.code === "upstream");
+  }
+  json.response.body.totalCount = 4; json.response.body.items = [];
+  await assert.rejects(readUpstreamPage(Response.json(json)), error => error.code === "upstream");
+});
 
 test("상류 items의 배열·단건·item 감싸기·빈 응답", () => {
   const row = { bidNtceNo: "R26BK01832601" };

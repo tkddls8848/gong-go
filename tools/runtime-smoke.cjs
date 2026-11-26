@@ -74,10 +74,16 @@ async function main() {
     const locked = await send("/api/ecr?action=upload", { method: "POST", headers: { Origin: origin }, body: "not authorized" });
     assert.equal(locked.status, 401);
     await locked.text();
+    const trackedLocked = await send("/api/business-status?bidNtceNo=R26BK01832601");
+    assert.equal(trackedLocked.status, 401);
+    await trackedLocked.text();
     const login = await send("/__gate/login", { method: "POST", body: new URLSearchParams({ password: "runtime-test-gate" }) });
     assert.equal(login.status, 302);
     const gate = login.headers.get("Set-Cookie").split(";")[0];
     await login.text();
+    const trackedUnavailable = await send("/api/business-status?bidNtceNo=R26BK01832601", { headers: { Cookie: gate } });
+    assert.equal(trackedUnavailable.status, 501);
+    await trackedUnavailable.json();
     const denied = await send("/api/ecr?action=upload", { method: "POST", headers: { Origin: origin, Cookie: gate }, body: "locked" });
     assert.equal(denied.status, 403);
     assert.equal((await denied.json()).locked, true);

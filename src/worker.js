@@ -3,6 +3,7 @@ import { handleEcr, purgeStaleJobs } from "./ecr.js";
 import { handleAiAccess, clearAiAccessCookie, revokeAiAccess } from "./ai-access.js";
 import { handleAsk } from "./ask-handler.js";
 import { handleLive } from "./live.js";
+import { handleBusinessStatus } from "./business-status.js";
 import { handleRefresh, dispatchCollect } from "./refresh.js";
 import { handleRelay, RELAY_PREFIX } from "./relay.js";
 import { serveData } from "./data.js";
@@ -17,6 +18,7 @@ const ROBOTS_PATH = "/robots.txt";
 const REFRESH_PATH = "/api/refresh";
 const ASK_PATH = "/api/ask";
 const LIVE_PATH = "/api/live";
+const BUSINESS_STATUS_PATH = "/api/business-status";
 
 export default {
   async fetch(request, env, context) {
@@ -88,6 +90,7 @@ async function routeRequest(request, env, context) {
   const url = new URL(request.url);
   if (url.pathname === REFRESH_PATH) return handleRefresh(request, env, url);
   if (url.pathname === LIVE_PATH) return handleLive(request, env, url, context);
+  if (url.pathname === BUSINESS_STATUS_PATH) return handleBusinessStatus(request, env, url, context);
   // 게이트를 통과한 요청만 여기 온다. 인증 앞에 두면 남이 계정 요금을 태울 수 있다.
   if (url.pathname === ASK_PATH) return handleAsk(request, env);
   if (url.pathname === "/api/ecr") return handleEcr(request, env);

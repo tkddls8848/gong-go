@@ -133,6 +133,13 @@ test("최신 조회는 인증·시크릿·입력 범위를 검사한 뒤에만 �
 
 // ── 비밀번호 게이트 ─────────────────────────────────────────────────────────
 
+test("관심사업 조회는 로그인 게이트 뒤에서 키를 검사한다", async (t) => {
+  const calls = stubFetch(t);
+  assert.equal((await worker.fetch(request("/api/business-status?bidNtceNo=R26BK01832601"), envOf({ DATA_GO_KR_SERVICE_KEY: "key" }))).status, 401);
+  assert.equal((await authed("/api/business-status?bidNtceNo=R26BK01832601")).status, 501);
+  assert.equal(calls.length, 0);
+});
+
 test("GATE_PASSWORD가 없으면 아무것도 열지 않는다", async () => {
   const response = await worker.fetch(request("/"), {});
   assert.equal(response.status, 500);
