@@ -41,10 +41,13 @@ test("사전공고 저장 → Worker 공고 연결·점수 → 브라우저 결�
   assert.equal(saved.result.current.bidders[0].totalScore, 90);
   assert.equal(tracked.isSaved({ mode: "bid", announcementNumber: bidNo }), true);
   assert.equal(tracked.dueItems().length, 0);
+  assert.match(tracked.renderList(), /1위 검증업체 90점/);
+  assert.match(tracked.renderDetail(saved.id), /종합/);
   unavailable = true;
   await tracked.refresh({ all: true });
   const [failed] = tracked.items();
   assert.equal(failed.error.code, "upstream");
   assert.deepEqual(failed.result, saved.result);
   assert.doesNotMatch(JSON.stringify(failed), /private upstream details/);
+  assert.match(tracked.renderList(), /최근 확인 실패/);
 });

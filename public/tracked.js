@@ -217,7 +217,101 @@
       }).finally(() => { running = null; });
       return running;
     }
-    return { items: () => clone(list), count: () => list.length, isSaved: row => !!matching(row), toggle, remove, dueItems, applyResult, applyError, refresh };
+    const escape = html || (value => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]));
+    const DAY = 86400000, KST = 9 * 3600000;
+    const kstText = ms => { const date = new Date(ms + KST); return finite(ms) && finite(date.getTime()) ? date.toISOString().slice(0, 16).replace("T", " ") : ""; };
+    const shortDate = value => { const date = kstText(parseTime(value)); return date ? date.slice(5, 10).replace("-", "/") : ""; };
+    const countdown = (end, at) => { const days = Math.floor((end + KST) / DAY) - Math.floor((at + KST) / DAY); return days === 0 ? "D-day" : `D-${days}`; };
+    function statusLine(item, nowMs = now()) {
+      if (item.error?.code === "not_authorized") return { label: "조회 권한 없음(서비스 키 활용신청 확인)", tone: "error" };
+      if (item.error && !item.result) return { label: "결과를 확인하지 못했습니다. 잠시 뒤 다시 확인하세요.", tone: "error" };
+      let label = "확인 전", tone = "wait";
+      if (item.result?.stage === "spec") {
+        const close = parseTime(item.schedule?.opninRgstClseDt);
+        label = close > nowMs ? `사전규격 · 의견등록 마감 ${countdown(close, nowMs)}` : "본공고 대기";
+      } else if (item.result?.current) {
+        const current = item.result.current, date = shortDate(current.openedAt), suffix = date ? ` ${date}` : "";
+        if (current.state === "before") {
+          const savedSchedule = current.bidNtceNo === item.savedNo ? item.schedule || {} : {};
+          const close = parseTime(savedSchedule.bidClseDt), open = parseTime(savedSchedule.opengDt);
+          label = close > nowMs ? `입찰 마감 ${countdown(close, nowMs)}` : open > nowMs ? "개찰 대기"
+            : Number.isFinite(open) || Number.isFinite(close) ? "개찰 결과 대기" : "일정 정보 없음";
+        } else if (current.state === "opened") {
+          const completed = current.method === "수의계약" ? `수의계약 · ${current.winners?.length ? "낙찰" : "개찰완료"}` : "개찰완료";
+          label = `${completed}${suffix}`; tone = "done";
+        } else if (current.state === "failed") {
+          label = `유찰${suffix}${item.chainKey ? " · 재공고 대기" : ""}`; tone = "fail";
+        } else if (current.state === "rebid") label = `재입찰${suffix}`;
+        else label = current.stateLabel || "확인하지 못함";
+      }
+      if (item.error) { label += " · 최근 확인 실패"; tone = "error"; }
+      return { label, tone };
+    }
+    function historyState(current) {
+      if (current.state === "opened") return current.method === "수의계약" && current.winners?.length ? "낙찰" : "개찰완료";
+      if (current.state === "failed") return "유찰";
+      if (current.state === "rebid") return "재입찰";
+      return current.state === "other" ? current.stateLabel || "확인하지 못함" : "진행 중";
+    }
+    function historyLine(item) {
+      const notices = item.result?.notices || [];
+      return notices.length < 2 ? "" : notices.map((notice, i) => `${i === 0 ? "1차" : notice.method === "수의계약" ? "수의계약" : `${i + 1}차`} ${historyState(notice)}`).join(" → ");
+    }
+    function winnerText(winners) {
+      return (winners || []).map(winner => `${winner.name}${finite(winner.rate) ? ` ${winner.rate}%` : ""}`).join(" · ");
+    }
+    function resultSummary(item) {
+      const current = item.result?.current;
+      if (current?.state === "failed") return current.reason || "-";
+      if (current?.state !== "opened") return "-";
+      const first = [...(current.bidders || [])].sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity))[0];
+      if (!first) return winnerText(current.winners) || "-";
+      const rank = finite(first.rank) && first.rank > 0 ? `${first.rank}위` : "순위 미기재";
+      const score = finite(first.totalScore) ? ` ${first.totalScore}점` : finite(first.rate) ? `(${first.rate}%)` : "";
+      return `${rank} ${first.name}${score}${finite(current.participants) ? ` · ${current.participants}개사` : ""}`;
+    }
+    function warning(item) {
+      if (item.result?.partial === "chain") return "이어진 공고를 확인하지 못했습니다. 저장한 공고만 표시합니다.";
+      if (item.result?.partial === "limit") return "조회 범위 제한으로 공고 이력·분류 또는 업체 결과를 일부만 확인했습니다. 전체는 나라장터에서 확인하세요.";
+      return "";
+    }
+    function checkedText(item) {
+      const date = kstText(item.checkedAt);
+      return date ? `마지막 확인 ${date} (한국시간)` : "";
+    }
+    function renderList(nowMs = now()) {
+      if (!list.length) return '<p class="tracked-empty">저장한 관심사업이 없습니다. 본공고·사전공고 목록의 ☆를 눌러 저장하세요.</p>';
+      return '<table class="tracked-table"><thead><tr><th>사업명</th><th>수요기관</th><th>현재 공고 번호</th><th>상태</th><th>결과</th><th>저장</th></tr></thead><tbody>' + list.map(item => {
+        const status = statusLine(item, nowMs), history = historyLine(item), note = warning(item), checked = checkedText(item);
+        return `<tr data-tracked-row="${escape(item.id)}"><td><button type="button" class="tracked-title" data-tracked-id="${escape(item.id)}" aria-expanded="false">${escape(item.title || "(사업명 없음)")}</button></td><td>${escape(item.institution || "-")}</td><td>${escape(item.result?.current?.bidNtceNo || item.savedNo)}</td><td><span class="tracked-state ${status.tone}">${escape(status.label)}</span>${history ? `<p class="tracked-history">${escape(history)}</p>` : ""}${note ? `<p class="tracked-warning">${escape(note)}</p>` : ""}${checked ? `<p class="tracked-checked">${escape(checked)}</p>` : ""}</td><td>${escape(resultSummary(item))}</td><td><button type="button" class="track-btn" data-untrack-id="${escape(item.id)}" aria-label="${escape(item.title || "관심사업")} 저장 해제">해제</button></td></tr>`;
+      }).join("") + "</tbody></table>";
+    }
+    function externalLink(value) {
+      if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value) || !/^https?:\/\//i.test(value.trim())) return "";
+      try { const url = new URL(value.trim()); return url.hostname && !url.username && !url.password ? value.trim() : ""; } catch { return ""; }
+    }
+    function renderDetail(id) {
+      const item = list.find(entry => entry.id === id);
+      if (!item) return "";
+      const note = warning(item), status = statusLine(item), checked = checkedText(item), url = externalLink(item.detailUrl);
+      let output = `<div class="tracked-detail"><p class="tracked-state ${status.tone}">${escape(status.label)}</p>`;
+      if (checked) output += `<p class="tracked-checked">${escape(checked)}</p>`;
+      if (note) output += `<p class="tracked-warning">${escape(note)}</p>`;
+      if (item.result && !item.chainKey) output += '<p class="tracked-warning">사전규격·발주계획 연결 정보가 없어 이 공고만 추적합니다.</p>';
+      if (url) output += `<p><a href="${escape(url)}" target="_blank" rel="noopener noreferrer">저장한 공고 원문 열기</a></p>`;
+      const notices = item.result?.notices || [];
+      if (notices.length) output += '<h3>공고 이력</h3><div class="tracked-detail-scroll"><table><thead><tr><th>공고번호</th><th>게시일</th><th>계약방법</th><th>상태</th><th>사유 또는 낙찰자</th></tr></thead><tbody>' + notices.map(notice => `<tr><td>${escape(notice.bidNtceNo)}</td><td>${escape(notice.postedAt || "-")}</td><td>${escape(notice.method || "-")}</td><td>${escape(historyState(notice))}</td><td>${escape(notice.reason || winnerText(notice.winners) || "-")}</td></tr>`).join("") + '</tbody></table></div>';
+      const current = item.result?.current, bidders = current?.bidders || [];
+      if (bidders.length) {
+        const scores = bidders.some(bidder => [bidder.techScore, bidder.priceScore, bidder.totalScore].some(finite));
+        const amounts = bidders.some(bidder => finite(bidder.amount)), rates = bidders.some(bidder => finite(bidder.rate));
+        const columns = [["rank", "순위"], ["name", "업체명"], ["bizno", "사업자번호"], ...(amounts ? [["amount", "투찰금액"]] : []), ...(rates ? [["rate", "투찰률"]] : []), ...(scores ? [["techScore", "기술"], ["priceScore", "가격"], ["totalScore", "종합"]] : []), ["remark", "비고"]];
+        output += '<h3>현재 공고 참여업체</h3><div class="tracked-detail-scroll"><table><thead><tr>' + columns.map(([, title]) => `<th>${title}</th>`).join("") + '</tr></thead><tbody>' + bidders.map(bidder => '<tr>' + columns.map(([key]) => `<td>${escape(bidder[key] === null || bidder[key] === undefined || bidder[key] === "" ? "-" : bidder[key])}</td>`).join("") + '</tr>').join("") + '</tbody></table></div>';
+      } else if (current?.state === "opened" && !current.biddersTruncated) output += `<p>${escape(winnerText(current.winners) || "공개된 참여업체 결과가 없습니다.")}</p>`;
+      if (current?.biddersTruncated) output += `<p class="tracked-warning">${bidders.length ? `상위 ${bidders.length}곳만 표시합니다.` : "참여업체 결과를 확인하지 못했습니다."} 전체는 나라장터에서 확인하세요.</p>`;
+      return output + "</div>";
+    }
+    return { items: () => clone(list), count: () => list.length, isSaved: row => !!matching(row), toggle, remove, dueItems, applyResult, applyError, refresh, statusLine, historyLine, resultSummary, renderList, renderDetail };
   }
   const api = { createTracked };
   scope.GongTracked = api;

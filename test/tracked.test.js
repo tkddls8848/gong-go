@@ -182,3 +182,98 @@ test("사전규격·발주계획 연결 키와 본공고 번호를 요청에 보
   assert.equal(urls[1].searchParams.get("businessType"), "용역");
   assert.equal(urls[1].searchParams.has("bidNtceNo"), false);
 });
+
+function viewItem(state, extra = {}) {
+  return { savedNo: bidRow.announcementNumber, schedule: {}, checkedAt: NOW, error: null, chainKey: null,
+    result: result(undefined, state), ...extra };
+}
+
+test("상태 문구는 KST 일정·결과·오류를 구분한다", () => {
+  const tracked = make();
+  const before = schedule => viewItem("before", { schedule });
+  for (const [item, label, tone] of [
+    [{ result: null }, "확인 전", "wait"],
+    [{ error: { code: "not_authorized" } }, "조회 권한 없음(서비스 키 활용신청 확인)", "error"],
+    [{ error: { code: "upstream" } }, "결과를 확인하지 못했습니다. 잠시 뒤 다시 확인하세요.", "error"],
+    [before({ bidClseDt: "2026-11-29 09:00:00" }), "입찰 마감 D-3", "wait"],
+    [before({ bidClseDt: "2026-11-26 10:00:01" }), "입찰 마감 D-day", "wait"],
+    [before({ bidClseDt: "2026-11-26 09:00:00", opengDt: "2026-11-26 11:00:00" }), "개찰 대기", "wait"],
+    [before({}), "일정 정보 없음", "wait"],
+    [before({ opengDt: "2026-11-26 10:00:00" }), "개찰 결과 대기", "wait"],
+    [viewItem("failed", { chainKey: { kind: "spec", no: "PRE" } }), "유찰 · 재공고 대기", "fail"],
+    [viewItem("failed"), "유찰", "fail"],
+    [viewItem("rebid"), "재입찰", "wait"],
+  ]) assert.deepEqual(tracked.statusLine(item), { label, tone });
+  const opened = viewItem("opened"); opened.result.current.openedAt = "2026-11-25T15:30:00Z";
+  assert.equal(tracked.statusLine(opened).label, "개찰완료 11/26");
+  opened.result.current.method = "수의계약";
+  assert.equal(tracked.statusLine(opened).label, "수의계약 · 개찰완료 11/26");
+  opened.result.current.winners = [{ name: "확인된 낙찰자" }];
+  assert.equal(tracked.statusLine(opened).label, "수의계약 · 낙찰 11/26");
+  opened.error = { code: "upstream" };
+  assert.deepEqual(tracked.statusLine(opened), { label: "수의계약 · 낙찰 11/26 · 최근 확인 실패", tone: "error" });
+  const other = viewItem("other"); other.result.current.stateLabel = "확인하지 못함";
+  assert.equal(tracked.statusLine(other).label, "확인하지 못함");
+  const replacement = before({ bidClseDt: "2026-12-01 10:00:00" }); replacement.result.current.bidNtceNo = "OTHER";
+  assert.equal(tracked.statusLine(replacement).label, "일정 정보 없음");
+});
+
+test("사전규격 단계와 KST 자정의 D-day를 표시한다", () => {
+  const tracked = make();
+  const item = { result: { stage: "spec" }, schedule: { opninRgstClseDt: "2026-11-27 00:00:00" } };
+  assert.equal(tracked.statusLine(item, Date.parse("2026-11-26T23:59:00+09:00")).label, "사전규격 · 의견등록 마감 D-1");
+  assert.equal(tracked.statusLine(item, Date.parse("2026-11-27T00:00:00+09:00")).label, "본공고 대기");
+});
+
+test("공고 이력과 결과 요약은 실제 순위와 0점·0%를 보존한다", () => {
+  const tracked = make(), item = viewItem("opened");
+  item.result.notices = [{ state: "failed" }, { state: "failed" }, { state: "opened", method: "수의계약", winners: [{ name: "업체" }] }];
+  assert.equal(tracked.historyLine(item), "1차 유찰 → 2차 유찰 → 수의계약 낙찰");
+  item.result.current.bidders = [{ rank: 2, name: "업체B", totalScore: 0 }]; item.result.current.participants = 4;
+  assert.equal(tracked.resultSummary(item), "2위 업체B 0점 · 4개사");
+  item.result.current.bidders = [{ rank: null, name: "순위미상", rate: 0 }];
+  assert.equal(tracked.resultSummary(item), "순위 미기재 순위미상(0%) · 4개사");
+  item.result.current.bidders = []; item.result.current.winners = [{ name: "낙찰업체", rate: null }];
+  assert.equal(tracked.resultSummary(item), "낙찰업체");
+});
+
+test("점수·금액 열은 있는 값만 표시하고 제한·직전 확인시각을 안내한다", () => {
+  const tracked = make(), item = tracked.toggle(bidRow).item;
+  const body = result(undefined, "opened", { partial: "limit" });
+  body.current.bidders = [{ rank: 1, name: "업체", totalScore: 0 }];
+  body.current.biddersTruncated = true;
+  tracked.applyResult(item.id, body, NOW);
+  let detail = tracked.renderDetail(item.id);
+  assert.match(detail, /종합/); assert.doesNotMatch(detail, /투찰금액|투찰률/);
+  assert.match(detail, /상위 1곳만 표시/);
+  assert.match(detail, /일부만 확인/); assert.match(tracked.renderList(), /일부만 확인/);
+  body.current.bidders = [{ rank: 1, name: "업체", amount: 0, rate: 0 }];
+  tracked.applyResult(item.id, body, NOW);
+  detail = tracked.renderDetail(item.id);
+  assert.match(detail, /투찰금액/); assert.match(detail, /투찰률/); assert.doesNotMatch(detail, /종합/);
+  tracked.applyError(item.id, { code: "upstream" });
+  assert.match(tracked.renderList(), /최근 확인 실패/);
+  assert.match(tracked.renderDetail(item.id), /2026-11-26 10:00/);
+  body.current.bidders = []; tracked.applyResult(item.id, body, NOW);
+  assert.match(tracked.renderDetail(item.id), /참여업체 결과를 확인하지 못했습니다/);
+  assert.doesNotMatch(tracked.renderDetail(item.id), /공개된 참여업체 결과가 없습니다|상위 0곳/);
+});
+
+test("보기의 모든 상류 문자열과 속성은 escape하며 위험한 링크는 내보내지 않는다", () => {
+  const tracked = make(), attack = '<img src=x onerror="alert(1)">';
+  const item = tracked.toggle({ ...bidRow, title: attack, institution: attack, detailUrl: "javascript:alert(1)" }).item;
+  const body = result(undefined, "other"); body.current.stateLabel = attack;
+  body.notices[0].reason = attack; body.notices[0].method = attack;
+  body.current.bidders = [{ rank: 1, name: attack, remark: attack }];
+  tracked.applyResult(item.id, body, NOW);
+  for (const output of [tracked.renderList(), tracked.renderDetail(item.id)]) {
+    assert.doesNotMatch(output, /<img|javascript:/);
+    assert.match(output, /&lt;img/);
+  }
+  assert.match(tracked.renderDetail(item.id), /연결 정보가 없어/);
+  body.partial = "chain"; tracked.applyResult(item.id, body, NOW);
+  assert.match(tracked.renderDetail(item.id), /이어진 공고를 확인하지 못했습니다/);
+  tracked.remove(item.id);
+  assert.match(tracked.renderList(), /저장한 관심사업이 없습니다/);
+  assert.equal(tracked.renderDetail(item.id), "");
+});
