@@ -6,7 +6,7 @@ const { html, numberOf, format } = require("../public/format.js");
 
 test("모달 인스턴스는 주입한 상태·표시 함수를 사용하고 닫을 때 분석과 포커스를 정리한다", () => {
   const nodes = new Map(), model = { currentRow: null, currentAnalysis: { old: true } };
-  let stopped = 0, restored = 0, loaded = 0, refreshed = 0;
+  let stopped = 0, restored = 0, loaded = 0, refreshed = 0, opened;
   const opener = { isConnected: true, focus() { restored++; } };
   const document = { activeElement: opener, querySelectorAll: () => [] };
   const $ = (id) => {
@@ -20,11 +20,13 @@ test("모달 인스턴스는 주입한 상태·표시 함수를 사용하고 닫
     stopEcrAnalysis() { stopped++; },
     refreshAiAccess() { refreshed++; },
     loadEcr() { loaded++; },
+    onOpen(row) { opened = row; },
   });
   const row = { mode: "bid", title: "테스트", announcementNumber: "one",
     files: [{ name: "<img src=x>", url: "https://example.test/file?a=1&b=2" }, { name: "제안요청서.hwp", url: "https://www.g2b.go.kr/rfp", source: "제안요청정보", kind: "<b>제안요청서" }] };
   controller.openModal(row);
   assert.equal(model.currentRow, row);
+  assert.equal(opened, row);
   assert.equal(model.currentAnalysis, null);
   assert.equal(modal.style.display, "flex");
   assert.equal($(".app").inert, true);

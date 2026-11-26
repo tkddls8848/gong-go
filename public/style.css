@@ -187,6 +187,37 @@ body.rail-collapsed .menu-rail-open { display: flex; }
 #result-summary { margin-left: 4px; color: var(--text-2); font-weight: 500; }
 .subtitle { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .table-scroll { overflow-x: auto; }
+.tracked-toggle { display: flex; justify-content: space-between; width: 100%; margin-top: 7px; padding: 11px 13px; color: var(--text-1); border-radius: 6px; text-align: left; }
+.tracked-toggle[aria-pressed="true"] { color: var(--blue-text); background: var(--blue-bg); }
+.track-btn { padding: 3px 7px; color: var(--link); border: 1px solid var(--border); border-radius: 5px; font-size: 13px; }
+.track-btn[aria-pressed="true"] { color: var(--today-text); border-color: var(--warn-line); }
+.title > .track-btn { float: right; margin: 0 0 5px 8px; }
+.tracked-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
+.tracked-tools .hint { margin: 0; }
+#tracked-list { max-width: 100%; overflow-x: auto; }
+.tracked-table { min-width: 780px; }
+.tracked-table th, .tracked-table td { width: auto; font-family: inherit; text-align: left; }
+.tracked-table th:first-child { width: 21%; }
+.tracked-table th:nth-child(2) { width: 13%; }
+.tracked-table th:nth-child(3) { width: 16%; }
+.tracked-table th:nth-child(4) { width: 26%; }
+.tracked-table th:last-child { width: 64px; }
+.tracked-title { color: var(--link); text-align: left; line-height: 1.55; }
+.tracked-state { font-size: 13px; }
+.tracked-state.wait { color: var(--text-1); }
+.tracked-state.done { color: var(--ok); }
+.tracked-state.fail { color: var(--warn); }
+.tracked-state.error, .tracked-warning { color: var(--danger); }
+.tracked-history, .tracked-checked, .tracked-warning { margin: 6px 0 0; font-size: 11px; line-height: 1.6; }
+.tracked-checked { color: var(--muted); }
+.tracked-empty { padding: 35px 10px; color: var(--muted); }
+.tracked-expanded > td { padding: 16px; background: var(--bg-raised); }
+.tracked-detail h3 { font-size: 14px; margin: 20px 0 12px; }
+.tracked-detail-scroll { overflow-x: auto; }
+.tracked-detail table { table-layout: auto; min-width: 650px; }
+.tracked-detail th, .tracked-detail td { width: auto; font-family: inherit; font-size: 12px; text-align: left; }
+#modal-track-btn { margin-top: 8px; }
+#modal-track-status:empty { display: none; }
 table { width: 100%; table-layout: fixed; border-collapse: collapse; }
 th { padding: 0 12px 9px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; font-weight: 600; text-align: left; }
 td { padding: 13px 12px; border-bottom: 1px solid var(--line-weak); color: var(--text-2); font-size: 13px; line-height: 1.55; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
@@ -377,6 +408,22 @@ code { padding: 1px 4px; border-radius: 4px; background: var(--bg-field); }
   .filter-actions .primary-btn { flex: 1 1 0; justify-content: center; }
 }
 @media (max-width: 700px) {
+  /* 관심사업의 상태·결과는 첫 화면에서 읽는다. 펼친 상세의 표는 별도 스크롤을 유지한다. */
+  .tracked-table { display: block; min-width: 0; }
+  .tracked-table > thead { display: none; }
+  .tracked-table > tbody { display: block; }
+  .tracked-table > tbody > tr { display: flex; flex-wrap: wrap; gap: 7px 10px; padding: 15px 2px; border-bottom: 1px solid var(--line); }
+  .tracked-table > tbody > tr > td { display: block; width: auto; min-width: 0; padding: 0; border: 0; flex: 1 1 100%; }
+  .tracked-table > tbody > tr > td:nth-child(1) { order: 1; flex: 1 1 calc(100% - 65px); }
+  .tracked-table > tbody > tr > td:nth-child(6) { order: 2; flex: 0 0 auto; }
+  .tracked-table > tbody > tr > td:nth-child(2) { order: 3; }
+  .tracked-table > tbody > tr > td:nth-child(3) { order: 4; font-size: 11px; color: var(--muted); }
+  .tracked-table > tbody > tr > td:nth-child(4) { order: 5; }
+  .tracked-table > tbody > tr > td:nth-child(5) { order: 6; color: var(--text); }
+  .tracked-table > tbody > .tracked-expanded { display: block; padding: 13px; }
+  .tracked-table > tbody > .tracked-expanded > td { width: 100%; }
+  .tracked-title { font-size: 15px; }
+  .tracked-detail, .tracked-detail-scroll { max-width: 100%; min-width: 0; }
   .schedule-item { grid-template-columns: 18px 1fr; padding: 7px 0; }
   .schedule-time { grid-column: 2; white-space: normal; }
   /* 네이티브 날짜 입력은 제 폭 아래로 줄지 않는다(둘이면 이미 270px이 넘는다). 게시일 칸이

@@ -10,6 +10,23 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-26-favorite-notices-design.md`
 
+## 이어서 진행한 기록
+
+2026-11-26: Claude 세션의 사용자 승인과 마지막 선택인 "단계별 검토"를 확인하고
+`feature/tracked-businesses`에서 구현을 이어간다. 단계별 구현자와 별도 검토자를 두고,
+통과한 단계만 커밋한다. main 병합·푸시는 이 작업에 포함하지 않는다.
+
+- Task 1: 구현·독립 검토 완료, 정규화 테스트 6개 통과 (`047d0af`).
+- Task 2: 구현·독립 검토 완료 (`7aceafd`). 전체 테스트 373개, 로컬 Worker smoke, 번들 dry-run 통과.
+- Task 3: 구현·독립 재검토 완료 (`6f0fefa`). 저장소·Worker 연결 계약 14개 통과. 사슬 병합 뒤 늦은 응답이 결과를 되돌리는 경쟁 조건도 수정.
+- Task 4: 구현·독립 재검토 완료 (`3d35f07`). 전체 테스트 392개 통과. 업체 결과 미수신을 미공개로 단정하지 않고, 낙찰자 근거가 없는 수의계약은 개찰완료로 표시.
+- Task 5: 화면 연결·문서·독립 재검토 완료. 최종 `npm test` 398개, 브라우저 smoke(1440/390), 로컬 Worker smoke(외부 요청 0), `wrangler deploy --dry-run` 모두 통과.
+- 최종 시각 검증: 데스크톱 표와 모바일 카드에서 상태·결과 확인, 상세 업체 표의 가로 스크롤 유지. 조회 중 마지막 항목을 지워도 키보드 포커스 보존.
+- 추가 계약 검토에서 유효 순위가 없는 업체보다 실제 순위 업체를 먼저 표시하도록 수정 (`825d50f`).
+- 검토 보완: 사전규격만 조회할 때 상류 연결 조회가 실패하면 대기 단계로 표시하지 않고 오류로 반환한다.
+- 검토 보완: 최신 정정 차수·재입찰 회차·분류번호를 구분하고 조회 제한은 부분 결과로 표시한다.
+- 저장 버튼은 ☆ 저장 / ★ 해제로 일관되게 동작한다. 같은 공고를 해제 후 다시 저장하면 스냅숏을 갱신한다.
+
 ## Global Constraints
 
 - 새 dependency 없음. 최상위 모듈(src, public 등) 사이 런타임 import 없음.
@@ -52,12 +69,12 @@
   - `parseWinners(text) -> { rank, name, bizno, amount, rate }[]` — `"[1^모아맘보육재단^2208264545^김광자^830575896^97.001^1^2026-11-23 12:30:00]"` 형식. 여러 건은 `][`/`],[` 구분 모두 허용. 필드 수가 6 미만인 조각은 버린다.
   - `bidders(rows) -> Bidder[]` — 개찰완료 행을 `opengRank` 오름차순으로. `Bidder = { rank, name, bizno, amount, rate, remark, techScore, priceScore, totalScore }` (`prcbdrNm`, `prcbdrBizno`, `bidprcAmt`, `bidprcrt`, `rmrk`, `techEvlVal`, `bidPrceEvlVal`, `totalEvlAmtVal`; 수치는 `num`).
 
-- [ ] **Step 1: 브랜치를 만든다**
+- [x] **Step 1: 브랜치를 만든다**
 
 Run: `git switch -c feature/tracked-businesses`
 Expected: `Switched to a new branch 'feature/tracked-businesses'`
 
-- [ ] **Step 2: 실패하는 테스트를 쓴다** — 설계 문서의 실제 표본을 그대로 쓴다.
+- [x] **Step 2: 실패하는 테스트를 쓴다** — 설계 문서의 실제 표본을 그대로 쓴다.
 
 ```js
 import assert from "node:assert/strict";
@@ -130,19 +147,19 @@ test("진행 구분과 낙찰자 목록을 방어적으로 읽는다", () => {
 });
 ```
 
-- [ ] **Step 3: 실패를 확인한다**
+- [x] **Step 3: 실패를 확인한다**
 
 Run: `npm test -- src/business-status-normalize.test.mjs`
 Expected: FAIL — `Cannot find module` (파일 없음)
 
-- [ ] **Step 4: `src/business-status-normalize.js`를 구현한다** — 위 Interfaces의 함수를 그대로 export. 외부 import 없음.
+- [x] **Step 4: `src/business-status-normalize.js`를 구현한다** — 위 Interfaces의 함수를 그대로 export. 외부 import 없음.
 
-- [ ] **Step 5: 통과를 확인한다**
+- [x] **Step 5: 통과를 확인한다**
 
 Run: `npm test -- src/business-status-normalize.test.mjs`
 Expected: PASS (6 tests)
 
-- [ ] **Step 6: 커밋**
+- [x] **Step 6: 커밋**
 
 ```bash
 git add docs/superpowers/specs/2026-11-26-favorite-notices-design.md src/business-status-normalize.js src/business-status-normalize.test.mjs
@@ -181,7 +198,7 @@ git commit -m "관심사업 추적: 낙찰정보·계약과정 응답을 정규�
 6. 호출 수가 상한에 닿으면 더 부르지 않고 지금까지로 응답하며 `partial: "limit"`.
 7. 1단계·4단계·5단계의 `UpstreamError`는 오류 응답(위 본문). 2단계만 예외적으로 부분 성공.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다** — `src/business-status.test.mjs`. 상류는 URL의 오퍼레이션 이름·인자로 분기하는 `globalThis.fetch` 스텁(worker.test.mjs의 `stubFetch` 방식을 이 파일에 복사). `caches`는 정의하지 않는다(캐시 없이 동작해야 함).
+- [x] **Step 1: 실패하는 테스트를 쓴다** — `src/business-status.test.mjs`. 상류는 URL의 오퍼레이션 이름·인자로 분기하는 `globalThis.fetch` 스텁(worker.test.mjs의 `stubFetch` 방식을 이 파일에 복사). `caches`는 정의하지 않는다(캐시 없이 동작해야 함).
 
 ```js
 test("사전규격 사슬을 따라 수의계약 공고를 현재 공고로 삼는다", async (t) => {
@@ -248,24 +265,24 @@ assert.equal((await worker.fetch(request("/api/business-status?bidNtceNo=R26BK01
 assert.equal((await authed("/api/business-status?bidNtceNo=R26BK01832601")).status, 501);
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `npm test -- src/business-status.test.mjs src/worker.test.mjs`
 Expected: FAIL — 모듈 없음, worker 경로는 자산으로 떨어져 401/501 단언 실패
 
-- [ ] **Step 3: `src/business-status.js`의 `handleBusinessStatus`를 구현하고 `src/worker.js`에 라우팅한다.** 호출 수는 handler 안의 카운터를 감싼 `upstream(path, params)` 한 함수로만 센다.
+- [x] **Step 3: `src/business-status.js`의 `handleBusinessStatus`를 구현하고 `src/worker.js`에 라우팅한다.** 호출 수는 handler 안의 카운터를 감싼 `upstream(path, params)` 한 함수로만 센다.
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `npm test`
 Expected: PASS (전체)
 
-- [ ] **Step 5: Worker 연결·번들 검증**
+- [x] **Step 5: Worker 연결·번들 검증**
 
 Run: `npm run test:runtime` → Expected: 성공 종료(0)
 Run: `npx wrangler deploy --dry-run` → Expected: `--dry-run: exiting now.`
 
-- [ ] **Step 6: 커밋**
+- [x] **Step 6: 커밋**
 
 ```bash
 git add src/business-status.js src/business-status.test.mjs src/worker.js src/worker.test.mjs
@@ -296,7 +313,7 @@ git commit -m "관심사업 추적: 같은 사업의 공고 사슬과 개찰결�
   - `refresh({ all = false } = {}) -> Promise<void>` — 대상(또는 전부)을 `concurrency`개씩 `fetchJson(url)`. URL: `/api/business-status?` + (`chainKey.kind === "spec"`이면 `specNo`, `plan`이면 `planNo`, 그리고 본공고 저장이면 `bidNtceNo=savedNo`) + 알면 `businessType`. 진행 중에 다시 부르면 같은 Promise를 돌려준다. `fetchJson`이 던지면 `applyError` — 오류의 `code`가 `not_authorized`가 아니면 `code: "upstream"`.
   - 시각 해석: 일정 값 `"2026-11-20 11:00:00"`은 KST로 읽는다(`+09:00`).
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다** — 메모리 `storage`(`getItem`/`setItem`)와 가짜 `fetchJson`.
+- [x] **Step 1: 실패하는 테스트를 쓴다** — 메모리 `storage`(`getItem`/`setItem`)와 가짜 `fetchJson`.
 
 ```js
 const { createTracked } = require("../public/tracked.js");
@@ -370,19 +387,19 @@ test("refresh는 겹쳐 부르면 한 번만 돈다", async () => {
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `npm test -- test/tracked.test.js`
 Expected: FAIL — `Cannot find module '../public/tracked.js'`
 
-- [ ] **Step 3: `public/tracked.js`에 위 Interfaces를 구현한다** (보기 함수는 Task 4).
+- [x] **Step 3: `public/tracked.js`에 위 Interfaces를 구현한다** (보기 함수는 Task 4).
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `npm test -- test/tracked.test.js`
 Expected: PASS
 
-- [ ] **Step 5: 커밋**
+- [x] **Step 5: 커밋**
 
 ```bash
 git add public/tracked.js test/tracked.test.js
@@ -433,7 +450,7 @@ git commit -m "관심사업 추적: 브라우저 저장소와 조회 대상 선�
 
 `resultSummary`: 현재 `opened`이고 업체가 있으면 1위 기준 — 종합점수가 있으면 `1위 ${name} ${totalScore}점 · ${participants}개사`, 아니면 투찰률이 있으면 `1위 ${name}(${rate}%) · ${participants}개사`, 아니면 `1위 ${name} · ${participants}개사`(`participants`가 없으면 ` · n개사` 생략); 업체가 없고 `winners`가 있으면 `${name} ${rate}%`; `failed`면 `reason`(없으면 `-`); 그 밖 `-`.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다** — 위 표의 행마다 `statusLine` 단언 하나씩, 그리고:
+- [x] **Step 1: 실패하는 테스트를 쓴다** — 위 표의 행마다 `statusLine` 단언 하나씩, 그리고:
 
 ```js
 test("협상 계약은 점수 열을, 최저가류는 금액 열을 보인다", () => { /* renderDetail 문자열에 "종합" 유무, "투찰금액" 유무 */ });
@@ -443,19 +460,19 @@ test("상류 문자열은 이스케이프한다", () => { /* name: "<img src=x o
 test("빈 목록 안내", () => { assert.match(tracked.renderList(), /저장한 관심사업이 없습니다/); });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `npm test -- test/tracked.test.js`
 Expected: FAIL — `tracked.statusLine is not a function`
 
-- [ ] **Step 3: 보기 함수를 구현한다.**
+- [x] **Step 3: 보기 함수를 구현한다.**
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `npm test -- test/tracked.test.js`
 Expected: PASS
 
-- [ ] **Step 5: 커밋**
+- [x] **Step 5: 커밋**
 
 ```bash
 git add public/tracked.js test/tracked.test.js
@@ -483,7 +500,7 @@ git commit -m "관심사업 추적: 상태 줄·이력·업체 표를 그린다"
   - `#tracked-refresh` → `tracked.refresh({ all: true })`, 도는 동안 버튼 비활성, `#tracked-status`에 `n건 확인 중입니다.` → 끝나면 비움.
   - 모달이 열릴 때 `#modal-track-btn`을 그 행 상태로 맞추고(발주계획이면 숨김), 누르면 토글.
 
-- [ ] **Step 1: 브라우저 스모크에 실패하는 시나리오를 넣는다** — `/api/business-status`는 `{ stage: "bid", businessType: "물품", chainKey: null, notices: [{ bidNtceNo: "MATCH-001", state: "opened", method: "일반경쟁", openedAt: "2026-09-20 11:00:00" }], current: { bidNtceNo: "MATCH-001", state: "opened", openedAt: "2026-09-20 11:00:00", participants: 2, bidders: [{ rank: 1, name: "업체A", amount: 1000, rate: 88.1, techScore: null, priceScore: null, totalScore: null, remark: "정상" }], biddersTruncated: false }, partial: "" }`로 답하고 호출 수를 센다. 기존 CSV 검색이 끝난 뒤:
+- [x] **Step 1: 브라우저 스모크에 실패하는 시나리오를 넣는다** — `/api/business-status`는 `{ stage: "bid", businessType: "물품", chainKey: null, notices: [{ bidNtceNo: "MATCH-001", state: "opened", method: "일반경쟁", openedAt: "2026-09-20 11:00:00" }], current: { bidNtceNo: "MATCH-001", state: "opened", openedAt: "2026-09-20 11:00:00", participants: 2, bidders: [{ rank: 1, name: "업체A", amount: 1000, rate: 88.1, techScore: null, priceScore: null, totalScore: null, remark: "정상" }], biddersTruncated: false }, partial: "" }`로 답하고 호출 수를 센다. 기존 CSV 검색이 끝난 뒤:
 
 ```js
 await page.locator("#results .track-btn").first().click();
@@ -498,23 +515,23 @@ await page.locator(".mode-toggle-btn[data-mode='bid']").click();
 assert.equal(await page.locator("#tracked-view").isVisible(), false);
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `npm run test:browser`
 Expected: FAIL — `#results .track-btn` 없음(타임아웃)
 
-- [ ] **Step 3: index.html·app.js·style.css를 위 Interfaces대로 바꾼다.**
+- [x] **Step 3: index.html·app.js·style.css를 위 Interfaces대로 바꾼다.**
 
-- [ ] **Step 4: 모든 검증을 돌린다**
+- [x] **Step 4: 모든 검증을 돌린다**
 
 Run: `npm test` → Expected: PASS
 Run: `npm run test:browser` → Expected: 성공 종료(0)
 Run: `npm run test:runtime` → Expected: 성공 종료(0)
 Run: `npx wrangler deploy --dry-run` → Expected: `--dry-run: exiting now.`
 
-- [ ] **Step 5: 문서를 고친다** (code-map·search·operations, 위 Files 대로).
+- [x] **Step 5: 문서를 고친다** (code-map·search·operations, 위 Files 대로).
 
-- [ ] **Step 6: 커밋**
+- [x] **Step 6: 커밋**
 
 ```bash
 git add public/index.html public/app.js public/style.css tools/browser-smoke.cjs docs/code-map.md docs/search.md docs/operations.md

@@ -32,6 +32,7 @@ async function main() {
       page.on("pageerror", (error) => errors.push(error.message));
       let unlocked = false, stepCalls = 0, release, askCalls = 0, ecrReads = 0, g2bRequests = 0;
       const uploads = [];
+      let trackedCalls = 0, trackedDenied = false, holdTracked = false, releaseTracked;
       await context.route("**/*", async (route) => {
         const url = new URL(route.request().url());
         const json = (value, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
@@ -47,6 +48,14 @@ async function main() {
         if (url.pathname.startsWith("/data/analysis")) { ecrReads++; return route.fulfill({ status: 404, body: "Not found" }); }
         if (url.pathname === "/api/refresh") return json({ running: false });
         if (url.pathname === "/api/live") return json({ rows: [] });
+        if (url.pathname === "/api/business-status") {
+          trackedCalls++;
+          if (holdTracked) await new Promise(resolve => { releaseTracked = resolve; });
+          if (trackedDenied) return json({ code: "not_authorized", message: "fixture private error" }, 502);
+          const no = url.searchParams.get("bidNtceNo") || "MATCH-001";
+          const notice = { bidNtceNo: no, state: "opened", method: "일반경쟁", openedAt: "2026-09-20 11:00:00" };
+          return json({ stage: "bid", businessType: "물품", chainKey: null, notices: [notice], current: { ...notice, participants: 2, bidders: [{ rank: 1, name: "업체A", amount: 1000, rate: 88.1 }], biddersTruncated: false }, partial: "" });
+        }
         if (url.pathname === "/api/ask") {
           askCalls++;
           return json({ filter: { mode: "bid", q: "서버", type: "물품", begin: askCalls === 1 ? "2026-09-01" : "2026-02-30", end: "2026-09-24", institutions: [], looseInstitution: false }, notes: [], explain: "서버 물품 검색" });
@@ -97,6 +106,70 @@ async function main() {
         assert.match(await page.locator("#results").textContent(), /MATCH-001/);
         assert.ok(searchWorkers.some((url) => url.endsWith("/search-worker.js")), "must use actual search Worker");
         assert.ok(csvRequests > 0, "must fetch actual gzip fixture");
+        await page.locator("#results .track-btn").first().click();
+        await page.waitForFunction(() => JSON.parse(localStorage.getItem("gong-go:tracked-businesses")).items[0]?.result?.current?.state === "opened");
+        assert.equal(await page.locator("#tracked-count").textContent(), "1");
+        assert.equal(trackedCalls, 1, "saving immediately checks the notice");
+        const openRail = async () => {
+          if (await page.evaluate(() => document.body.classList.contains("rail-collapsed"))) {
+            await page.locator("#menu-btn").click();
+            await page.locator("#rail-open").click();
+          }
+        };
+        await openRail();
+        await page.locator("#tracked-toggle").click();
+        assert.match(await page.locator("#tracked-list").textContent(), /1위 업체A\(88\.1%\)/);
+        assert.equal(await page.locator(".table-scroll").isVisible(), false);
+        if (viewport.width < 700) {
+          for (const selector of [".tracked-table > tbody > tr > td:nth-child(4)", ".tracked-table > tbody > tr > td:nth-child(5)"]) {
+            const box = await page.locator(selector).first().boundingBox();
+            assert.ok(box.x >= 0 && box.x + box.width <= viewport.width, "mobile status and result must fit without horizontal scrolling");
+          }
+        }
+        await page.locator("[data-tracked-id]").first().click();
+        assert.match(await page.locator("#tracked-list").textContent(), /투찰금액/);
+        await page.locator("[data-tracked-id]").first().focus();
+        await page.evaluate(() => trackedUi.refresh({ all: true }));
+        assert.equal(await page.evaluate(() => Boolean(document.activeElement.dataset.trackedId)), true, "refresh preserves keyboard focus inside the list");
+        await page.evaluate(() => renderRows(model.filtered));
+        assert.equal(await page.locator("#results-heading").textContent(), "관심사업");
+        trackedDenied = true;
+        await page.locator("#tracked-refresh").click();
+        await page.waitForFunction(() => document.querySelector("#tracked-list").textContent.includes("조회 권한 없음"));
+        assert.doesNotMatch(await page.locator("#tracked-list").textContent(), /fixture private error/);
+        trackedDenied = false;
+        assert.equal(await page.locator("#tracked-list").evaluate(node => node.scrollWidth > 0), true);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, "tracked view must not overflow the page");
+        await openRail();
+        await page.locator(".mode-toggle-btn[data-mode='bid']").click();
+        assert.equal(await page.locator("#tracked-view").isVisible(), false);
+        if (viewport.width < 900) await page.locator("#rail-toggle").click();
+        await page.locator("#results .title-link").first().click();
+        assert.equal(await page.locator("#modal-track-btn").getAttribute("aria-pressed"), "true");
+        await page.locator("#modal-track-btn").click();
+        assert.equal(await page.locator("#tracked-count").textContent(), "0");
+        await page.locator("#modal-track-btn").click();
+        await page.waitForFunction(() => JSON.parse(localStorage.getItem("gong-go:tracked-businesses")).items[0]?.result?.current?.state === "opened");
+        await page.keyboard.press("Escape");
+        await openRail();
+        await page.locator("#tracked-toggle").click();
+        holdTracked = true;
+        await page.evaluate(() => { window.pendingTrackedCheck = trackedUi.refresh({ all: true }); });
+        const trackedDeadline = Date.now() + 10000;
+        while (!releaseTracked && Date.now() < trackedDeadline) await new Promise(resolve => setTimeout(resolve, 10));
+        assert.ok(releaseTracked, "refresh must reach the held request");
+        await page.locator("[data-untrack-id]").first().click();
+        assert.equal(await page.evaluate(() => document.activeElement.id), "results-heading", "removing the last row while refreshing retains visible keyboard focus");
+        holdTracked = false; releaseTracked();
+        await page.evaluate(() => window.pendingTrackedCheck);
+        await page.locator("#search").click();
+        assert.equal(await page.locator("#tracked-view").isVisible(), false, "search returns to notice results");
+        await openRail();
+        await page.locator("#tracked-toggle").click();
+        await page.locator("#today-btn").click();
+        assert.equal(await page.locator("#tracked-view").isVisible(), false, "today returns to notice results");
+        await page.locator("#begin").fill("2026-09-01");
+        await page.locator("#end").fill("2026-09-24");
         await page.locator("#q").fill("기존 검색어");
         await page.locator("#nl-run").click();
         await page.waitForFunction(() => document.querySelector("#nl-status").textContent.includes("형식이 올바르지"));

@@ -25,6 +25,7 @@
 | ECR 표·경고·원문 상세 | [ecr-view.js](../public/ecr-view.js) | ecr-view, exports |
 | 장비 총괄표·핵심 규격 미기재·장비 카드·결과 검증 | [equipment.js](../public/equipment.js) | equipment, ecr-data |
 | 공고 링크·첨부·입찰 일정 | [notice-view.js](../public/notice-view.js) | notice-view |
+| 관심사업 저장·조회 대상·공고 이력·개찰결과 | [tracked.js](../public/tracked.js), tracked-ui.js | tracked, tracked-controls, business-status-contract, 브라우저 검증 |
 | 상세 모달·포커스·탭 | [notice-modal.js](../public/notice-modal.js) | notice-modal, ecr-progress, 브라우저 검증 |
 | 공고·이번 ECR 결과(규격번호별·장비별) 내보내기 | [exports.js](../public/exports.js), [csv.js](../public/csv.js) | exports, csv |
 | 통신 시간 제한·오류 | [http.js](../public/http.js) | http |
@@ -49,6 +50,7 @@ test/의 파일명 규칙은 셋입니다 — 모듈 단위는 `<모듈>.test.js
 | 조회 비밀번호·쿠키·로그인 HTML | [gate.js](../src/gate.js) |
 | R2 읽기·경로 제한·캐시 | [data.js](../src/data.js) |
 | 최근 공고 조회·상류 캐시 | [live.js](../src/live.js) |
+| 관심사업 공고 연결·개찰결과·상류 응답 정규화 | business-status.js, business-status-normalize.js (각 .test.mjs) |
 | 수집 요청·GitHub 상태·사용 한도·크론 | [refresh.js](../src/refresh.js) |
 | 수집기용 API 중계 | [relay.js](../src/relay.js) |
 | 자연어 HTTP·모델 호출 | [ask-handler.js](../src/ask-handler.js) |

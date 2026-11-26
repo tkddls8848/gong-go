@@ -65,16 +65,26 @@ const MODE_NAMES = { pre: "사전공고", bid: "본공고", plan: "발주계획"
 // 기능 모듈 조립. 요청 세대·취소 상태는 각 모듈 인스턴스에 속한다.
 const resetPage = () => { page = 1; };
 const { getJson } = GongHttp;
+const tracked = GongTracked.createTracked({ html, fetchJson: async (url) => {
+  const { response, data } = await GongHttp.requestJson(url, {}, 30000, "data");
+  if (!response.ok) throw Object.assign(new Error("관심사업 조회에 실패했습니다."), { code: data.code === "not_authorized" ? data.code : "upstream" });
+  return data;
+} });
+const trackedUi = GongTrackedUi.createTrackedUi({
+  $, document, tracked, model, html, modeSubtitles: MODE_SUBTITLES,
+  closeModal: () => closeModal(), closeRail: () => { if (railNarrow()) setRail(true, false); }
+});
 const { modalSubtitle, detailLink, attachmentWarnings, planLinks, fileBadge,
   renderBidSchedule, normalizeFiles, wireEcrEntrypoints } =
   GongNoticeView.createNoticeView({ html, numberOf, format, document, openModal: (...args) => openModal(...args) });
 const { loadIndex } = GongIndex.createIndex({ model, $, getJson, renderDataStatus, defaultRange });
 const scanner = GongScan.createScanner({ model });
-const { applyFilters } = GongSearch.createSearch({
+const { applyFilters: filterRows } = GongSearch.createSearch({
   model, $, scanner, renderRows, collectInstitutions, todayFile, MODE_NAMES, format, numberOf
 });
+function applyFilters(options) { trackedUi.leave(); return filterRows(options); }
 const { startRefresh, resumeRefresh } = GongRefresh.createRefresh({
-  model, $, getJson, totalCount, dataRange, loadIndex, format, resetPage, applyFilters
+  model, $, getJson, totalCount, dataRange, loadIndex, format, resetPage, applyFilters: filterRows
 });
 const { runNlQuery } = GongNlQuery.createNlQuery({
   model, $, collectInstitutions, setNl, applyNlFilter, applyFilters, resetPage
@@ -89,7 +99,7 @@ const { loadEcr, stopEcrAnalysis, startEcrAnalysis, retryMissing } = GongEcr.cre
 });
 const { openModal, closeModal, selectTab, modalKeydown } = GongModal.createModal({
   model, $, modal, html, normalizeFiles, modalSubtitle, detailLink,
-  attachmentWarnings, planLinks, renderBidSchedule, stopEcrAnalysis, refreshAiAccess, loadEcr
+  attachmentWarnings, planLinks, renderBidSchedule, stopEcrAnalysis, refreshAiAccess, loadEcr, onOpen: trackedUi.modalOpened
 });
 const { downloadCsv, downloadEcr, downloadEquipment, downloadAll } = GongExports.createExports({
   model, $, downloadRows, MODE_NAMES, normalizeFiles, numberOf
@@ -102,7 +112,7 @@ $("#ecr-retry-btn").onclick = retryMissing;
 function modeOf(file) { return file.mode || String(file.path || "").split("/")[0]; }
 
 if (location.protocol === "file:") { $("#status").textContent = "배포된 서비스 주소에서 접속해 주세요."; renderRows([]); }
-else { loadIndex(true).then(({ changed, stale }) => { if (!stale) return applyFilters({ revalidateRecent: changed }); }).catch((error) => { $("#status").textContent = error.message; renderRows([]); }); resumeRefresh(); }
+else { loadIndex(true).then(({ changed, stale }) => { if (!stale) return filterRows({ revalidateRecent: changed }); }).catch((error) => { $("#status").textContent = error.message; renderRows([]); }); resumeRefresh(); }
 
 // 실제 인덱스의 가장 이른 날짜를 조회 범위로 사용한다.
 // 날짜 입력의 min으로 그 바닥을 알려 준다. max는 두지 않는다 — 오늘치 파일이 아직 없어도
@@ -154,7 +164,7 @@ function stamp(value) { const date = new Date(value), pad = (part) => String(par
 $("#search").onclick = () => { page = 1; applyFilters(); }; $("#reset").onclick = () => { ["#q", "#business-type", "#nl-query"].forEach((s) => { $(s).value = ""; }); $("#inst-loose").checked = false; setNl(false, ""); defaultRange(); page = 1; applyFilters(); }; $("#q").onkeydown = (event) => { if (event.key === "Enter") { page = 1; applyFilters(); } };
 // 사전공고/본공고는 조회 조건이 아니라 레일의 유형 목록으로 전환한다. 초기화 버튼은 건드리지 않는다.
 // 오늘 건수는 같은 줄에 있지만 별개의 버튼이라 여기 걸린 위임에 잡히지 않는다(제 핸들러가 있다).
-$("#mode-toggle").onclick = (event) => { const button = event.target.closest(".mode-toggle-btn"); if (button && button.dataset.mode !== model.viewMode) applyMode(button.dataset.mode); };
+$("#mode-toggle").onclick = (event) => { const button = event.target.closest(".mode-toggle-btn"); if (button && (button.dataset.mode !== model.viewMode || trackedUi.isActive())) applyMode(button.dataset.mode); };
 document.querySelectorAll(".today-jump").forEach((button) => button.onclick = () => jumpToToday(button.dataset.mode));
 
 // 레일은 접을 수 있다. 넓은 화면에서는 접힌 상태를 기억하고(표에 248px을 더 주려고 접는
@@ -194,6 +204,7 @@ document.addEventListener("keydown", (event) => { if (event.key === "Escape") se
 // 켜짐 표시는 버튼을 감싼 줄(.mode-row)에도 건다. 오늘 건수가 버튼이라 유형 버튼 안에 넣을
 // 수 없어서, 줄 전체가 켜진 것처럼 보이게 하려면 부모가 그 상태를 알아야 한다.
 function setMode(key) {
+  trackedUi.leave();
   model.viewMode = key;
   document.querySelectorAll(".mode-toggle-btn").forEach((button) => {
     const active = button.dataset.mode === key;
@@ -319,11 +330,12 @@ function renderRows(rows) {
   $("#download-btn").disabled = !rows.length;
   $("#results").innerHTML = visible.length ? visible.map((row, i) => {
     const files = normalizeFiles(row.files);
-    return `<tr><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title"><button class="title-link" data-index="${i}" type="button">${html(row.title || "(\uC0AC\uC5C5\uBA85 \uC5C6\uC74C)")}</button>${row.live ? '<span class="live-badge">\uCD5C\uC2E0 \uD655\uC778</span>' : ""}${fileBadge(row, files)}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">\uC624\uB298</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`;
+    return `<tr><td>${html(numberOf(row))}</td><td>${html(row.businessType)}</td><td>${html(row.institution)}</td><td class="title">${trackedUi.rowButton(row, i)}<button class="title-link" data-index="${i}" type="button">${html(row.title || "(\uC0AC\uC5C5\uBA85 \uC5C6\uC74C)")}</button>${row.live ? '<span class="live-badge">\uCD5C\uC2E0 \uD655\uC778</span>' : ""}${fileBadge(row, files)}</td><td>${dateFormat(row.publishedAt)}${isToday(row.publishedAt) ? '<span class="today-badge">\uC624\uB298</span>' : ""}</td><td>${row.mode === "plan" ? html(row.orderMonth || "-") : dateFormat(row.closeAt)}</td></tr>`;
   }).join("") : $("#empty-row").innerHTML;
   document.querySelectorAll(".title-link").forEach((button) => button.onclick = () => openModal(visible[Number(button.dataset.index)]));
   wireEcrEntrypoints(visible);
   wireEmptyRefresh();
+  trackedUi.syncRows(visible);
 }
 // 빈 결과 안내에도 갱신 버튼이 있다. 템플릿을 통째로 다시 그리므로 매번 다시 걸고, 지금
 // 갱신이 도는 중이면 레일의 버튼과 같이 잠가 둔다 — 둘을 눌러 두 번 dispatch되면 안 된다.

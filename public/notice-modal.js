@@ -4,7 +4,7 @@
   function createModal({
     model, $, modal, html, normalizeFiles, modalSubtitle, detailLink,
     attachmentWarnings, planLinks, renderBidSchedule, stopEcrAnalysis,
-    refreshAiAccess, loadEcr, document = scope.document
+    refreshAiAccess, loadEcr, document = scope.document, onOpen = () => {}
   } = {}) {
     let modalOpener = null;
     function activateModalFocus() {
@@ -54,6 +54,7 @@
       $("#ecr-progress").textContent = "";
       selectTab(initialTab);
       modal.style.display = "flex";
+      onOpen(row);
       activateModalFocus();
     }
     function closeModal() {

@@ -42,6 +42,7 @@
         </div>
       </div>
 
+      <button id="tracked-toggle" class="tracked-toggle" type="button" aria-pressed="false">관심사업 <span id="tracked-count">0</span></button>
       <!-- 지금 걸려 있는 조건(칩·개수·부분일치)은 늘 보이고, 기관을 더하고 프리셋을 관리하는
            도구만 접는다. 칩을 감추면 무엇으로 걸러지는지 모르는 채 조회하게 된다. -->
       <div class="inst-section">
@@ -122,8 +123,12 @@
       <p id="status" class="hint" role="status" aria-live="polite" aria-atomic="true">로컬 CSV를 불러오는 중입니다.</p>
 
       <div class="results-header">
-        <div class="results-title"><h2>조회 결과 <span id="result-summary"></span></h2><p class="subtitle" id="app-subtitle">로컬 CSV에 저장한 사전공고를 조회합니다.</p></div>
+        <div class="results-title"><h2><span id="results-heading" tabindex="-1">조회 결과</span> <span id="result-summary"></span></h2><p class="subtitle" id="app-subtitle">로컬 CSV에 저장한 사전공고를 조회합니다.</p></div>
       </div>
+      <section id="tracked-view" hidden>
+        <div class="tracked-tools"><button id="tracked-refresh" class="secondary-btn btn-sm" type="button">결과 새로 확인</button><p id="tracked-status" class="hint" role="status" aria-live="polite"></p></div>
+        <div id="tracked-list"></div>
+      </section>
       <!-- 유형 열은 없다. 한 번에 한 모드만 조회하므로(applyFilters가 그 모드의 파일만 받는다)
            모든 행에서 같은 값이 되고, 지금 보는 유형은 레일에서 이미 켜져 있다. -->
       <div class="table-scroll"><table><thead><tr><th>공고번호</th><th>업무</th><th>수요기관</th><th>사업명(공고명)</th><th class="col-date">게시일</th><th id="close-col" class="col-date">마감일</th></tr></thead><tbody id="results"></tbody></table></div>
@@ -138,7 +143,7 @@
 
   <div id="file-modal" class="modal-backdrop" style="display: none;">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-subtitle" tabindex="-1">
-      <div class="modal-header"><div class="modal-heading"><h3 id="modal-title">첨부파일</h3><p class="modal-subtitle" id="modal-subtitle"></p></div><button id="modal-close" class="modal-close" type="button" aria-label="닫기">&times;</button></div>
+      <div class="modal-header"><div class="modal-heading"><h3 id="modal-title">첨부파일</h3><p class="modal-subtitle" id="modal-subtitle"></p><button id="modal-track-btn" class="track-btn" type="button" aria-pressed="false" hidden>☆ 관심사업</button><p id="modal-track-status" class="hint" role="status" aria-live="polite"></p></div><button id="modal-close" class="modal-close" type="button" aria-label="닫기">&times;</button></div>
       <div class="modal-tabs"><button class="modal-tab active" data-tab="files" type="button">첨부파일</button><button id="schedule-tab" class="modal-tab" data-tab="schedule" type="button">입찰 일정</button><button id="ecr-tab" class="modal-tab" data-tab="ecr" type="button">ECR 규격</button></div>
       <div id="files-content"><ul id="modal-file-list" class="file-list"></ul><div class="modal-footer"><p class="hint">파일은 나라장터 서버에서 새 창으로 열립니다. 전체 다운로드를 사용하려면 팝업을 허용하세요.</p><button id="download-all-btn" class="primary-btn" type="button">전체 다운로드</button></div></div>
       <div id="schedule-content" hidden></div>
@@ -185,6 +190,8 @@
   <script src="dates.js"></script>
   <script src="format.js"></script>
   <script src="notice-view.js"></script>
+  <script src="tracked.js"></script>
+  <script src="tracked-ui.js"></script>
   <script src="notice-modal.js"></script>
   <script src="data-index.js"></script>
   <script src="search-scan.js"></script>
