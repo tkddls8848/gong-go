@@ -13,7 +13,11 @@ const { groupEorderFiles, mergeGroups, withEorderFiles, eorderFilesOf } = requir
 const CONFIG_FILE = path.join(__dirname, "sync.config.json");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
 const STATE_FILE = path.join(DATA_DIR, "sync-state.json");
-const RANGE_DAYS = 28;
+// 조회 구간 하나의 날짜 수(양끝 포함). 조달청이 2026-11-10 입찰공고정보·낙찰정보 서비스의
+// 요청파라미터 조회기간을 1개월에서 7일로 줄였다. 2026-11-28 실측으로 00:00~+6일 23:59(7일)는
+// 받고 8일부터 "07 입력범위값 초과 에러"를 돌려준다. 사전규격은 아직 28일을 받지만 조달청이
+// 대상 서비스를 단계적으로 늘린다고 공지했으므로 모드 구분 없이 7일로 자른다.
+const RANGE_DAYS = 7;
 const FILE_CONCURRENCY = 16;
 const WRITE_CONCURRENCY = 8;
 // 재개용 중간 저장 주기(완료 작업 수). 저장 자체는 수집을 멈추지 않으므로 자주 해도 싸다.
